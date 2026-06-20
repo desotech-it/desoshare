@@ -47,7 +47,9 @@ Versione: **0.12.0** · stato: in sviluppo (0.x.x)
   e più utenti possono modificarli **in tempo reale** (sincronizzazione tipo
   Etherpad, CRDT Yjs su relay PHP via polling, senza WebSocket né database).
 - **Condivisione con link a scadenza**: genera un link pubblico (sola lettura o,
-  per le note, modificabile) valido per una durata scelta, senza login.
+  per le note, modificabile) valido per una durata scelta, senza login. Si può
+  dare al link un **indirizzo personalizzato** facile da digitare
+  (`…/c/relazione-2026`) invece del token casuale.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

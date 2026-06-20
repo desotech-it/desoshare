@@ -6,6 +6,34 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.20.0] - 2026-06-21
+
+### Aggiunto
+- **Indirizzo personalizzato per i link di condivisione** (#15): nel dialog
+  "Condividi" si può indicare un **titolo** facoltativo che diventa la parte
+  finale dell'URL, così il link è leggibile e digitabile a mano:
+  `https://share.deso.tech/c/relazione-2026` invece di `…/share.php?t=<token>`.
+  - Il campo è **precompilato** con il nome del file "slugificato" e modificabile,
+    con **anteprima live** dell'URL finale.
+  - Lo slug è **opzionale**: se vuoto si usa il token casuale di prima (link non
+    indovinabile). È **unico** tra le condivisioni attive (errore se già in uso).
+  - Routing via una sola `RewriteRule` in `.htaccess`: `/c/<slug>` → `share.php`
+    (namespace dedicato, non oscura file/cartelle reali). `share_find()` risolve
+    indifferentemente per **token o slug** (case-insensitive).
+  - `share_slugify()` (PHP) e `slugify()` (JS) normalizzano allo stesso modo:
+    minuscole, accenti rimossi, solo `[a-z0-9-]`, max 64.
+
+### Nota di sicurezza
+- Un link digitabile è, per sua natura, **indovinabile** (a differenza del token
+  casuale a 128 bit). Per questo lo slug è opt-in e il default resta il token; le
+  condivisioni scadono comunque e l'edit via link resta confinato ai file di testo.
+
+### Test
+- `api_test.sh`: +8 casi slug (creazione, normalizzazione, accesso pubblico via
+  slug, case-insensitive, duplicato→409, fallback al token) → **93 API**.
+- `js_smoke.mjs`: +1 caso (dialog Condividi: campo precompilato, anteprima,
+  invio slug, URL `/c/<slug>` nel risultato) → **13 casi**.
+
 ## [0.19.0] - 2026-06-21
 
 ### Modificato (interno, nessun cambiamento di comportamento)

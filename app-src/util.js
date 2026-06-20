@@ -42,3 +42,11 @@ export function isTextFile(name) { return !BIN_EXT.has((name.split('.').pop() ||
 export const b64ToU8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
 
 export function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// Normalizza un titolo in uno slug per l'URL (coerente con share_slugify() lato PHP):
+// minuscole, accenti rimossi, solo [a-z0-9-], niente trattini doppi/agli estremi, max 64.
+export function slugify(s) {
+  return String(s).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}

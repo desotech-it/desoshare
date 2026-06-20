@@ -122,6 +122,9 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   }
+  function slugify(s) {
+    return String(s).trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+  }
 
   // net.js
   async function apiGet(action, params = {}) {
@@ -337,6 +340,8 @@
   // shares.js
   function shareDialog(rel, name) {
     const canEdit = isTextFile(name);
+    const defSlug = slugify(name.replace(/\.[^.]+$/, ""));
+    const base = location.origin + location.pathname.replace(/\/[^/]*$/, "");
     openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
     <label>Durata del link</label>
     <select id="sh_ttl">
@@ -350,15 +355,30 @@
       <option value="view">Sola lettura</option>
       <option value="edit">Modificabile (chiunque abbia il link co-edita)</option>
     </select>` : ""}
+    <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
+    <div style="display:flex;align-items:center;gap:3px;font-size:13px">
+      <span class="muted" style="white-space:nowrap">/c/</span>
+      <input type="text" id="sh_slug" placeholder="link-casuale" value="${esc(defSlug)}" style="flex:1" autocomplete="off">
+    </div>
+    <span id="sh_slughint" class="muted" style="font-size:11px"></span>
     <div id="sh_result" style="margin-top:12px"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button>
       <button class="btn btn-primary" id="sh_create"><i class="ti ti-link"></i> Crea link</button></div></div>`);
+    const slugEl = $("#sh_slug", modalBg), hintEl = $("#sh_slughint", modalBg);
+    const updHint = () => {
+      hintEl.style.color = "";
+      const sl = slugify(slugEl.value);
+      hintEl.textContent = sl ? "→ " + base + "/c/" + sl : "Vuoto = link casuale non indovinabile.";
+    };
+    slugEl.oninput = updHint;
+    updHint();
     $("#sh_create", modalBg).onclick = async () => {
       const ttl = $("#sh_ttl", modalBg).value;
       const mode = canEdit ? $("#sh_mode", modalBg).value : "view";
-      const r = await apiPost("share_create", { path: rel, ttl, mode });
+      const r = await apiPost("share_create", { path: rel, ttl, mode, slug: slugEl.value });
       if (!r.ok) {
-        toast(r.error || "Errore", true);
+        hintEl.textContent = r.error || "Errore";
+        hintEl.style.color = "var(--danger, #c0392b)";
         return;
       }
       const when = new Date(r.expires_at * 1e3).toLocaleString("it-IT");

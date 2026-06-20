@@ -150,6 +150,17 @@ has "token scaduto → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.
 has "revoca condivisione" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$TOK "$B/api.php?action=share_revoke")" '"ok":true'
 has "dopo revoca non accessibile (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TOK&dl=1")" '404'
 
+echo "=== Condivisioni: slug personalizzato (/c/<slug>) ==="
+SS=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode 'slug=Relazione 2026!' "$B/api.php?action=share_create")
+has "share_create con slug personalizzato" "$SS" '"ok":true'
+has "slug normalizzato (relazione-2026)" "$SS" '"slug":"relazione-2026"'
+has "url personalizzato /c/relazione-2026" "$SS" '/c/relazione-2026'
+has "share_list espone lo slug" "$(curl -s -b $JAR "$B/api.php?action=share_list")" '"slug":"relazione-2026"'
+has "accesso PUBBLICO via slug" "$(curl -s "$B/share.php?t=relazione-2026")" 'Scarica'
+has "slug case-insensitive (200)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=Relazione-2026")" '200'
+has "slug duplicato rifiutato (409)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 --data-urlencode slug=relazione-2026 "$B/api.php?action=share_create")" 'già in uso'
+has "senza slug → link col token (share.php?t=)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 "$B/api.php?action=share_create")" 'share.php?t='
+
 echo "=== Note (editor collaborativo, relay Yjs) ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=nota.md --data-urlencode content="riga uno" "$B/api.php?action=newfile" >/dev/null
 NO=$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md")

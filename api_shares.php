@@ -16,9 +16,24 @@ function action_share_create(): void {
     }
 
     $d = shares_load();
+
+    // Slug personalizzato opzionale: se indicato, deve essere unico tra le
+    // condivisioni ATTIVE (confronto sia con gli altri slug sia con i token).
+    $slug = share_slugify((string) ($_POST['slug'] ?? ''));
+    if ($slug !== '') {
+        $now = time();
+        foreach ($d['shares'] as $s) {
+            if (($s['expires_at'] ?? 0) <= $now) continue;          // gli scaduti liberano lo slug
+            if (strtolower($s['slug'] ?? '') === $slug || strtolower($s['token'] ?? '') === $slug) {
+                json_out(['ok' => false, 'error' => 'Indirizzo già in uso, scegline un altro'], 409);
+            }
+        }
+    }
+
     $token = gen_share_token();
     $share = [
         'token'      => $token,
+        'slug'       => $slug,            // '' se non personalizzato
         'path'       => $p,
         'type'       => $kind,
         'name'       => basename($p) ?: '/',
@@ -29,7 +44,7 @@ function action_share_create(): void {
     ];
     $d['shares'][] = $share;
     shares_save($d);
-    json_out(['ok' => true, 'token' => $token, 'url' => share_url($token), 'expires_at' => $share['expires_at']]);
+    json_out(['ok' => true, 'token' => $token, 'slug' => $slug, 'url' => share_url($share), 'expires_at' => $share['expires_at']]);
 }
 
 // ─── Condivisioni: elenco attive (proprie; l'admin le vede tutte) ────────────
@@ -42,13 +57,14 @@ function action_share_list(): void {
         if (!$admin && ($s['created_by'] ?? '') !== $u['username']) continue;
         $out[] = [
             'token'      => $s['token'],
+            'slug'       => $s['slug'] ?? '',
             'path'       => user_strip($s['path'], $s['created_by'] ?? ''),   // relativo (niente prefisso)
             'name'       => $s['name'] ?? basename($s['path']),
             'type'       => $s['type'] ?? 'file',
             'mode'       => $s['mode'] ?? 'view',
             'expires_at' => $s['expires_at'],
             'created_by' => $s['created_by'] ?? '',
-            'url'        => share_url($s['token']),
+            'url'        => share_url($s),
         ];
     }
     usort($out, fn($a, $b) => $a['expires_at'] <=> $b['expires_at']);

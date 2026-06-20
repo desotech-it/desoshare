@@ -521,6 +521,48 @@ async function runSettingsSave() {
     ? ok('payload include local_auth_enabled') : bad('payload manca local_auth_enabled');
 }
 
+// Dialog "Condividi": campo slug precompilato col nome file, invio dello slug,
+// e URL personalizzato (/c/<slug>) mostrato nel risultato.
+async function runShareCreate() {
+  console.log('\nCaso: dialog Condividi — slug personalizzato (/c/<slug>)');
+  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://share.deso.tech/' });
+  const win = dom.window;
+  win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+  const exp = Math.floor(Date.now() / 1000) + 86400;
+  let lastPost = null;
+  win.fetch = async (url, opts) => {
+    const action = (String(url).match(/action=([a-z_]+)/) || [])[1] || 'list';
+    if (opts && opts.method === 'POST' && opts.body && opts.body.forEach) {
+      const data = {}; opts.body.forEach((v, k) => { data[k] = v; });
+      lastPost = { action, data };
+    }
+    const body = action === 'share_create'
+      ? { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/c/mia-foto', expires_at: exp }
+      : listResponse;
+    return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  let loadError = null;
+  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.eval(appJs);
+  await new Promise(r => setTimeout(r, 30));
+  const doc = win.document;
+  doc.querySelectorAll('#rows .row')[1].querySelector('.ti-share').onclick();   // condividi foto.jpg
+  await new Promise(r => setTimeout(r, 10));
+  const slugEl = doc.getElementById('sh_slug');
+  (slugEl && slugEl.value === 'foto') ? ok('campo slug precompilato col nome file (foto)') : bad(`slug precompilato errato (${slugEl && slugEl.value})`);
+  const hint = doc.getElementById('sh_slughint');
+  (hint && /\/c\/foto$/.test(hint.textContent)) ? ok('anteprima URL live (/c/foto)') : bad(`anteprima errata (${hint && hint.textContent})`);
+  slugEl.value = 'mia-foto'; slugEl.oninput();
+  doc.getElementById('sh_create').onclick();
+  await new Promise(r => setTimeout(r, 20));
+  if (loadError) { bad('errore share-create: ' + loadError.message); return; }
+  (lastPost && lastPost.action === 'share_create' && lastPost.data.slug === 'mia-foto')
+    ? ok('create invia lo slug scelto (mia-foto)') : bad(`slug non inviato (${JSON.stringify(lastPost && lastPost.data)})`);
+  const urlEl = doc.getElementById('sh_url');
+  (urlEl && /\/c\/mia-foto$/.test(urlEl.value)) ? ok('risultato mostra URL personalizzato /c/mia-foto') : bad(`URL risultato errato (${urlEl && urlEl.value})`);
+}
+
 console.log('=== JS smoke test (jsdom) ===');
 await run('admin (lettura+scrittura)', true, true);
 await run('utente sola lettura', false, false);
@@ -534,6 +576,7 @@ await runSearch();
 await runUpload();
 await runRowActions();
 await runSettingsSave();
+await runShareCreate();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);
