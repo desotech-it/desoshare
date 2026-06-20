@@ -334,9 +334,27 @@
   }
 
   // ─── Pannello utenti (admin) ───────────────────────────────────────────
-  async function usersPanel() {
+  function fmtTime(iso) { try { return new Date(iso).toLocaleString('it-IT'); } catch (_) { return iso; } }
+
+  async function adminPanel(section) {
+    section = section || 'users';
+    const tab = (k, ic, lbl) => `<button class="btn ${section === k ? 'btn-primary' : ''}" data-sec="${k}"><i class="ti ${ic}"></i> ${lbl}</button>`;
+    openModal(`<div class="modal wide"><h3><i class="ti ti-settings"></i> Amministrazione</h3>
+      <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+        ${tab('users', 'ti-users-group', 'Utenti')}${tab('settings', 'ti-adjustments', 'Impostazioni')}${tab('audit', 'ti-history', 'Registro')}
+      </div>
+      <div id="adm_body">Caricamento…</div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    modalBg.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => adminPanel(b.dataset.sec));
+    const body = $('#adm_body', modalBg);
+    if (section === 'settings') await renderSettingsSection(body);
+    else if (section === 'audit') await renderAuditSection(body);
+    else await renderUsersSection(body);
+  }
+
+  async function renderUsersSection(body) {
     const res = await apiGet('users_list');
-    if (!res.ok) { toast(res.error || 'Errore', true); return; }
+    if (!res.ok) { body.textContent = res.error || 'Errore'; return; }
     const rows = res.users.map(u => `
       <tr><td><i class="ti ti-user"></i> ${esc(u.username)}</td>
         <td>${u.role === 'admin' ? '<b>admin</b>' : 'utente'}</td>
@@ -344,19 +362,47 @@
         <td class="uact">
           <i class="ti ti-edit" data-u="${esc(u.username)}" data-r="${u.role}" data-p="${u.permission}"></i>
           <i class="ti ti-trash" data-del="${esc(u.username)}"></i></td></tr>`).join('');
-    openModal(`<div class="modal wide"><h3><i class="ti ti-users-group"></i> Gestione utenti</h3>
-      <div style="text-align:right;margin-bottom:8px"><button class="btn btn-primary" id="u_new"><i class="ti ti-user-plus"></i> Nuovo utente</button></div>
-      <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th></th></tr></thead>
-      <tbody>${rows}</tbody></table>
-      <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    body.innerHTML = `<div style="text-align:right;margin-bottom:8px"><button class="btn btn-primary" id="u_new"><i class="ti ti-user-plus"></i> Nuovo utente</button></div>
+      <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     $('#u_new', modalBg).onclick = () => userForm();
     modalBg.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
       if (!confirm(`Eliminare l'utente "${b.dataset.del}"?`)) return;
       const r = await apiPost('user_delete', { username: b.dataset.del });
-      if (r.ok) { toast('Utente eliminato'); usersPanel(); } else toast(r.error || 'Errore', true);
+      if (r.ok) { toast('Utente eliminato'); adminPanel('users'); } else toast(r.error || 'Errore', true);
     });
     modalBg.querySelectorAll('[data-u]').forEach(b => b.onclick = () =>
       userForm({ username: b.dataset.u, role: b.dataset.r, permission: b.dataset.p }));
+  }
+
+  async function renderSettingsSection(body) {
+    const s = await apiGet('settings_get');
+    if (!s.ok) { body.textContent = s.error || 'Errore'; return; }
+    body.innerHTML = `
+      <label>Titolo del sito</label>
+      <input type="text" id="set_title" value="${esc(s.site_title)}" maxlength="40" placeholder="Share">
+      <label style="margin-top:10px">Intervallo di sincronizzazione note (ms)</label>
+      <input type="text" id="set_poll" value="${s.note_poll_ms}">
+      <label style="margin-top:10px">Dimensione massima di una nota (MB)</label>
+      <input type="text" id="set_maxmb" value="${Math.round(s.note_max_bytes / 1048576)}">
+      <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" id="set_save"><i class="ti ti-device-floppy"></i> Salva</button></div>`;
+    $('#set_save', modalBg).onclick = async () => {
+      const r = await apiPost('settings_save', {
+        site_title: $('#set_title', modalBg).value,
+        note_poll_ms: $('#set_poll', modalBg).value,
+        note_max_mb: $('#set_maxmb', modalBg).value,
+      });
+      if (r.ok) toast('Impostazioni salvate'); else toast(r.error || 'Errore', true);
+    };
+  }
+
+  async function renderAuditSection(body) {
+    const r = await apiGet('audit_list');
+    if (!r.ok) { body.textContent = r.error || 'Errore'; return; }
+    if (!r.entries.length) { body.innerHTML = '<p class="muted">Nessuna attività registrata.</p>'; return; }
+    body.innerHTML = `<div style="max-height:360px;overflow:auto"><table class="utable">
+      <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${
+      r.entries.map(e => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('')
+      }</tbody></table></div>`;
   }
 
   function userForm(u = null) {
@@ -389,7 +435,7 @@
       };
       if (editing) data.original = u.username;
       const r = await apiPost('user_save', data);
-      if (r.ok) { toast('Utente salvato'); usersPanel(); } else toast(r.error || 'Errore', true);
+      if (r.ok) { toast('Utente salvato'); adminPanel('users'); } else toast(r.error || 'Errore', true);
     };
   }
 
@@ -540,7 +586,7 @@
   $('#btnShares') && ($('#btnShares').onclick = sharesPanel);
   $('#btnZipCurrent').onclick = () => downloadZip(selected.size ? [...selected] : [cwd || '']);
   $('#btnZipSel').onclick = () => downloadZip([...selected]);
-  if (IS_ADMIN) $('#btnUsers').onclick = usersPanel;
+  if (IS_ADMIN) $('#btnAdmin') && ($('#btnAdmin').onclick = () => adminPanel('users'));
   searchEl.oninput = renderRows;
   $('#checkAll').onchange = e => {
     const filter = searchEl.value.trim().toLowerCase();

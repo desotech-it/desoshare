@@ -18,6 +18,7 @@ if (!users_exist()) {
             ]]]);
             session_regenerate_id(true);
             $_SESSION['username'] = $u;
+            audit('setup_admin', $u);
             header('Location: index.php'); exit;
         }
     }
@@ -35,6 +36,7 @@ if (!current_user()) {
         if ($u && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
             session_regenerate_id(true);
             $_SESSION['username'] = $u['username'];
+            audit('login');
             header('Location: index.php'); exit;
         }
         $err = 'Credenziali non valide.';
@@ -51,7 +53,7 @@ function page_head(string $title): string {
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
     return '<!doctype html><html lang="it"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        . '<title>' . h($title) . ' · ' . h(APP_NAME) . '</title>'
+        . '<title>' . h($title) . ' · ' . h(app_title()) . '</title>'
         . '<link rel="icon" href="favicon.ico?v=' . @filemtime(PUBLIC_DIR . '/favicon.ico') . '">'
         . '<link rel="apple-touch-icon" href="apple-touch-icon.png">'
         . '<link rel="stylesheet" href="' . $icons . '">'
@@ -65,7 +67,7 @@ function render_setup(?string $err): void {
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=setup">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
-        <h1><?= h(APP_NAME) ?></h1>
+        <h1><?= h(app_title()) ?></h1>
         <p class="muted">Primo avvio — crea l'account amministratore</p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
         <label>Username amministratore</label>
@@ -85,7 +87,7 @@ function render_login(?string $err): void {
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=login">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
-        <h1><?= h(APP_NAME) ?></h1>
+        <h1><?= h(app_title()) ?></h1>
         <p class="muted">Inserisci le credenziali per accedere</p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
         <label>Username</label>
@@ -113,7 +115,7 @@ function render_app(array $user): void {
          data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>">
 
       <header class="topbar">
-        <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(APP_NAME) ?></div>
+        <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(app_title()) ?></div>
         <div class="topbar-right">
           <span class="who"><i class="ti ti-user"></i> <?= h($user['username']) ?>
             <span class="badge <?= $canWrite ? 'badge-w' : 'badge-r' ?>">
@@ -121,7 +123,7 @@ function render_app(array $user): void {
           </span>
           <button class="btn" id="btnShares"><i class="ti ti-share"></i> Condivisioni</button>
           <?php if ($isAdmin): ?>
-          <button class="btn" id="btnUsers"><i class="ti ti-users-group"></i> Utenti</button>
+          <button class="btn" id="btnAdmin"><i class="ti ti-settings"></i> Amministrazione</button>
           <?php endif; ?>
           <a class="btn" href="index.php?action=logout"><i class="ti ti-logout"></i> Esci</a>
         </div>

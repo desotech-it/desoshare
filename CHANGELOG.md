@@ -6,6 +6,19 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.6.0] - 2026-06-20
+
+### Aggiunto
+- **Area di amministrazione** (riservata agli admin) con tre sezioni: gestione
+  **Utenti**, **Impostazioni** e **Registro** attività.
+- **Ruolo admin più robusto**: invariante "deve restare almeno un amministratore"
+  applicata anche al declassamento (non solo all'eliminazione).
+- **Registro attività (audit)** su file (`appdata/audit.log`, niente database):
+  login, creazione/modifica/eliminazione utenti, modifiche alle impostazioni.
+- **Impostazioni applicative** modificabili dall'admin (in `appdata/settings.json`):
+  titolo del sito, intervallo di sincronizzazione delle note e dimensione massima
+  di una nota. Prepara il terreno per la configurazione dello storage esterno.
+
 ## [0.5.0] - 2026-06-20
 
 ### Aggiunto
@@ -90,6 +103,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.6.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.6.0
 [0.5.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.5.0
 [0.4.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.4.0
 [0.3.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.3.0

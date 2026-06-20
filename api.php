@@ -14,8 +14,11 @@ switch ($action) {
     case 'upload_status': action_upload_status(); break;
     case 'share_list':  action_share_list();   break;
     case 'note_open':   action_note_open();    break;
+    case 'settings_get': action_settings_get(); break;
+    case 'audit_list':  action_audit_list();   break;
 
     // Modifiche (POST + CSRF)
+    case 'settings_save': csrf_check(); action_settings_save(); break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
@@ -308,16 +311,22 @@ function action_user_save(): void {
         json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
     }
     if ($idx >= 0) {
+        $wasAdmin = ($data['users'][$idx]['role'] ?? '') === 'admin';
         $data['users'][$idx]['username']   = $username;
         $data['users'][$idx]['role']       = $role;
         $data['users'][$idx]['permission'] = $permission;
         if ($password !== '') $data['users'][$idx]['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
+        if ($wasAdmin && $role !== 'admin' && count_admins($data) < 1) {
+            json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
+        }
+        audit('user_update', $username . ' → ' . $role . '/' . $permission);
     } else {
         if (strlen($password) < 6) json_out(['ok' => false, 'error' => 'Password obbligatoria (min 6 caratteri)'], 400);
         $data['users'][] = [
             'username' => $username, 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
             'role' => $role, 'permission' => $permission,
         ];
+        audit('user_create', $username . ' (' . $role . '/' . $permission . ')');
     }
     users_save($data);
     json_out(['ok' => true]);
@@ -335,7 +344,43 @@ function action_user_delete(): void {
         json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
     }
     users_save($data);
+    audit('user_delete', $username);
     json_out(['ok' => true, 'deleted' => $before - count($data['users'])]);
+}
+
+// ─── Amministrazione: impostazioni ───────────────────────────────────────────
+function action_settings_get(): void {
+    require_admin();
+    $s = settings_load();
+    json_out([
+        'ok' => true,
+        'site_title'     => (string) ($s['site_title'] ?? APP_NAME),
+        'note_poll_ms'   => note_poll_ms(),
+        'note_max_bytes' => note_max_bytes(),
+        'defaults'       => ['site_title' => APP_NAME, 'note_poll_ms' => NOTE_POLL_MS, 'note_max_bytes' => NOTE_MAX_BYTES],
+    ]);
+}
+function action_settings_save(): void {
+    require_admin();
+    $s = settings_load();
+    $title = trim((string) ($_POST['site_title'] ?? ''));
+    if ($title !== '') {
+        if (mb_strlen($title) > 40) json_out(['ok' => false, 'error' => 'Titolo troppo lungo (max 40)'], 400);
+        $s['site_title'] = $title;
+    } else { unset($s['site_title']); }
+    $poll = (int) ($_POST['note_poll_ms'] ?? 0);
+    if ($poll > 0) { if ($poll < 500 || $poll > 60000) json_out(['ok' => false, 'error' => 'Intervallo 500–60000 ms'], 400); $s['note_poll_ms'] = $poll; }
+    $maxmb = (int) ($_POST['note_max_mb'] ?? 0);
+    if ($maxmb > 0) { if ($maxmb < 1 || $maxmb > 64) json_out(['ok' => false, 'error' => 'Dimensione nota 1–64 MB'], 400); $s['note_max_bytes'] = $maxmb * 1024 * 1024; }
+    settings_save($s);
+    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes());
+    json_out(['ok' => true]);
+}
+
+// ─── Amministrazione: registro attività ──────────────────────────────────────
+function action_audit_list(): void {
+    require_admin();
+    json_out(['ok' => true, 'entries' => audit_tail(150)]);
 }
 
 // ─── Condivisioni: crea link a scadenza ──────────────────────────────────────
@@ -432,14 +477,14 @@ function action_note_open(): void {
     if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo di file non modificabile come testo'], 415);
     $size = (int) filesize($abs);
-    if ($size > NOTE_MAX_BYTES) json_out(['ok' => false, 'error' => 'File troppo grande per l\'editor (' . human_size($size) . ')'], 413);
+    if ($size > note_max_bytes()) json_out(['ok' => false, 'error' => 'File troppo grande per l\'editor (' . human_size($size) . ')'], 413);
     note_gc();
     $id = note_id(ltrim(rel_display($abs), '/'));
     $updates = note_relay_lines($id);
     json_out([
         'ok' => true, 'id' => $id, 'name' => basename($abs), 'editable' => $ctx['editable'],
         'text' => base64_encode((string) file_get_contents($abs)),
-        'updates' => $updates, 'offset' => count($updates), 'poll_ms' => NOTE_POLL_MS, 'user' => $ctx['user'],
+        'updates' => $updates, 'offset' => count($updates), 'poll_ms' => note_poll_ms(), 'user' => $ctx['user'],
     ]);
 }
 
@@ -479,7 +524,7 @@ function action_note_save(): void {
     if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
     $abs = $ctx['abs'];
     $content = (string) ($_POST['content'] ?? '');
-    if (strlen($content) > NOTE_MAX_BYTES) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
+    if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
     $tmp = $abs . '.tmp.' . bin2hex(random_bytes(4));
     if (file_put_contents($tmp, $content) === false || !@rename($tmp, $abs)) {
         @unlink($tmp);

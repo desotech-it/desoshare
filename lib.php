@@ -311,3 +311,45 @@ function note_gc(): void {
         if (is_file($f) && time() - filemtime($f) > 7 * 86400) @unlink($f);
     }
 }
+
+// ─── Impostazioni applicative (file, niente DB) ──────────────────────────────
+function settings_file(): string { return DATA_DIR . '/settings.json'; }
+function settings_load(): array {
+    $j = is_file(settings_file()) ? json_decode((string) file_get_contents(settings_file()), true) : null;
+    return is_array($j) ? $j : [];
+}
+function settings_save(array $d): void {
+    file_put_contents(settings_file(), json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    @chmod(settings_file(), 0600);
+}
+function setting(string $key, $default = null) {
+    $s = settings_load();
+    return array_key_exists($key, $s) && $s[$key] !== '' ? $s[$key] : $default;
+}
+function app_title(): string { return (string) setting('site_title', APP_NAME); }
+function note_poll_ms(): int { return max(500, (int) setting('note_poll_ms', NOTE_POLL_MS)); }
+function note_max_bytes(): int { return max(1024, (int) setting('note_max_bytes', NOTE_MAX_BYTES)); }
+
+// ─── Registro attività (audit), file append-only ─────────────────────────────
+function audit(string $action, string $detail = ''): void {
+    $u = current_user();
+    $who = $u['username'] ?? '-';
+    $line = date('c') . "\t" . $who . "\t" . $action . "\t" . str_replace(["\n", "\t", "\r"], ' ', $detail) . "\n";
+    @file_put_contents(DATA_DIR . '/audit.log', $line, FILE_APPEND | LOCK_EX);
+}
+function audit_tail(int $n = 100): array {
+    $f = DATA_DIR . '/audit.log';
+    if (!is_file($f)) return [];
+    $lines = @file($f, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    $out = [];
+    foreach (array_reverse(array_slice($lines, -$n)) as $l) {
+        $p = explode("\t", $l, 4);
+        $out[] = ['time' => $p[0] ?? '', 'user' => $p[1] ?? '', 'action' => $p[2] ?? '', 'detail' => $p[3] ?? ''];
+    }
+    return $out;
+}
+
+// Numero di amministratori in un set utenti (per l'invariante "almeno un admin").
+function count_admins(array $data): int {
+    return count(array_filter($data['users'], fn($u) => ($u['role'] ?? '') === 'admin'));
+}

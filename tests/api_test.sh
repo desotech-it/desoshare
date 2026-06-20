@@ -149,6 +149,18 @@ has "id non corrispondente al token → 403" "$(curl -s --data-urlencode t=$ET -
 has "edit-mode su file binario rifiutato" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" 'file di testo'
 has "pagina pubblica nota = editor" "$(curl -s "$B/share.php?t=$ET")" 'editor-bundle.js'
 
+echo "=== Amministrazione (area admin, impostazioni, audit) ==="
+SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
+has "settings_get (admin)" "$SG" '"ok":true'
+has "settings espone site_title" "$SG" 'site_title'
+has "settings_save (admin)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode site_title='DesoLabs Test' --data-urlencode note_poll_ms=2000 --data-urlencode note_max_mb=4 "$B/api.php?action=settings_save")" '"ok":true'
+has "settings_get riflette il salvataggio" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"note_poll_ms":2000'
+has "note_open usa il poll configurato" "$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md")" '"poll_ms":2000'
+has "audit_list contiene le modifiche impostazioni" "$(curl -s -b $JAR "$B/api.php?action=audit_list")" 'settings_update'
+has "non-admin NON vede le impostazioni (403)" "$(curl -s -b $RJAR "$B/api.php?action=settings_get")" 'amministratori'
+has "non-admin NON vede il registro (403)" "$(curl -s -b $RJAR "$B/api.php?action=audit_list")" 'amministratori'
+has "non si può declassare l'ultimo admin" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=admin --data-urlencode original=admin --data-urlencode role=user --data-urlencode permission=write "$B/api.php?action=user_save")" 'almeno un amministratore'
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'
 

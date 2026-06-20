@@ -21,7 +21,7 @@ function pageHtml(canWrite, isAdmin) {
         <button class="btn" id="btnNewFolder">Nuova cartella</button>
         <button class="btn" id="btnNewFile">Nuovo file</button>
         <button class="btn" id="btnNewNote">Nuova nota</button>` : '';
-  const adminBtn = isAdmin ? `<button class="btn" id="btnUsers">Utenti</button>` : '';
+  const adminBtn = isAdmin ? `<button class="btn" id="btnAdmin">Amministrazione</button>` : '';
   const delSel = canWrite ? `<button class="btn btn-danger" id="btnDelSel">Elimina</button>` : '';
   return `<!doctype html><html><body>
     <div id="app" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}">
@@ -90,7 +90,9 @@ async function run(label, canWrite, isAdmin) {
   else bad('icona modifica nota NON cablata');
 
   // i pulsanti chiave hanno un handler?
-  const must = ['btnRefresh', 'btnShares', 'btnZipCurrent'].concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder', 'btnNewNote'] : []);
+  const must = ['btnRefresh', 'btnShares', 'btnZipCurrent']
+    .concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder', 'btnNewNote'] : [])
+    .concat(isAdmin ? ['btnAdmin'] : []);
   for (const id of must) {
     const el = win.document.getElementById(id);
     if (el && typeof el.onclick === 'function') ok(`#${id} ha un handler onclick`);
