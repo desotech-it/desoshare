@@ -6,6 +6,12 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.20.2] - 2026-06-21
+
+### Rimosso
+- Eliminato l'alias legacy `/c/` dei link di condivisione (mai usato): la
+  `RewriteRule` torna a `^d/(...)`. Resta solo il prefisso `/d/`.
+
 ## [0.20.1] - 2026-06-21
 
 ### Modificato
