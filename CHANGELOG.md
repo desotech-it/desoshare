@@ -6,6 +6,30 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.12.0] - 2026-06-20
+
+### Aggiunto
+- **Configurazione SSO/OpenID Connect dall'area di amministrazione**: nuova sezione
+  *Impostazioni → SSO / OpenID Connect* dove l'admin abilita l'SSO e compila tutti i
+  parametri (client_id, **client secret cifrato**, issuer, authorization/token/
+  userinfo/JWKS/end-session, redirect_uri, scopes, gruppo admin e gruppo
+  lettura-scrittura), senza più dover toccare `.htaccess`/ambiente. Il secret è
+  salvato **cifrato** (AES-256) e non viene mai restituito in chiaro.
+- **Discovery automatico**: pulsante "Discovery" che legge
+  `…/.well-known/openid-configuration` dell'issuer e compila gli endpoint da un
+  solo URL (endpoint `oidc_discovery`).
+
+### Modificato
+- La configurazione OIDC è ora **risolta dinamicamente** (`oidc_cfg()`): i valori in
+  `settings.json` hanno la **precedenza** sulle costanti di `config.php` e
+  sull'ambiente; le costanti restano come default. Il toggle "Abilita SSO" in
+  Impostazioni ha la precedenza anche sul secret d'ambiente. Compatibilità piena
+  con la configurazione via env già esistente (resta come fallback).
+
+### Test
+- Suite OIDC estesa (24 controlli): config via Impostazioni, precedenza sui default,
+  secret non esposto, discovery, toggle on/off; smoke JS della nuova sezione SSO.
+
 ## [0.11.0] - 2026-06-20
 
 ### Aggiunto
@@ -235,6 +259,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.12.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.12.0
 [0.11.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.11.0
 [0.10.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.10.0
 [0.9.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.9.0

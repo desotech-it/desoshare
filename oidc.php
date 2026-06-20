@@ -87,10 +87,10 @@ function oidc_jwk_to_pem(string $n_b64, string $e_b64): ?string {
     return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
 }
 // true = firma valida; false = NON valida; null = impossibile verificare (JWKS giù).
-function oidc_verify_signature(array $jwt): ?bool {
+function oidc_verify_signature(array $jwt, string $jwksUrl): ?bool {
     if (($jwt['header']['alg'] ?? '') !== 'RS256') return null;
     $kid = $jwt['header']['kid'] ?? null;
-    $r = oidc_http_get_bearer(OIDC_JWKS, '');            // JWKS è pubblico: GET semplice
+    $r = oidc_http_get_bearer($jwksUrl, '');             // JWKS è pubblico: GET semplice
     if ($r['code'] !== 200) return null;
     $jwks = json_decode($r['body'], true);
     if (!is_array($jwks['keys'] ?? null)) return null;
@@ -105,29 +105,66 @@ function oidc_verify_signature(array $jwt): ?bool {
     return false;
 }
 
+// ─── Configurazione effettiva: settings.json ha la PRECEDENZA su config.php/env ──
+// Permette di configurare l'SSO da Amministrazione → Impostazioni (dinamico),
+// con i valori di config.php (e l'env per il secret) come fallback.
+function oidc_settings(): array {
+    $s = settings_load();
+    return is_array($s['oidc'] ?? null) ? $s['oidc'] : [];
+}
+function oidc_cfg(): array {
+    $o = oidc_settings();
+    $pick = fn(string $k, string $const) => (isset($o[$k]) && $o[$k] !== '') ? (string) $o[$k] : $const;
+    // il secret in settings è cifrato; se assente si usa quello d'ambiente
+    $secret = (($o['secret'] ?? '') !== '') ? secret_decrypt((string) $o['secret']) : OIDC_CLIENT_SECRET;
+    return [
+        'client_id'   => $pick('client_id', OIDC_CLIENT_ID),
+        'secret'      => $secret,
+        'issuer'      => $pick('issuer', OIDC_ISSUER),
+        'authz'       => $pick('authz', OIDC_AUTHZ),
+        'token'       => $pick('token', OIDC_TOKEN),
+        'userinfo'    => $pick('userinfo', OIDC_USERINFO),
+        'jwks'        => $pick('jwks', OIDC_JWKS),
+        'endsession'  => $pick('endsession', OIDC_ENDSESSION),
+        'redirect'    => $pick('redirect', OIDC_REDIRECT),
+        'scopes'      => $pick('scopes', OIDC_SCOPES),
+        'admin_group' => $pick('admin_group', OIDC_ADMIN_GROUP),
+        'rw_group'    => $pick('rw_group', OIDC_RW_GROUP),
+    ];
+}
+// SSO attivo se c'è client_id+secret e (toggle UI true) oppure (retrocompat: secret da env).
+function oidc_enabled(): bool {
+    $c = oidc_cfg();
+    if ($c['secret'] === '' || $c['client_id'] === '') return false;
+    $o = oidc_settings();
+    if (array_key_exists('enabled', $o)) return (bool) $o['enabled'];
+    return OIDC_CLIENT_SECRET !== '';
+}
+
 // ─── Mappatura gruppi AD → ruolo/permesso ────────────────────────────────────
-function oidc_perms_from_groups(array $groups): array {
-    if (in_array(OIDC_ADMIN_GROUP, $groups, true)) return ['role' => 'admin', 'permission' => 'write'];
-    if (in_array(OIDC_RW_GROUP, $groups, true))    return ['role' => 'user',  'permission' => 'write'];
+function oidc_perms_from_groups(array $groups, array $cfg): array {
+    if (in_array($cfg['admin_group'], $groups, true)) return ['role' => 'admin', 'permission' => 'write'];
+    if (in_array($cfg['rw_group'], $groups, true))    return ['role' => 'user',  'permission' => 'write'];
     return ['role' => 'user', 'permission' => 'read'];     // default: sola lettura
 }
 
 // ─── Step 1: avvia il flusso (redirect all'authorization_endpoint) ───────────
 function oidc_login(): void {
-    if (!OIDC_ENABLED) { header('Location: index.php'); exit; }
+    if (!oidc_enabled()) { header('Location: index.php'); exit; }
+    $c = oidc_cfg();
     $state = bin2hex(random_bytes(32));
     $nonce = bin2hex(random_bytes(32));
     $_SESSION['oidc_state'] = $state;
     $_SESSION['oidc_nonce'] = $nonce;
     $q = http_build_query([
         'response_type' => 'code',
-        'client_id'     => OIDC_CLIENT_ID,
-        'redirect_uri'  => OIDC_REDIRECT,
-        'scope'         => OIDC_SCOPES,
+        'client_id'     => $c['client_id'],
+        'redirect_uri'  => $c['redirect'],
+        'scope'         => $c['scopes'],
         'state'         => $state,
         'nonce'         => $nonce,
     ]);
-    header('Location: ' . OIDC_AUTHZ . '?' . $q);
+    header('Location: ' . $c['authz'] . '?' . $q);
     exit;
 }
 
@@ -140,7 +177,8 @@ function oidc_fail(string $msg): void {
 
 // ─── Step 2: callback (scambio code → token → userinfo → provisioning) ───────
 function oidc_callback(): void {
-    if (!OIDC_ENABLED) { header('Location: index.php'); exit; }
+    if (!oidc_enabled()) { header('Location: index.php'); exit; }
+    $c = oidc_cfg();
 
     if (!empty($_GET['error'])) oidc_fail('accesso negato dal provider (' . preg_replace('/[^a-zA-Z0-9_\-]/', '', (string) $_GET['error']) . ').');
 
@@ -155,11 +193,11 @@ function oidc_callback(): void {
     if ($code === '') oidc_fail('codice di autorizzazione mancante.');
 
     // Scambio del code (client_secret_basic).
-    $tr = oidc_http_post(OIDC_TOKEN, [
+    $tr = oidc_http_post($c['token'], [
         'grant_type'   => 'authorization_code',
         'code'         => $code,
-        'redirect_uri' => OIDC_REDIRECT,
-    ], OIDC_CLIENT_ID, OIDC_CLIENT_SECRET);
+        'redirect_uri' => $c['redirect'],
+    ], $c['client_id'], $c['secret']);
     if ($tr['code'] !== 200) oidc_fail('scambio del token fallito.');
     $tok = json_decode($tr['body'], true);
     $idToken     = (string) ($tok['id_token'] ?? '');
@@ -172,9 +210,9 @@ function oidc_callback(): void {
     $claims = $jwt['payload'];
     $iss = (string) ($claims['iss'] ?? '');
     $aud = $claims['aud'] ?? '';
-    $audOk = is_array($aud) ? in_array(OIDC_CLIENT_ID, $aud, true) : ($aud === OIDC_CLIENT_ID);
+    $audOk = is_array($aud) ? in_array($c['client_id'], $aud, true) : ($aud === $c['client_id']);
     $exp = (int) ($claims['exp'] ?? 0);
-    if (rtrim($iss, '/') !== rtrim(OIDC_ISSUER, '/')) oidc_fail('issuer non valido.');
+    if (rtrim($iss, '/') !== rtrim($c['issuer'], '/')) oidc_fail('issuer non valido.');
     if (!$audOk) oidc_fail('audience non valida.');
     if ($exp <= time() - 60) oidc_fail('token scaduto.');
     if ($nonce === '' || !hash_equals($nonce, (string) ($claims['nonce'] ?? ''))) oidc_fail('nonce non valido.');
@@ -182,13 +220,13 @@ function oidc_callback(): void {
 
     // Verifica firma RS256 (best-effort): blocca solo se la firma è ESPLICITAMENTE errata.
     if (OIDC_VERIFY_SIGNATURE) {
-        $sig = oidc_verify_signature($jwt);
+        $sig = oidc_verify_signature($jwt, $c['jwks']);
         if ($sig === false) oidc_fail('firma del token non valida.');
     }
 
     // userinfo per claim aggiornati (in particolare i gruppi).
     $info = [];
-    $ur = oidc_http_get_bearer(OIDC_USERINFO, $accessToken);
+    $ur = oidc_http_get_bearer($c['userinfo'], $accessToken);
     if ($ur['code'] === 200) { $j = json_decode($ur['body'], true); if (is_array($j)) $info = $j; }
     $claims = array_merge($claims, $info);
 
@@ -205,7 +243,7 @@ function oidc_callback(): void {
 
     $groups = [];
     if (isset($claims['groups']) && is_array($claims['groups'])) $groups = array_values(array_filter($claims['groups'], 'is_string'));
-    $perms = oidc_perms_from_groups($groups);
+    $perms = oidc_perms_from_groups($groups, $c);
 
     // Provisioning / aggiornamento in users.json (utente SSO, senza password locale).
     $data = users_load();

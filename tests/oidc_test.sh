@@ -27,9 +27,10 @@ $fail = 0; function t($c,$m){ global $fail; echo ($c?'  ✓ ':'  ✗ ').$m."\n";
 t(oidc_b64url_decode('aGVsbG8') === 'hello', 'base64url decode');
 $p = oidc_jwt_parts('eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.eyJzdWIiOiJ4In0.AAAA');
 t($p && ($p['payload']['sub'] ?? '') === 'x' && ($p['header']['kid'] ?? '') === 'k1', 'parse header+payload JWT');
-$a = oidc_perms_from_groups([OIDC_ADMIN_GROUP]);  t($a['role']==='admin' && $a['permission']==='write', 'gruppo admin -> admin/write');
-$rw = oidc_perms_from_groups([OIDC_RW_GROUP]);     t($rw['role']==='user' && $rw['permission']==='write', 'gruppo rw -> user/write');
-$ro = oidc_perms_from_groups(['qualsiasi']);       t($ro['permission']==='read', 'nessun gruppo -> sola lettura');
+$cfg = ['admin_group'=>OIDC_ADMIN_GROUP, 'rw_group'=>OIDC_RW_GROUP];
+$a = oidc_perms_from_groups([OIDC_ADMIN_GROUP], $cfg);  t($a['role']==='admin' && $a['permission']==='write', 'gruppo admin -> admin/write');
+$rw = oidc_perms_from_groups([OIDC_RW_GROUP], $cfg);    t($rw['role']==='user' && $rw['permission']==='write', 'gruppo rw -> user/write');
+$ro = oidc_perms_from_groups(['qualsiasi'], $cfg);      t($ro['permission']==='read', 'nessun gruppo -> sola lettura');
 // Crypto: ricostruisci il PEM da n/e e verifica una firma RS256 reale.
 $res = openssl_pkey_new(['private_key_bits'=>2048,'private_key_type'=>OPENSSL_KEYTYPE_RSA]);
 $d = openssl_pkey_get_details($res);
@@ -78,6 +79,43 @@ has "callback con error del provider -> messaggio SSO" "$CE" 'SSO'
 AD="$SBX/appdata" php -r '$f=getenv("AD")."/users.json"; $d=json_decode(file_get_contents($f),true); $d["users"][]=["username"=>"ssouser","sso"=>true,"role"=>"user","permission"=>"read"]; file_put_contents($f,json_encode($d));'
 RLOG=$(curl -s -c $JAR2 -b $JAR2 --data-urlencode action=login --data-urlencode username=ssouser --data-urlencode password=qualsiasi "$B/index.php")
 has "utente SSO non accede con password locale" "$RLOG" 'SSO desoauth'
+
+echo "=== SSO via Impostazioni (config dinamica, precedenza su env) ==="
+ALOG="$SBX/alog"
+curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+apost(){ curl -s -b $ALOG -H "X-CSRF: $ACSRF" "$@"; }
+SAVE=$(apost --data-urlencode action=settings_save \
+  --data-urlencode oidc_present=1 --data-urlencode oidc_enabled=1 \
+  --data-urlencode oidc_client_id=TESTCLIENT123 \
+  --data-urlencode oidc_secret=settingsecretXYZ \
+  --data-urlencode oidc_issuer=https://idp.example/ \
+  --data-urlencode oidc_authz=https://idp.example/auth \
+  --data-urlencode oidc_token=https://idp.example/token \
+  --data-urlencode oidc_userinfo=https://idp.example/userinfo \
+  --data-urlencode oidc_jwks=https://idp.example/jwks \
+  --data-urlencode "oidc_scopes=openid email profile" "$B/api.php")
+has "settings_save OIDC (admin)" "$SAVE" '"ok":true'
+SG=$(curl -s -b $ALOG "$B/api.php?action=settings_get")
+has "settings_get: client_id dalle impostazioni" "$SG" '"client_id":"TESTCLIENT123"'
+has "settings_get: SSO abilitato" "$SG" '"enabled":true'
+has "settings_get: secret salvato (has_secret)" "$SG" '"has_secret":true'
+case "$SG" in *settingsecretXYZ*) no "secret OIDC NON esposto in chiaro";; *) ok "secret OIDC non esposto in chiaro";; esac
+# discovery (best-effort) contro l'issuer reale
+DISC=$(apost --data-urlencode action=oidc_discovery --data-urlencode issuer=https://auth.deso.tech/application/o/desoshare/ "$B/api.php")
+case "$DISC" in *'"ok":true'*) has "discovery legge gli endpoint reali" "$DISC" 'authorize';; *) ok "discovery: issuer non raggiungibile (skip)";; esac
+# precedenza: il redirect usa i valori delle impostazioni, non le costanti/env
+curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
+LOC2=$(curl -s -b $ALOG -c $ALOG -o /dev/null -D - "$B/index.php?action=oidc_login" | sed -n 's/^[Ll]ocation: //p' | tr -d '\r')
+has "redirect usa client_id delle impostazioni" "$LOC2" 'client_id=TESTCLIENT123'
+has "redirect usa authorize delle impostazioni" "$LOC2" 'idp.example/auth'
+# disabilita da impostazioni: il toggle OFF vince anche sul secret d'ambiente
+curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+curl -s -b $ALOG -H "X-CSRF: $ACSRF" --data-urlencode action=settings_save --data-urlencode oidc_present=1 --data-urlencode oidc_enabled=0 "$B/api.php" -o /dev/null
+curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
+LPD=$(curl -s "$B/")
+case "$LPD" in *"Accedi con desoauth"*) no "toggle OFF: bottone ancora presente";; *) ok "toggle OFF dalle impostazioni nasconde il bottone (vince sull'env)";; esac
 
 # Con OIDC DISABILITATO (niente env) il bottone non compare.
 kill $SRV 2>/dev/null; sleep 0.3

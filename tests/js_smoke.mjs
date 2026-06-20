@@ -191,11 +191,62 @@ async function runClientZip() {
   added.includes('docs/a.txt') ? ok('file aggiunto allo ZIP client-side') : bad(`file non aggiunto (${added.join(',')})`);
 }
 
+// Verifica della sezione SSO/OIDC nel pannello Impostazioni.
+async function runOidcSettings() {
+  console.log('\nCaso: Impostazioni → SSO/OpenID Connect');
+  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true });
+  const win = dom.window;
+  win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+  const settings = {
+    ok: true, site_title: 'Share', note_poll_ms: 1500, note_max_bytes: 2097152, default_quota_bytes: 0,
+    storage: { backend: 'local' },
+    oidc: { enabled: true, from_env: false, has_secret: true, client_id: 'CID123',
+      issuer: 'https://idp.example/', authz: 'https://idp.example/auth', token: 'https://idp.example/token',
+      userinfo: 'https://idp.example/ui', jwks: 'https://idp.example/jwks', endsession: 'https://idp.example/end',
+      redirect: 'https://share.deso.tech/index.php?action=oidc_callback', scopes: 'openid email profile',
+      admin_group: 'desoshare-admins', rw_group: 'desoshare-readwrite' },
+  };
+  const responses = {
+    settings_get: settings, list: listResponse,
+    users_list: { ok: true, users: [{ username: 'admin', role: 'admin', permission: 'write', quota_bytes: 0, quota_mb: 0 }] },
+    usage_list: { ok: true, is_s3: false, users: [{ username: 'admin', usage: 0, usage_h: '0 B', quota: 0, quota_h: 'illimitata', pct: null, stale: false }] },
+  };
+  win.fetch = async (url) => {
+    const action = (String(url).match(/action=([a-z_]+)/) || [])[1] || 'list';
+    const body = responses[action] || { ok: true };
+    return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  let loadError = null;
+  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.eval(appJs);
+  await new Promise(r => setTimeout(r, 30));
+  win.document.getElementById('btnAdmin').onclick();
+  await new Promise(r => setTimeout(r, 40));
+  win.document.querySelector('[data-sec="settings"]').onclick();   // tab Impostazioni
+  await new Promise(r => setTimeout(r, 40));
+  if (loadError) { bad(`Impostazioni SSO: errore ${loadError.message}`); return; }
+  const doc = win.document;
+  const tog = doc.getElementById('oidc_enabled');
+  tog && tog.checked ? ok('toggle "Abilita SSO" presente e attivo') : bad('toggle SSO mancante/spento');
+  const iss = doc.getElementById('oidc_issuer');
+  iss && iss.value === 'https://idp.example/' ? ok('Issuer precompilato') : bad(`Issuer errato (${iss && iss.value})`);
+  const cid = doc.getElementById('oidc_client_id');
+  cid && cid.value === 'CID123' ? ok('Client ID precompilato') : bad('Client ID errato');
+  const sec = doc.getElementById('oidc_secret');
+  sec && sec.type === 'password' && /invariato/.test(sec.placeholder) ? ok('Secret: campo password, placeholder "invariato"') : bad('campo secret errato');
+  const disco = doc.getElementById('oidc_disco');
+  disco && typeof disco.onclick === 'function' ? ok('bottone Discovery cablato') : bad('Discovery non cablato');
+  const grp = doc.getElementById('oidc_admin_group');
+  grp && grp.value === 'desoshare-admins' ? ok('Gruppo admin precompilato') : bad('Gruppo admin errato');
+}
+
 console.log('=== JS smoke test (jsdom) ===');
 await run('admin (lettura+scrittura)', true, true);
 await run('utente sola lettura', false, false);
 await runAdmin();
 await runClientZip();
+await runOidcSettings();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);

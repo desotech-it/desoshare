@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.11.0');
+define('APP_VERSION', '0.12.0');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -26,8 +26,10 @@ define('ZIP_CLIENT_MAX_BYTES', 1024 * 1024 * 1024);  // oltre ~1 GB totali → f
 define('ZIP_CLIENT_MAX_FILES', 200);         // oltre 200 file → fallback server-zip
 
 // ─── SSO / OpenID Connect (desoauth · Authentik) ─────────────────────────────
-// Il segreto NON è hardcodato: arriva dall'ambiente (es. variabile in .htaccess /
-// pannello hosting). L'SSO è attivo SOLO se il segreto è presente.
+// Questi sono i VALORI DI DEFAULT. La configurazione effettiva può essere
+// impostata da Amministrazione → Impostazioni (salvata cifrata in settings.json)
+// e ha la PRECEDENZA su queste costanti/ambiente — vedi oidc_cfg() in oidc.php.
+// Il segreto da ambiente NON è hardcodato: arriva da env (es. SetEnv in .htaccess).
 define('OIDC_CLIENT_SECRET', getenv('OIDC_CLIENT_SECRET') ?: '');
 define('OIDC_ENABLED', OIDC_CLIENT_SECRET !== '');
 define('OIDC_CLIENT_ID', 'Pubj2VIXKulUumtmb7bBiAuu7E9ddUan7VPwJWg5');

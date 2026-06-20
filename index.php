@@ -31,17 +31,19 @@ if (!users_exist()) {
 if ($action === 'logout') {
     $wasSso = !empty(current_user()['sso']);
     $idHint = (string) ($_SESSION['oidc_id_token'] ?? '');
+    $ssoEnabled = oidc_enabled();
     $_SESSION = []; session_destroy();
-    if (OIDC_ENABLED && $wasSso) {       // chiude anche la sessione su desoauth
+    if ($ssoEnabled && $wasSso) {       // chiude anche la sessione su desoauth
+        $endsession = oidc_cfg()['endsession'];
         $q = ['id_token_hint' => $idHint];
-        header('Location: ' . OIDC_ENDSESSION . ($idHint !== '' ? '?' . http_build_query($q) : '')); exit;
+        header('Location: ' . $endsession . ($idHint !== '' ? '?' . http_build_query($q) : '')); exit;
     }
     header('Location: index.php'); exit;
 }
 
 // ─── SSO (OpenID Connect) ────────────────────────────────────────────────────
-if (OIDC_ENABLED && $action === 'oidc_login')    { oidc_login();    exit; }
-if (OIDC_ENABLED && $action === 'oidc_callback') { oidc_callback(); exit; }
+if (oidc_enabled() && $action === 'oidc_login')    { oidc_login();    exit; }
+if (oidc_enabled() && $action === 'oidc_callback') { oidc_callback(); exit; }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
 if (!current_user()) {
@@ -116,7 +118,7 @@ function render_login(?string $err): void {
         <label>Password</label>
         <input type="password" name="password" autocomplete="current-password" required>
         <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
-        <?php if (OIDC_ENABLED): ?>
+        <?php if (oidc_enabled()): ?>
         <div class="sso-sep"><span>oppure</span></div>
         <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
         <?php endif; ?>

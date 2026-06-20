@@ -449,6 +449,38 @@
       userForm({ username: b.dataset.u, role: b.dataset.r, permission: b.dataset.p, quota_mb: parseInt(b.dataset.q || '0', 10) }));
   }
 
+  function oidcSection(o) {
+    const on = !!o.enabled;
+    const envNote = o.from_env ? ' <span class="muted" style="font-size:11px">(secret presente anche da ambiente)</span>' : '';
+    const f = (id, label, val, ph = '') =>
+      `<label style="margin-top:8px">${label}</label><input type="text" id="${id}" value="${esc(val || '')}" placeholder="${esc(ph)}" autocomplete="off">`;
+    return `
+      <h3 style="margin:18px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-shield-lock"></i> SSO / OpenID Connect</h3>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Accesso "Accedi con desoauth" via OAuth2/OIDC. I valori qui hanno la precedenza su quelli in <code>.htaccess</code>/ambiente.</p>
+      <label class="sw"><input type="checkbox" id="oidc_enabled" ${on ? 'checked' : ''}> Abilita SSO${envNote}</label>
+      <div id="oidc_box" style="margin-top:8px${on ? '' : ';display:none'}">
+        <label style="margin-top:8px">Issuer</label>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="oidc_issuer" value="${esc(o.issuer || '')}" placeholder="https://auth.deso.tech/application/o/desoshare/" autocomplete="off" style="flex:1">
+          <button class="btn" id="oidc_disco" type="button" title="Compila gli endpoint dall'issuer"><i class="ti ti-download"></i> Discovery</button>
+        </div>
+        <span id="oidc_discomsg" class="muted" style="font-size:12px"></span>
+        ${f('oidc_client_id', 'Client ID', o.client_id, 'Pubj2…')}
+        <label style="margin-top:8px">Client Secret</label>
+        <input type="password" id="oidc_secret" value="" autocomplete="new-password" placeholder="${o.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Vuoto = non modificare. Salvato cifrato sul server.</p>
+        ${f('oidc_authz', 'Authorization endpoint', o.authz)}
+        ${f('oidc_token', 'Token endpoint', o.token)}
+        ${f('oidc_userinfo', 'Userinfo endpoint', o.userinfo)}
+        ${f('oidc_jwks', 'JWKS URI', o.jwks)}
+        ${f('oidc_endsession', 'End-session endpoint', o.endsession)}
+        ${f('oidc_redirect', 'Redirect URI', o.redirect)}
+        ${f('oidc_scopes', 'Scopes', o.scopes, 'openid email profile')}
+        ${f('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare-admins')}
+        ${f('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare-readwrite')}
+      </div>`;
+  }
+
   async function renderSettingsSection(body) {
     const s = await apiGet('settings_get');
     if (!s.ok) { body.textContent = s.error || 'Errore'; return; }
@@ -486,6 +518,8 @@
         <div style="margin-top:8px"><button class="btn" id="s3_testbtn"><i class="ti ti-plug-connected"></i> Prova connessione</button> <span id="s3_testmsg" class="muted" style="font-size:12px"></span></div>
       </div>
 
+      ${oidcSection(s.oidc || {})}
+
       <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" id="set_save"><i class="ti ti-device-floppy"></i> Salva</button></div>`;
 
     const backendSel = $('#set_backend', modalBg);
@@ -509,13 +543,39 @@
       msg.style.color = r.ok ? 'var(--ok, #1a7f37)' : 'var(--danger, #c0392b)';
     };
 
+    // ─ SSO / OIDC ─
+    const ssoEnabled = $('#oidc_enabled', modalBg);
+    if (ssoEnabled) ssoEnabled.onchange = () => { $('#oidc_box', modalBg).style.display = ssoEnabled.checked ? '' : 'none'; };
+    const val = id => { const el = $('#' + id, modalBg); return el ? el.value.trim() : ''; };
+    const oidcfields = () => ({
+      oidc_present: '1',
+      oidc_enabled: ssoEnabled && ssoEnabled.checked ? '1' : '0',
+      oidc_client_id: val('oidc_client_id'), oidc_secret: $('#oidc_secret', modalBg) ? $('#oidc_secret', modalBg).value : '',
+      oidc_issuer: val('oidc_issuer'), oidc_authz: val('oidc_authz'), oidc_token: val('oidc_token'),
+      oidc_userinfo: val('oidc_userinfo'), oidc_jwks: val('oidc_jwks'), oidc_endsession: val('oidc_endsession'),
+      oidc_redirect: val('oidc_redirect'), oidc_scopes: val('oidc_scopes'),
+      oidc_admin_group: val('oidc_admin_group'), oidc_rw_group: val('oidc_rw_group'),
+    });
+    const disco = $('#oidc_disco', modalBg);
+    if (disco) disco.onclick = async () => {
+      const msg = $('#oidc_discomsg', modalBg);
+      msg.textContent = 'lettura discovery…'; msg.style.color = '';
+      const r = await apiPost('oidc_discovery', { issuer: val('oidc_issuer') });
+      if (!r.ok) { msg.textContent = r.error || 'Discovery fallita'; msg.style.color = 'var(--danger, #c0392b)'; return; }
+      const d = r.discovery;
+      const set = (id, v) => { const el = $('#' + id, modalBg); if (el && v) el.value = v; };
+      set('oidc_authz', d.authz); set('oidc_token', d.token); set('oidc_userinfo', d.userinfo);
+      set('oidc_jwks', d.jwks); set('oidc_endsession', d.endsession);
+      msg.textContent = 'Endpoint compilati dal discovery ✓'; msg.style.color = 'var(--ok, #1a7f37)';
+    };
+
     $('#set_save', modalBg).onclick = async () => {
       const r = await apiPost('settings_save', Object.assign({
         site_title: $('#set_title', modalBg).value,
         note_poll_ms: $('#set_poll', modalBg).value,
         note_max_mb: $('#set_maxmb', modalBg).value,
         default_quota_mb: $('#set_defquota', modalBg).value,
-      }, s3fields()));
+      }, s3fields(), oidcfields()));
       if (r.ok) toast('Impostazioni salvate'); else toast(r.error || 'Errore', true);
     };
   }

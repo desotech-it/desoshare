@@ -160,6 +160,8 @@ body.dragging .dropzone-hint { display: flex; }
 .quota-bar .q-amber { background: #c98a00; }
 .quota-bar .q-red   { background: #c0392b; }
 .quota-txt { font-size: 11px; color: var(--tertiary); }
+.sw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.sw input { width: auto; margin: 0; }
 .modal.wide { width: 520px; }
 .editor-modal { width: min(900px, 96vw); }
 .editor-host { border: 1px solid var(--border-strong); border-radius: 8px; height: min(62vh, 480px); overflow: hidden; }

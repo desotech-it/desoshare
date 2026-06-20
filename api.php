@@ -1,6 +1,7 @@
 <?php
 // Endpoint delle operazioni (AJAX + download). Tutte richiedono login.
 require_once __DIR__ . '/lib.php';
+require_once __DIR__ . '/oidc.php';   // helper config OIDC usati dalle impostazioni
 boot();
 
 $action = $_REQUEST['action'] ?? '';
@@ -22,6 +23,7 @@ switch ($action) {
     // Modifiche (POST + CSRF)
     case 'settings_save': csrf_check(); action_settings_save(); break;
     case 's3_test':      csrf_check(); action_s3_test();      break;
+    case 'oidc_discovery': csrf_check(); action_oidc_discovery(); break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
@@ -460,8 +462,30 @@ function action_settings_get(): void {
             'access_key'   => (string) ($s3['key'] ?? ''),
             'has_secret'   => ($s3['secret'] ?? '') !== '',   // mai esposto in chiaro
         ],
+        'oidc'   => oidc_settings_view(),
         'defaults'       => ['site_title' => APP_NAME, 'note_poll_ms' => NOTE_POLL_MS, 'note_max_bytes' => NOTE_MAX_BYTES],
     ]);
+}
+// Vista (sicura) della config OIDC per il pannello admin: valori effettivi, MAI il secret.
+function oidc_settings_view(): array {
+    $o = is_array(settings_load()['oidc'] ?? null) ? settings_load()['oidc'] : [];
+    $c = oidc_cfg();   // valori effettivi (settings → fallback config/env)
+    return [
+        'enabled'     => oidc_enabled(),
+        'from_env'    => OIDC_CLIENT_SECRET !== '',                 // secret presente anche da ambiente
+        'has_secret'  => ($o['secret'] ?? '') !== '' || OIDC_CLIENT_SECRET !== '',
+        'client_id'   => $c['client_id'],
+        'issuer'      => $c['issuer'],
+        'authz'       => $c['authz'],
+        'token'       => $c['token'],
+        'userinfo'    => $c['userinfo'],
+        'jwks'        => $c['jwks'],
+        'endsession'  => $c['endsession'],
+        'redirect'    => $c['redirect'],
+        'scopes'      => $c['scopes'],
+        'admin_group' => $c['admin_group'],
+        'rw_group'    => $c['rw_group'],
+    ];
 }
 function action_settings_save(): void {
     require_admin();
@@ -493,9 +517,59 @@ function action_settings_save(): void {
         $s['storage_backend'] = 'local';
     }
 
+    // ─ SSO / OpenID Connect (config dinamica) ─
+    if (isset($_POST['oidc_present'])) {
+        $s['oidc'] = oidc_config_from_post($s['oidc'] ?? []);
+    }
+
     settings_save($s);
-    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . $backend);
+    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . $backend . ' sso=' . (oidc_enabled() ? 'on' : 'off'));
     json_out(['ok' => true]);
+}
+
+// Compone la config OIDC dai campi POST, conservando il secret cifrato se non reinserito.
+function oidc_config_from_post(array $prev): array {
+    $secretIn = (string) ($_POST['oidc_secret'] ?? '');
+    $t = fn(string $k) => trim((string) ($_POST[$k] ?? ''));
+    return [
+        'enabled'     => ($_POST['oidc_enabled'] ?? '') === '1',
+        'client_id'   => $t('oidc_client_id'),
+        'issuer'      => $t('oidc_issuer'),
+        'authz'       => $t('oidc_authz'),
+        'token'       => $t('oidc_token'),
+        'userinfo'    => $t('oidc_userinfo'),
+        'jwks'        => $t('oidc_jwks'),
+        'endsession'  => $t('oidc_endsession'),
+        'redirect'    => $t('oidc_redirect'),
+        'scopes'      => $t('oidc_scopes'),
+        'admin_group' => $t('oidc_admin_group'),
+        'rw_group'    => $t('oidc_rw_group'),
+        // secret vuoto = mantieni quello già salvato (cifrato)
+        'secret'      => $secretIn !== '' ? secret_encrypt($secretIn) : (string) ($prev['secret'] ?? ''),
+    ];
+}
+
+// ─── SSO: discovery (.well-known) per auto-compilare gli endpoint dall'issuer ──
+function action_oidc_discovery(): void {
+    require_admin();
+    $issuer = rtrim(trim((string) ($_POST['issuer'] ?? '')), '/');
+    if (!preg_match('#^https://#', $issuer)) json_out(['ok' => false, 'error' => 'Inserisci un issuer https valido'], 400);
+    $url = $issuer . '/.well-known/openid-configuration';
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_SSL_VERIFYPEER => true, CURLOPT_SSL_VERIFYHOST => 2, CURLOPT_TIMEOUT => 12, CURLOPT_CONNECTTIMEOUT => 8]);
+    $body = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    if ($code !== 200 || $body === false) json_out(['ok' => false, 'error' => 'Discovery non raggiungibile (HTTP ' . $code . ')'], 502);
+    $d = json_decode((string) $body, true);
+    if (!is_array($d)) json_out(['ok' => false, 'error' => 'Discovery non valido'], 502);
+    json_out(['ok' => true, 'discovery' => [
+        'issuer'     => (string) ($d['issuer'] ?? $issuer),
+        'authz'      => (string) ($d['authorization_endpoint'] ?? ''),
+        'token'      => (string) ($d['token_endpoint'] ?? ''),
+        'userinfo'   => (string) ($d['userinfo_endpoint'] ?? ''),
+        'jwks'       => (string) ($d['jwks_uri'] ?? ''),
+        'endsession' => (string) ($d['end_session_endpoint'] ?? ''),
+    ]]);
 }
 
 // Compone la config S3 dai campi POST, conservando il secret esistente se non reinserito.

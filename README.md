@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.11.0** · stato: in sviluppo (0.x.x)
+Versione: **0.12.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -129,25 +129,34 @@ accesso, accanto a `public_html`.
 
 Oltre al login locale, l'app supporta l'accesso **SSO** tramite OpenID Connect
 (Authorization Code) verso un provider come **desoauth/Authentik**. È in **PHP
-vanilla** (cURL + openssl, nessun Composer) e si attiva quando il **segreto client
-è presente nell'ambiente**:
+vanilla** (cURL + openssl, nessun Composer).
+
+**Configurazione consigliata — dall'interfaccia**: vai in *Amministrazione →
+Impostazioni → SSO / OpenID Connect*, attiva **Abilita SSO** e compila i campi
+(client_id, **client secret**, issuer, endpoint, redirect_uri, scopes e i nomi dei
+gruppi). Il pulsante **Discovery** compila automaticamente gli endpoint a partire
+dall'issuer. Il secret è salvato **cifrato** in `settings.json` e questi valori
+hanno la **precedenza** su `config.php`/ambiente.
+
+**In alternativa — da ambiente** (`.htaccess` o pannello hosting), utile per
+attivarlo prima del primo accesso:
 
 ```apache
-# es. in .htaccess o nella configurazione PHP dell'hosting
 SetEnv OIDC_CLIENT_SECRET "il-tuo-client-secret"
-# opzionali: nomi dei gruppi AD per la mappatura dei permessi
+# opzionali: nomi dei gruppi per la mappatura dei permessi
 SetEnv OIDC_ADMIN_GROUP "desoshare-admins"
 SetEnv OIDC_RW_GROUP    "desoshare-readwrite"
 ```
 
-Gli endpoint del provider, il `client_id` e il `redirect_uri`
-(`…/index.php?action=oidc_callback`) si configurano in `config.php`. Quando
-`OIDC_CLIENT_SECRET` è impostato, nella pagina di login compare il pulsante
-**"Accedi con desoauth"**. Al primo accesso l'utente viene creato automaticamente
-(senza password locale) con i permessi derivati dai suoi gruppi: gruppo admin →
+Gli endpoint, il `client_id` e il `redirect_uri`
+(`…/index.php?action=oidc_callback`) hanno dei default in `config.php`. Quando
+l'SSO è attivo, nella pagina di login compare il pulsante **"Accedi con
+desoauth"**. Al primo accesso l'utente viene creato automaticamente (senza
+password locale) con i permessi derivati dai suoi gruppi: gruppo admin →
 amministratore, gruppo read-write → lettura e scrittura, altrimenti **sola
 lettura**. Il login locale resta disponibile come fallback (es. per l'admin di
-bootstrap). Senza il segreto nell'ambiente l'SSO resta disattivato.
+bootstrap). Senza configurazione (né impostazioni né ambiente) l'SSO resta
+disattivato.
 
 ## Versioning e changelog
 
