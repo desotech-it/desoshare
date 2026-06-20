@@ -6,6 +6,38 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.11.0] - 2026-06-20
+
+### Aggiunto
+- **Download ZIP diretto da Wasabi (S3)**: quando lo storage è S3, gli archivi
+  ZIP (cartelle e selezioni multiple) vengono costruiti **nel browser** scaricando
+  ogni file **direttamente da Wasabi** tramite URL **presigned** (banda del server
+  ~zero). Nuovo endpoint autenticato **`zip_manifest`** (`api.php`) che, dato
+  `paths[]`, espande ricorsivamente i file con la stessa struttura del server-zip
+  e restituisce gli URL presigned (scadenza 900 s) insieme a `total`, `count` e
+  `zipname`. Variante per le condivisioni pubbliche in `share.php`
+  (`?zipmanifest=1`), confinata a `share_resolve()` e con scadenza presigned **≤**
+  scadenza del token. **JSZip** vendorizzato in locale (`assets/vendor/jszip.min.js`,
+  caricato lazy, nessun CDN a runtime), modalità **STORE** (nessuna ricompressione).
+- **Fallback automatico e trasparente** al server-zip esistente (`action=zip`): se
+  il backend è locale, se l'archivio supera i limiti (oltre ~1 GB totali o 200
+  file → la RAM del browser non basterebbe) o per **qualsiasi** errore di
+  rete/CORS/JSZip, il download avviene come prima dal server. I download non
+  vengono mai degradati.
+
+### Modificato
+- `Content-Disposition` dei download conforme alla **RFC 6266**
+  (`filename="<fallback-ascii>"; filename*=UTF-8''<percent-encoded>`), sia negli
+  URL presigned S3 sia nello streaming locale, con sanificazione dei caratteri di
+  controllo. I nomi ASCII restano invariati.
+
+### Sicurezza
+- Header **`Referrer-Policy: no-referrer`** sulle pagine app e share: gli URL
+  presigned non trapelano nel `Referer` verso terze parti.
+- **CORS richiesta sul bucket** per il download diretto cross-origin (origine
+  esatta `https://share.deso.tech`, metodi `GET`/`HEAD`). Senza CORS il client-zip
+  fallisce e si ricade automaticamente sul server-zip (nessuna interruzione).
+
 ## [0.10.0] - 2026-06-20
 
 ### Aggiunto
@@ -203,6 +235,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.11.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.11.0
 [0.10.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.10.0
 [0.9.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.9.0
 [0.8.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.8.0

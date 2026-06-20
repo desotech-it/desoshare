@@ -271,7 +271,7 @@ function stream_file(string $path, string $name): void {
 
     header('Accept-Ranges: bytes');
     header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
+    header('Content-Disposition: ' . content_disposition($name));   // RFC 6266 (ASCII + filename*)
     header('Content-Length: ' . $length);
     header('Cache-Control: no-store');
     if ($partial) {
@@ -338,6 +338,62 @@ function zip_logical(array $logicalPaths): string {
     $zip->close();
     foreach ($temps as $tf) @unlink($tf);
     return $tmp;
+}
+
+// Espande RICORSIVAMENTE una lista di percorsi LOGICI nei file che li compongono,
+// con la STESSA struttura/traversal di zip_logical() (così il client-zip e il
+// server-zip producono archivi identici). Ritorna un elenco piatto:
+//   [['name' => <percorso dentro lo zip>, 'logical' => <chiave storage>, 'size' => N], ...]
+// Le cartelle VUOTE sono incluse come marker (name termina con '/', logical = null).
+function zip_manifest_files(array $logicalPaths): array {
+    $out = [];
+    $add = function (string $logical, string $zipPath) use (&$add, &$out) {
+        $t = storage()->typeOf($logical);
+        if ($t === 'dir') {
+            $items = storage()->listDir($logical);
+            if (!$items) { $out[] = ['name' => $zipPath . '/', 'logical' => null, 'size' => 0]; return; }
+            foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
+        } elseif ($t === 'file') {
+            $out[] = ['name' => $zipPath, 'logical' => $logical, 'size' => (int) storage()->sizeOf($logical)];
+        }
+    };
+    foreach ($logicalPaths as $lp) $add($lp, basename($lp) ?: 'root');
+    return $out;
+}
+
+// Costruisce la risposta del manifest ZIP per il client-zip (download diretto da S3).
+// $logicalPaths: chiavi storage ASSOLUTE (già confinate alla sandbox/condivisione).
+// $zipname: nome dell'archivio risultante. $ttl: scadenza (s) delle presigned.
+// Ritorna mode:'server' se il backend è locale o se l'archivio è troppo grande/numeroso
+// (in quel caso il client usa il fallback server-zip esistente); altrimenti mode:'client'
+// con la lista dei file e i loro URL presigned GET (browser ← Wasabi).
+function zip_manifest_build(array $logicalPaths, string $zipname, int $ttl): array {
+    if (!storage_is_s3()) {
+        return ['ok' => true, 'mode' => 'server', 'zipname' => $zipname];
+    }
+    $files = zip_manifest_files($logicalPaths);
+    // Limiti: lo zip client-side tiene tutto in RAM nel browser.
+    $total = 0; $count = 0;
+    foreach ($files as $f) { if ($f['logical'] !== null) { $total += (int) $f['size']; $count++; } }
+    if ($total > ZIP_CLIENT_MAX_BYTES || $count > ZIP_CLIENT_MAX_FILES) {
+        return ['ok' => true, 'mode' => 'server', 'zipname' => $zipname, 'total' => $total, 'count' => $count];
+    }
+    $backend = storage();
+    $out = [];
+    foreach ($files as $f) {
+        if ($f['logical'] === null) {            // marker di cartella vuota: niente URL
+            $out[] = ['name' => $f['name'], 'url' => null, 'size' => 0];
+            continue;
+        }
+        $url = method_exists($backend, 'presignGet')
+            ? $backend->presignGet($f['logical'], $ttl, basename($f['name']))
+            : null;
+        if ($url === null) {                     // impossibile firmare → degrada al server-zip
+            return ['ok' => true, 'mode' => 'server', 'zipname' => $zipname, 'total' => $total, 'count' => $count];
+        }
+        $out[] = ['name' => $f['name'], 'url' => $url, 'size' => (int) $f['size']];
+    }
+    return ['ok' => true, 'mode' => 'client', 'files' => $out, 'total' => $total, 'count' => $count, 'zipname' => $zipname];
 }
 
 // ─── Condivisioni con link a scadenza ────────────────────────────────────────

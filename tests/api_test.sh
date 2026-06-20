@@ -16,6 +16,7 @@ PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); echo "  ✓ $1"; }
 no(){ FAIL=$((FAIL+1)); echo "  ✗ $1 — ${2:-}"; }
 has(){ case "$2" in *"$3"*) ok "$1";; *) no "$1" "ricevuto: ${2:0:140}";; esac; }
+hasnt(){ case "$2" in *"$3"*) no "$1" "non atteso: ${2:0:140}";; *) ok "$1";; esac; }
 md5of(){ openssl dgst -md5 "$1" | sed 's/.*= //;s/.* //'; }
 
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
@@ -75,6 +76,11 @@ has "header Accept-Ranges" "$RH" "Accept-Ranges: bytes"
 echo "=== Download ZIP ==="
 curl -s -b $JAR "$B/api.php?action=zip&paths[]=docs&paths[]=up.bin" -o "$SBX/z.zip"
 has "zip valido (firma PK)" "$(head -c2 "$SBX/z.zip")" "PK"
+# Backend LOCALE: zip_manifest deve ritornare mode:'server' (il client userà il server-zip).
+ZM=$(curl -s -b $JAR "$B/api.php?action=zip_manifest&paths[]=docs&paths[]=up.bin")
+has "zip_manifest locale → mode:server" "$ZM" '"mode":"server"'
+hasnt "zip_manifest locale: nessun URL presigned" "$ZM" 'X-Amz-Signature'
+# action=zip resta il fallback e continua a produrre uno zip valido (asserito sopra).
 
 echo "=== Sicurezza ==="
 has "CSRF mancante → 419" "$(curl -s -o /dev/null -w '%{http_code}' -b $JAR --data-urlencode path= --data-urlencode name=x "$B/api.php?action=mkdir")" "419"

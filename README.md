@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.7.0** · stato: in sviluppo (0.x.x)
+Versione: **0.11.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -37,7 +37,12 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
 - **Download con HTTP Range**: ripresa dei download interrotti e download
   segmentato (più veloce con i download manager).
 - **Download ZIP**: comprime file e cartelle (anche selezioni multiple) in un
-  unico archivio.
+  unico archivio. Con lo storage **S3/Wasabi** l'archivio viene costruito **nel
+  browser** scaricando i file **direttamente da Wasabi** (URL presigned, banda del
+  server ~zero); se il backend è locale, se l'archivio è troppo grande (oltre ~1 GB
+  o 200 file) o per qualsiasi errore di rete/CORS, si ricade automaticamente e in
+  modo trasparente sull'archiviazione lato server. Richiede la **CORS** abilitata
+  sul bucket (vedi *Installazione*).
 - **Note collaborative** stile blocco note: i file di testo si aprono in un editor
   e più utenti possono modificarli **in tempo reale** (sincronizzazione tipo
   Etherpad, CRDT Yjs su relay PHP via polling, senza WebSocket né database).
@@ -109,6 +114,13 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
    compatibile**, inserisci endpoint, regione, bucket, Access Key e Secret, e usa
    **Prova connessione** prima di salvare. Senza configurazione i file restano in
    locale nella cartella `storage/`.
+5. (Solo S3, per il **download ZIP diretto da Wasabi**) abilita la **CORS** sul
+   bucket: origine esatta `https://share.deso.tech`, metodi `GET` e `HEAD`,
+   `AllowedHeader: *`, `ExposeHeader: Content-Length`, `MaxAgeSeconds: 3000`. La
+   configurazione CORS si imposta dalla console Wasabi (o con una chiave che abbia
+   il permesso `PutBucketCORS`). **Non è obbligatoria**: senza CORS il download ZIP
+   ricade automaticamente sull'archiviazione lato server (i download continuano a
+   funzionare).
 
 Le cartelle `storage/` e `appdata/` vengono create automaticamente al primo
 accesso, accanto a `public_html`.

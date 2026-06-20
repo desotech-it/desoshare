@@ -69,6 +69,8 @@ render_app(current_user());
 
 // ═══════════════════════════════════════════════════════════════════════════
 function page_head(string $title): string {
+    // Non trapelare gli URL presigned (download diretto da S3) nel header Referer.
+    header('Referrer-Policy: no-referrer');
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
     return '<!doctype html><html lang="it"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -135,7 +137,8 @@ function render_app(array $user): void {
          data-user="<?= h($user['username']) ?>"
          data-admin="<?= $isAdmin ? '1' : '0' ?>"
          data-write="<?= $canWrite ? '1' : '0' ?>"
-         data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>">
+         data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>"
+         data-jszipv="<?= @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js') ?>">
 
       <header class="topbar">
         <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(app_title()) ?></div>

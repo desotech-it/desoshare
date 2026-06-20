@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.10.0');
+define('APP_VERSION', '0.11.0');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -19,6 +19,11 @@ define('NOTE_POLL_MS', 1500);                // intervallo di sincronizzazione i
 // ─── Quota / consumo per-utente ──────────────────────────────────────────────
 define('USAGE_TTL', 300);                    // validità (s) del consumo in cache prima della riconciliazione
 define('QUOTA_MAX_MB', 4 * 1024 * 1024);     // tetto della quota impostabile (4 TB) — evita overflow su PHP 32-bit
+
+// ─── ZIP diretto da S3 (client-side, banda server ~zero) ─────────────────────
+define('ZIP_PRESIGN_TTL', 900);              // scadenza (s) degli URL presigned del manifest ZIP
+define('ZIP_CLIENT_MAX_BYTES', 1024 * 1024 * 1024);  // oltre ~1 GB totali → fallback server-zip (RAM del browser)
+define('ZIP_CLIENT_MAX_FILES', 200);         // oltre 200 file → fallback server-zip
 
 // ─── SSO / OpenID Connect (desoauth · Authentik) ─────────────────────────────
 // Il segreto NON è hardcodato: arriva dall'ambiente (es. variabile in .htaccess /

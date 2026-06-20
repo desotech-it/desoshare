@@ -102,6 +102,25 @@ if command -v unzip >/dev/null; then
   has "zip contiene sub/nota.md" "$(cat $SBX/ziplist)" 'nota.md'
 else ok "unzip assente: salto verifica contenuto zip"; fi
 
+echo "=== ZIP manifest (download diretto da Wasabi, client-zip) ==="
+ZM=$(curl -s -b $JAR "$B/api.php?action=zip_manifest&paths%5B%5D=$DIR")
+has "zip_manifest su S3 → mode:client" "$ZM" '"mode":"client"'
+has "manifest elenca saluto.txt" "$ZM" 'saluto.txt'
+has "manifest elenca sub/nota.md" "$ZM" 'nota.md'
+has "URL presigned verso il bucket Wasabi" "$ZM" "$BUCKET.$ENDPOINT"
+has "URL presigned firmato (X-Amz-Signature)" "$ZM" 'X-Amz-Signature'
+# Estrae il primo URL presigned dal JSON e lo scarica DIRETTAMENTE da Wasabi (no proxy server).
+PURL=$(printf '%s' "$ZM" | sed -n 's/.*"url":"\(https:[^"]*\)".*/\1/p' | head -1)
+PURL=$(printf '%s' "$PURL" | sed 's/\\\//\//g')   # de-escape degli slash JSON
+if [ -n "$PURL" ]; then
+  HOST_OK=$(printf '%s' "$PURL" | grep -c "$BUCKET.$ENDPOINT")
+  [ "$HOST_OK" -ge 1 ] && ok "presigned punta a Wasabi (non al server app)" || no "presigned host inatteso"
+  DLP=$(curl -s -L "$PURL")
+  case "$DLP" in *Titolo*|*Aggiornato*|*ciao*) ok "download diretto da Wasabi via presigned (contenuto ok)";; *) no "download presigned" "ricevuto: ${DLP:0:120}";; esac
+else
+  no "estrazione URL presigned dal manifest"
+fi
+
 echo "=== Nota collaborativa su S3 ==="
 NO=$(curl -s -b $JAR "$B/api.php?action=note_open&path=$DIR/sub/nota.md")
 has "note_open su S3" "$NO" '"ok":true'

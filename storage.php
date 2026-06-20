@@ -145,13 +145,37 @@ function s3_request(array $cfg, string $method, string $key, array $query = [], 
     return ['code' => (int) $code, 'body' => (string) $resp, 'error' => $cerr];
 }
 
+// Costruisce un header Content-Disposition conforme alla RFC 6266:
+//   attachment; filename="<fallback-ascii>"; filename*=UTF-8''<percent-encoded>
+// Il fallback ASCII garantisce i client legacy; filename* trasporta l'UTF-8 reale.
+// I caratteri di controllo (incl. CR/LF, per evitare header injection) vengono rimossi.
+function content_disposition(string $filename): string {
+    // Rimuove i caratteri di controllo (0x00–0x1F e 0x7F) — CR/LF inclusi.
+    $clean = preg_replace('/[\x00-\x1F\x7F]/u', '', $filename);
+    if ($clean === null) $clean = preg_replace('/[\x00-\x1F\x7F]/', '', $filename);
+    $clean = (string) $clean;
+    if ($clean === '') $clean = 'download';
+    // Fallback ASCII: translittera in ASCII e neutralizza le virgolette/backslash.
+    $ascii = @iconv('UTF-8', 'ASCII//TRANSLIT', $clean);
+    if ($ascii === false) $ascii = preg_replace('/[^\x20-\x7E]/', '_', $clean);
+    $ascii = str_replace(['\\', '"'], ['_', '_'], (string) $ascii);
+    $ascii = preg_replace('/[\x00-\x1F\x7F]/', '', $ascii);
+    if ($ascii === '' || $ascii === null) $ascii = 'download';
+    $disp = 'attachment; filename="' . $ascii . '"';
+    // filename* solo se il nome contiene caratteri non-ASCII (altrimenti è ridondante).
+    if ($clean !== $ascii) {
+        $disp .= "; filename*=UTF-8''" . rawurlencode($clean);
+    }
+    return $disp;
+}
+
 // URL presigned (SigV4 query auth) per GET diretto dal client a S3/Wasabi.
 function s3_presigned_get(array $cfg, string $key, int $expires, string $filename): string {
     $host = $cfg['bucket'] . '.' . $cfg['endpoint']; $region = $cfg['region']; $service = 's3';
     $amzdate = gmdate('Ymd\THis\Z'); $datestamp = gmdate('Ymd');
     $canonicalUri = '/' . s3_uri_encode($key, false);
     $cred = $cfg['key'] . "/$datestamp/$region/$service/aws4_request";
-    $disp = 'attachment; filename="' . str_replace('"', '', $filename) . '"';
+    $disp = content_disposition($filename);
     $q = [
         'X-Amz-Algorithm' => 'AWS4-HMAC-SHA256',
         'X-Amz-Credential' => $cred,
@@ -297,6 +321,10 @@ class S3Backend implements StorageBackend {
     }
     public function downloadRedirect(string $path, string $filename): ?string {
         return s3_presigned_get($this->cfg, $this->key($path), 300, $filename);
+    }
+    // URL presigned GET diretto (per il manifest ZIP client-side): scadenza e nome configurabili.
+    public function presignGet(string $path, int $expires, string $filename): string {
+        return s3_presigned_get($this->cfg, $this->key($path), $expires, $filename);
     }
     public function fetchToLocal(string $path, string $localPath): bool {
         $data = $this->readFile($path);

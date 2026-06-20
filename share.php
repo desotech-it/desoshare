@@ -19,6 +19,22 @@ if (isset($_GET['dl'])) {
     stream_file(STORAGE_DIR . '/' . $target, basename($target));
 }
 
+// Manifest ZIP per il download diretto da S3 (client-zip), solo folder-share.
+// Confina il target a share_resolve() e usa una scadenza presigned ≤ scadenza del token.
+if (isset($_GET['zipmanifest']) && $type === 'dir') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    $target = share_resolve($share, $p);
+    if ($target === null || storage()->typeOf($target) !== 'dir') {
+        echo json_encode(['ok' => false, 'error' => 'Cartella non trovata']); exit;
+    }
+    $zipname = (basename($target) ?: $share['name']) . '.zip';
+    $remaining = max(60, (int) $share['expires_at'] - time());        // mai sotto i 60s
+    $ttl = min(ZIP_PRESIGN_TTL, $remaining);                          // ≤ scadenza del token
+    echo json_encode(zip_manifest_build([$target], $zipname, $ttl));
+    exit;
+}
+
 // ZIP della cartella (solo folder-share)
 if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
@@ -48,6 +64,7 @@ if ($type === 'file') {
 // ─── Rendering ───────────────────────────────────────────────────────────────
 function share_head(string $title): void {
     header('Cache-Control: no-store');
+    header('Referrer-Policy: no-referrer');   // non trapelare gli URL presigned nel Referer
     $v = @filemtime(PUBLIC_DIR . '/assets/app.css');
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
     echo '<!doctype html><html lang="it"><head><meta charset="utf-8">'
@@ -141,9 +158,12 @@ function share_folder_page(array $s, string $dir, string $p): void {
         }
     }
 
+    $zipHref = 'share.php?t=' . $tok . '&p=' . urlencode($p) . '&zip=1';
+    $zipManUrl = 'share.php?t=' . $tok . '&p=' . urlencode($p) . '&zipmanifest=1';
+    $jszipV = (string) @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js');
     echo '<div class="share-wrap">'
        . '<header class="topbar"><div class="brand"><img src="assets/desolabs-icon.png" class="brand-logo" alt=""> ' . h(APP_NAME) . '</div>'
-       . '<a class="btn btn-primary" href="share.php?t=' . $tok . '&p=' . urlencode($p) . '&zip=1"><i class="ti ti-file-zip"></i> Scarica tutto (ZIP)</a></header>'
+       . '<a class="btn btn-primary" id="zipAll" href="' . h($zipHref) . '"><i class="ti ti-file-zip"></i> Scarica tutto (ZIP)</a></header>'
        . '<div class="crumbs">' . $crumbs . '</div>'
        . share_expiry_html($s)
        . '<div class="listing">';
@@ -159,5 +179,26 @@ function share_folder_page(array $s, string $dir, string $p): void {
         }
     }
     echo '</div></div>';
+    // Client-zip per le condivisioni: scarica i file DIRETTAMENTE da Wasabi (presigned),
+    // costruisce lo ZIP nel browser e lo salva. Fallback trasparente al server-zip (href
+    // originale) su mode:'server' o qualsiasi errore di rete/CORS/JSZip.
+    echo '<script>(function(){'
+       . 'var btn=document.getElementById("zipAll");if(!btn)return;'
+       . 'var MAN=' . json_encode($zipManUrl) . ',JV=' . json_encode($jszipV) . ',srv=btn.getAttribute("href");'
+       . 'var jz=null;function loadJZ(){if(window.JSZip)return Promise.resolve(window.JSZip);if(jz)return jz;'
+       . 'jz=new Promise(function(res,rej){var s=document.createElement("script");s.src="assets/vendor/jszip.min.js?v="+JV;'
+       . 's.onload=function(){window.JSZip?res(window.JSZip):rej(new Error("no jszip"));};s.onerror=function(){rej(new Error("load"));};document.head.appendChild(s);});return jz;}'
+       . 'async function clientZip(m){var JSZip=await loadJZ();var zip=new JSZip();for(var i=0;i<m.files.length;i++){var f=m.files[i];'
+       . 'if(!f.url){zip.folder(f.name.replace(/\\/$/,""));continue;}var r=await fetch(f.url);if(!r.ok)throw new Error("HTTP "+r.status);'
+       . 'zip.file(f.name,await r.blob(),{compression:"STORE"});}'
+       . 'var blob=await zip.generateAsync({type:"blob",compression:"STORE"});var a=document.createElement("a");var u=URL.createObjectURL(blob);'
+       . 'a.href=u;a.download=m.zipname||"download.zip";document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(u);},4000);}'
+       . 'btn.addEventListener("click",function(ev){ev.preventDefault();var lbl=btn.innerHTML;'
+       . 'fetch(MAN).then(function(r){return r.json();}).then(function(m){'
+       . 'if(!m||!m.ok||m.mode!=="client"||!Array.isArray(m.files)){location.href=srv;return;}'
+       . 'btn.innerHTML="<i class=\\"ti ti-loader\\"></i> Preparazione…";'
+       . 'return clientZip(m).then(function(){btn.innerHTML=lbl;}).catch(function(){btn.innerHTML=lbl;location.href=srv;});'
+       . '}).catch(function(){location.href=srv;});});'
+       . '})();</script>';
     share_footer();
 }

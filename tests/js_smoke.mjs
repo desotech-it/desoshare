@@ -24,7 +24,7 @@ function pageHtml(canWrite, isAdmin) {
   const adminBtn = isAdmin ? `<button class="btn" id="btnAdmin">Amministrazione</button>` : '';
   const delSel = canWrite ? `<button class="btn btn-danger" id="btnDelSel">Elimina</button>` : '';
   return `<!doctype html><html><body>
-    <div id="app" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}">
+    <div id="app" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}" data-jszipv="1">
       <header class="topbar"><div class="brand">Share</div><div><button id="btnShares">Condivisioni</button>${adminBtn}<a id="logout">Esci</a></div></header>
       <div class="toolbar">${w}
         <button class="btn" id="btnZipCurrent">Scarica ZIP</button>
@@ -149,10 +149,53 @@ async function runAdmin() {
   qin && qin.value === '100' ? ok('form utente: quota precompilata (100 MB)') : bad(`form quota errata (${qin && qin.value})`);
 }
 
+// Verifica del flusso ZIP client-side (download diretto da S3) con manifest mockato.
+async function runClientZip() {
+  console.log('\nCaso: ZIP client-side (manifest mode:client, JSZip stubbato)');
+  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true });
+  const win = dom.window;
+  win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+  if (!win.crypto) win.crypto = {};
+  if (!win.crypto.subtle) win.crypto.subtle = { digest: async () => new Uint8Array(32).buffer };
+  // Stub JSZip: registra i file aggiunti, genera un blob fittizio.
+  let added = [];
+  win.JSZip = function () {
+    return {
+      file: (name, _data, _opts) => { added.push(name); },
+      folder: (name) => { added.push(name + '/'); },
+      generateAsync: async () => new win.Blob(['PK'], { type: 'application/zip' }),
+    };
+  };
+  // Stub di URL.createObjectURL / revokeObjectURL (assenti in jsdom).
+  win.URL.createObjectURL = () => 'blob:stub';
+  win.URL.revokeObjectURL = () => {};
+  const manifest = { ok: true, mode: 'client', zipname: 'cartella.zip', total: 4, count: 1,
+    files: [{ name: 'docs/a.txt', url: 'https://desotech-desoshare.s3.eu-south-1.wasabisys.com/x?sig=1', size: 4 }] };
+  let fetchedPresigned = false;
+  win.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('action=zip_manifest')) return { ok: true, json: async () => manifest, text: async () => JSON.stringify(manifest) };
+    if (u.includes('wasabisys.com')) { fetchedPresigned = true; return { ok: true, blob: async () => new win.Blob(['data']) }; }
+    return { ok: true, json: async () => listResponse, text: async () => JSON.stringify(listResponse) };
+  };
+  let loadError = null;
+  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.eval(appJs);
+  await new Promise(r => setTimeout(r, 30));
+  win.document.getElementById('btnZipCurrent').onclick();   // avvia lo ZIP
+  await new Promise(r => setTimeout(r, 60));
+  if (loadError) { bad(`client-zip ha lanciato un errore: ${loadError.message}`); return; }
+  ok('client-zip non lancia eccezioni');
+  fetchedPresigned ? ok('file scaricato dall\'URL presigned (Wasabi)') : bad('URL presigned non richiesto');
+  added.includes('docs/a.txt') ? ok('file aggiunto allo ZIP client-side') : bad(`file non aggiunto (${added.join(',')})`);
+}
+
 console.log('=== JS smoke test (jsdom) ===');
 await run('admin (lettura+scrittura)', true, true);
 await run('utente sola lettura', false, false);
 await runAdmin();
+await runClientZip();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);
