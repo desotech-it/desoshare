@@ -6,6 +6,16 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.14.1] - 2026-06-20
+
+### Corretto
+- **Default dei gruppi AD per l'SSO** allineati ai nomi reali (#8):
+  `OIDC_ADMIN_GROUP` → `desoshare_admin` e `OIDC_RW_GROUP` → `desoshare_user`
+  (prima `desoshare-admins`/`desoshare-readwrite`, inesistenti in AD). Senza questa
+  correzione tutti gli utenti SSO sarebbero finiti in sola lettura. Restano
+  sovrascrivibili da ambiente e da *Impostazioni → SSO*. Aggiornati anche i
+  placeholder nell'UI e l'esempio nel README.
+
 ## [0.14.0] - 2026-06-20
 
 ### Corretto
@@ -289,6 +299,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.14.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.1
 [0.14.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.0
 [0.13.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.13.0
 [0.12.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.12.0

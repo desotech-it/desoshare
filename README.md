@@ -144,8 +144,8 @@ attivarlo prima del primo accesso:
 ```apache
 SetEnv OIDC_CLIENT_SECRET "il-tuo-client-secret"
 # opzionali: nomi dei gruppi per la mappatura dei permessi
-SetEnv OIDC_ADMIN_GROUP "desoshare-admins"
-SetEnv OIDC_RW_GROUP    "desoshare-readwrite"
+SetEnv OIDC_ADMIN_GROUP "desoshare_admin"
+SetEnv OIDC_RW_GROUP    "desoshare_user"
 ```
 
 Gli endpoint, il `client_id` e il `redirect_uri`

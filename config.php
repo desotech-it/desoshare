@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.14.0');
+define('APP_VERSION', '0.14.1');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -42,8 +42,8 @@ define('OIDC_ENDSESSION',  'https://auth.deso.tech/application/o/desoshare/end-s
 define('OIDC_REDIRECT',    'https://share.deso.tech/index.php?action=oidc_callback');
 define('OIDC_SCOPES', 'openid email profile');
 // Mappa gruppi AD → permessi (sovrascrivibili da ambiente). Default: sola lettura.
-define('OIDC_ADMIN_GROUP', getenv('OIDC_ADMIN_GROUP') ?: 'desoshare-admins');
-define('OIDC_RW_GROUP',    getenv('OIDC_RW_GROUP') ?: 'desoshare-readwrite');
+define('OIDC_ADMIN_GROUP', getenv('OIDC_ADMIN_GROUP') ?: 'desoshare_admin');
+define('OIDC_RW_GROUP',    getenv('OIDC_RW_GROUP') ?: 'desoshare_user');
 // Verifica della firma RS256 via JWKS (best-effort: in caso di JWKS irraggiungibile
 // si procede, dato che l'id_token arriva server-to-server in TLS dal token_endpoint).
 define('OIDC_VERIFY_SIGNATURE', true);

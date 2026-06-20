@@ -478,8 +478,8 @@
           ${fld('oidc_endsession', 'End-session endpoint', o.endsession)}
           ${fld('oidc_redirect', 'Redirect URI', o.redirect)}
           ${fld('oidc_scopes', 'Scopes', o.scopes, 'openid email profile')}
-          ${fld('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare-admins')}
-          ${fld('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare-readwrite')}
+          ${fld('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare_admin')}
+          ${fld('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare_user')}
         </div>
       </div>`;
   }
