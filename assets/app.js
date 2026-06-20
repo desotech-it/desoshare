@@ -3,11 +3,13 @@
   const CSRF = app.dataset.csrf;
   const CAN_WRITE = app.dataset.write === '1';
   const IS_ADMIN = app.dataset.admin === '1';
+  const EDITOR_BUNDLE_V = app.dataset.edv || '1';
 
   let cwd = '';            // percorso corrente (relativo alla radice)
   let items = [];          // elementi della cartella corrente
   const selected = new Set();
   let shareTimer = null;   // intervallo del conto alla rovescia nel pannello condivisioni
+  let editorCleanup = null; // funzione di chiusura dell'editor note (stop sync/save)
 
   const $ = (s, r = document) => r.querySelector(s);
   const rowsEl = $('#rows'), emptyEl = $('#empty'), crumbsEl = $('#crumbs');
@@ -90,14 +92,16 @@
       const row = document.createElement('div');
       row.className = 'row' + (selected.has(rel) ? ' sel' : '');
       const isDir = it.type === 'dir';
+      const isText = !isDir && isTextFile(it.name);
       row.innerHTML = `
         <label class="cb"><input type="checkbox" ${selected.has(rel) ? 'checked' : ''}></label>
-        <div class="name ${isDir ? 'clickable' : ''}">
+        <div class="name ${(isDir || isText) ? 'clickable' : ''}">
           <i class="ti ${iconFor(it)}"></i><span class="label" title="${esc(it.name)}">${esc(it.name)}</span>
         </div>
         <div class="size">${isDir ? '—' : esc(it.size_h)}</div>
         <div class="date">${esc(it.mtime)}</div>
         <div class="acts">
+          ${isText ? '<i class="ti ti-edit" title="Modifica nota"></i>' : ''}
           <i class="ti ti-share" title="Condividi"></i>
           <i class="ti ti-download" title="Scarica"></i>
           ${CAN_WRITE ? '<i class="ti ti-pencil" title="Rinomina"></i><i class="ti ti-trash" title="Elimina"></i>' : ''}
@@ -107,8 +111,10 @@
         e.target.checked ? selected.add(rel) : selected.delete(rel);
         row.classList.toggle('sel', e.target.checked); updateSelbar();
       };
-      // apri cartella
+      // apri cartella o nota
       if (isDir) row.querySelector('.label').onclick = () => load(rel);
+      else if (isText) row.querySelector('.label').onclick = () => openEditor(rel, it.name);
+      if (isText) row.querySelector('.ti-edit').onclick = () => openEditor(rel, it.name);
       // azioni
       row.querySelector('.ti-download').onclick = () => {
         if (isDir) downloadZip([rel]); else window.location = 'api.php?action=download&path=' + encodeURIComponent(rel);
@@ -143,7 +149,11 @@
     modalBg.onclick = e => { if (e.target === modalBg) closeModal(); };
     const first = modalBg.querySelector('input,textarea,select'); if (first) first.focus();
   }
-  function closeModal() { if (shareTimer) { clearInterval(shareTimer); shareTimer = null; } modalBg.hidden = true; modalBg.innerHTML = ''; }
+  function closeModal() {
+    if (shareTimer) { clearInterval(shareTimer); shareTimer = null; }
+    if (editorCleanup) { try { editorCleanup(); } catch (_) {} editorCleanup = null; }
+    modalBg.hidden = true; modalBg.innerHTML = '';
+  }
   window.closeModal = closeModal;
 
   function promptDialog(title, icon, label, placeholder, onok, okText = 'Crea') {
@@ -447,6 +457,131 @@
     tick(); shareTimer = setInterval(tick, 1000);
   }
 
+  // ─── Editor di note collaborativo (CodeMirror 6 + Yjs via CDN) ─────────
+  const BIN_EXT = new Set(['png','jpg','jpeg','gif','webp','bmp','ico','svgz','pdf','zip','rar','7z','gz','tgz','tar','bz2','mp3','wav','ogg','flac','mp4','mov','avi','mkv','webm','exe','dll','so','bin','dat','class','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','woff','woff2','ttf','otf','eot','psd','ai','eps']);
+  function isTextFile(name) { return !BIN_EXT.has((name.split('.').pop() || '').toLowerCase()); }
+  function userColor(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0; return 'hsl(' + (h % 360) + ',65%,45%)'; }
+  function genClientId() { const a = new Uint8Array(8); (crypto.getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => a[i] = i)); return 'c' + Array.from(a, b => ('0' + b.toString(16)).slice(-2)).join(''); }
+  const b64ToU8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+  const u8ToB64 = u => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+
+  // Carica il bundle dell'editor (CodeMirror 6 + Yjs in un unico file servito dall'app)
+  let _edLibs = null;
+  function loadEditorLibs() {
+    if (window.DesoEditor) return Promise.resolve(window.DesoEditor);
+    if (_edLibs) return _edLibs;
+    _edLibs = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'assets/editor-bundle.js?v=' + EDITOR_BUNDLE_V;
+      s.onload = () => window.DesoEditor ? resolve(window.DesoEditor) : reject(new Error('bundle non valido'));
+      s.onerror = () => reject(new Error('caricamento editor fallito'));
+      document.head.appendChild(s);
+    });
+    return _edLibs;
+  }
+
+  async function openEditor(rel, name) {
+    if (editorCleanup) closeModal();
+    openModal(`<div class="modal editor-modal"><h3 style="justify-content:space-between">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><i class="ti ti-edit"></i> ${esc(name)}</span>
+        <span id="ed_status" class="muted" style="font-size:12px;font-weight:400;flex:none">apertura…</span></h3>
+      <div id="ed_host" class="editor-host"></div>
+      <div class="modal-actions" style="justify-content:space-between;align-items:center">
+        <span id="ed_pres" class="muted" style="font-size:12px"></span>
+        <button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    const host = $('#ed_host', modalBg), statusEl = $('#ed_status', modalBg), presEl = $('#ed_pres', modalBg);
+    const info = await apiGet('note_open', { path: rel });
+    if (!info.ok) { statusEl.textContent = ''; host.innerHTML = '<div style="padding:14px">' + esc(info.error || 'Errore') + '</div>'; return; }
+    let libs = null;
+    try { libs = await loadEditorLibs(); } catch (e) { libs = null; }
+    if (libs) startCollabEditor(rel, info, libs, host, statusEl, presEl);
+    else editorFallback(rel, info, host, statusEl);
+  }
+
+  function startCollabEditor(rel, info, L, host, statusEl, presEl) {
+    const { Y, EditorState, EditorView, basicExtensions, yCollab, Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } = L;
+    const doc = new Y.Doc();
+    const ytext = doc.getText('content');
+    (info.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
+    let offset = info.offset || 0;
+    if (ytext.length === 0 && info.text) {
+      const t = new TextDecoder().decode(b64ToU8(info.text));
+      if (t.length) ytext.insert(0, t);
+    }
+    const awareness = new Awareness(doc);
+    awareness.setLocalStateField('user', { name: info.user || 'utente', color: userColor(info.user || '') });
+    const clientId = genClientId();
+    host.innerHTML = '';
+    const ev = new EditorView({
+      state: EditorState.create({ doc: ytext.toString(), extensions: [...basicExtensions(info.editable), yCollab(ytext, awareness)] }),
+      parent: host,
+    });
+    statusEl.textContent = info.editable ? 'connesso' : 'sola lettura';
+
+    const pending = [];
+    doc.on('update', (u, origin) => { if (origin !== 'remote') pending.push(u8ToB64(u)); });
+    let stopped = false, saveTimer = null, dirty = false;
+    const saveNow = async () => { if (!dirty || !info.editable) return; dirty = false; await apiPost('note_save', { path: rel, content: ytext.toString() }); };
+    ytext.observe(() => { if (info.editable) { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
+    const renderPresence = () => {
+      const names = new Set();
+      awareness.getStates().forEach((s, cid) => { if (cid !== awareness.clientID && s.user) names.add(s.user.name); });
+      presEl.textContent = names.size ? ('Online con te: ' + [...names].join(', ')) : 'Nessun altro collegato';
+    };
+    const tick = async () => {
+      if (stopped) return;
+      const send = pending.splice(0);
+      const awB64 = u8ToB64(encodeAwarenessUpdate(awareness, [awareness.clientID]));
+      const r = await apiPost('note_sync', { id: info.id, since: offset, client: clientId, updates: send, aware: awB64 });
+      if (r && r.ok) {
+        (r.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
+        offset = r.offset;
+        (r.aware || []).forEach(a => { try { applyAwarenessUpdate(awareness, b64ToU8(a.b64), 'remote'); } catch (_) {} });
+        renderPresence();
+      } else if (send.length) { pending.unshift.apply(pending, send); }
+    };
+    const iv = setInterval(tick, info.poll_ms || 1500);
+    tick();
+    editorCleanup = () => {
+      stopped = true; clearInterval(iv); clearTimeout(saveTimer);
+      saveNow().catch(() => {});
+      try { removeAwarenessStates(awareness, [awareness.clientID], 'local'); } catch (_) {}
+      try { ev.destroy(); } catch (_) {}
+      try { doc.destroy(); } catch (_) {}
+    };
+  }
+
+  // Fallback: se il CDN non risponde, editor semplice (singolo utente, niente real-time)
+  function editorFallback(rel, info, host, statusEl) {
+    statusEl.textContent = info.editable ? 'editor semplice (CDN non disponibile)' : 'sola lettura';
+    const text = info.text ? new TextDecoder().decode(b64ToU8(info.text)) : '';
+    host.innerHTML = '';
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.readOnly = !info.editable;
+    ta.style.cssText = 'width:100%;height:100%;border:0;outline:none;resize:none;font-family:ui-monospace,Menlo,monospace;font-size:13px;padding:10px;box-sizing:border-box';
+    host.appendChild(ta);
+    let t = null, dirty = false;
+    if (info.editable) ta.oninput = () => { dirty = true; clearTimeout(t); t = setTimeout(async () => { if (!dirty) return; dirty = false; const r = await apiPost('note_save', { path: rel, content: ta.value }); statusEl.textContent = r.ok ? 'salvato' : 'errore salvataggio'; }, 1500); };
+    editorCleanup = () => { clearTimeout(t); };
+  }
+
+  function newNoteDialog() {
+    openModal(`<div class="modal"><h3><i class="ti ti-note"></i> Nuova nota</h3>
+      <label>Nome nota</label><input type="text" id="nn_name" placeholder="es. appunti.md">
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Annulla</button>
+        <button class="btn btn-primary" id="nn_ok"><i class="ti ti-edit"></i> Crea e apri</button></div></div>`);
+    const go = async () => {
+      let name = $('#nn_name', modalBg).value.trim(); if (!name) return;
+      if (!/\.[a-z0-9]+$/i.test(name)) name += '.md';
+      const r = await apiPost('newfile', { path: cwd, name, content: '' });
+      if (!r.ok) { toast(r.error || 'Errore', true); return; }
+      const rel = (cwd ? cwd + '/' : '') + name;
+      closeModal(); load(cwd); openEditor(rel, name);
+    };
+    $('#nn_ok', modalBg).onclick = go;
+    $('#nn_name', modalBg).onkeydown = e => { if (e.key === 'Enter') go(); };
+  }
+
   // ─── Wiring toolbar ────────────────────────────────────────────────────
   if (CAN_WRITE) {
     $('#btnUpload').onclick = () => $('#fileInput').click();
@@ -455,6 +590,7 @@
     $('#folderInput') && ($('#folderInput').onchange = e => { uploadItems(Array.from(e.target.files).map(f => ({ file: f, rel: relDir(f.webkitRelativePath) }))); e.target.value = ''; });
     $('#btnNewFolder').onclick = newFolderDialog;
     $('#btnNewFile').onclick = newFileDialog;
+    $('#btnNewNote') && ($('#btnNewNote').onclick = newNoteDialog);
     $('#btnDelSel') && ($('#btnDelSel').onclick = () => deleteDialog([...selected]));
   }
   $('#btnRefresh').onclick = () => load(cwd);

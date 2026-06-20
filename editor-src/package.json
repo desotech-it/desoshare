@@ -1,0 +1,16 @@
+{
+  "name": "desoshare-editor-bundle",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@codemirror/commands": "^6",
+    "@codemirror/lang-markdown": "^6",
+    "@codemirror/language": "^6",
+    "@codemirror/state": "^6",
+    "@codemirror/view": "^6",
+    "y-codemirror.next": "^0.3",
+    "y-protocols": "^1",
+    "yjs": "^13"
+  },
+  "devDependencies": { "esbuild": "^0.24" }
+}

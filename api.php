@@ -13,10 +13,13 @@ switch ($action) {
     case 'users_list':  action_users_list();  break;
     case 'upload_status': action_upload_status(); break;
     case 'share_list':  action_share_list();   break;
+    case 'note_open':   action_note_open();    break;
 
     // Modifiche (POST + CSRF)
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
+    case 'note_sync':    csrf_check(); action_note_sync();    break;
+    case 'note_save':    csrf_check(); action_note_save();    break;
     case 'upload_chunk':  csrf_check(); action_upload_chunk();  break;
     case 'upload_finish': csrf_check(); action_upload_finish(); break;
     case 'mkdir':       csrf_check(); action_mkdir();       break;
@@ -394,5 +397,74 @@ function action_share_revoke(): void {
     }));
     if (count($d['shares']) === $before) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
     shares_save($d);
+    json_out(['ok' => true]);
+}
+
+// ─── Note: apertura nell'editor ──────────────────────────────────────────────
+function action_note_open(): void {
+    $u = require_login();
+    $abs = resolve_path($_GET['path'] ?? '', true);
+    if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
+    if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo di file non modificabile come testo'], 415);
+    $size = (int) filesize($abs);
+    if ($size > NOTE_MAX_BYTES) json_out(['ok' => false, 'error' => 'File troppo grande per l\'editor (' . human_size($size) . ')'], 413);
+    note_gc();
+    $id = note_id(ltrim(rel_display($abs), '/'));
+    $updates = note_relay_lines($id);
+    json_out([
+        'ok' => true,
+        'id' => $id,
+        'name' => basename($abs),
+        'editable' => can_write(),
+        'text' => base64_encode((string) file_get_contents($abs)),
+        'updates' => $updates,
+        'offset' => count($updates),
+        'poll_ms' => NOTE_POLL_MS,
+        'user' => $u['username'],
+    ]);
+}
+
+// ─── Note: relay di sincronizzazione (Yjs updates + awareness) ───────────────
+function action_note_sync(): void {
+    $u = require_login();
+    $id = $_POST['id'] ?? '';
+    if (!preg_match('/^[a-f0-9]{40}$/', $id)) json_out(['ok' => false, 'error' => 'Identificativo nota non valido'], 400);
+    $since = max(0, (int) ($_POST['since'] ?? 0));
+    $editable = can_write();
+    $incoming = $_POST['updates'] ?? [];
+    if (is_string($incoming)) $incoming = json_decode($incoming, true) ?: [];
+
+    $h = fopen(note_relay_path($id), 'c+');
+    if ($h === false) json_out(['ok' => false, 'error' => 'Relay non disponibile'], 500);
+    flock($h, LOCK_EX);
+    $content = stream_get_contents($h);
+    $lines = $content === '' ? [] : explode("\n", rtrim($content, "\n"));
+    if ($editable && is_array($incoming)) {
+        foreach ($incoming as $b64) {
+            if (is_string($b64) && $b64 !== '' && base64_decode($b64, true) !== false) $lines[] = $b64;
+        }
+        rewind($h); ftruncate($h, 0);
+        fwrite($h, $lines ? implode("\n", $lines) . "\n" : '');
+    }
+    fflush($h); flock($h, LOCK_UN); fclose($h);
+
+    $aware = note_aware_exchange($id, (string) ($_POST['client'] ?? ''), (string) ($_POST['aware'] ?? ''), $u['username']);
+    json_out(['ok' => true, 'updates' => array_slice($lines, $since), 'offset' => count($lines), 'aware' => $aware]);
+}
+
+// ─── Note: materializza il testo sul file vero ───────────────────────────────
+function action_note_save(): void {
+    require_write();
+    $abs = resolve_path($_POST['path'] ?? '', true);
+    if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
+    if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo non testuale'], 415);
+    $content = (string) ($_POST['content'] ?? '');
+    if (strlen($content) > NOTE_MAX_BYTES) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
+    $tmp = $abs . '.tmp.' . bin2hex(random_bytes(4));
+    if (file_put_contents($tmp, $content) === false || !@rename($tmp, $abs)) {
+        @unlink($tmp);
+        json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
+    }
+    @chmod($abs, 0644);
     json_out(['ok' => true]);
 }

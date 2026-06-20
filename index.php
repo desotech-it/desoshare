@@ -109,7 +109,8 @@ function render_app(array $user): void {
          data-csrf="<?= h(csrf_token()) ?>"
          data-user="<?= h($user['username']) ?>"
          data-admin="<?= $isAdmin ? '1' : '0' ?>"
-         data-write="<?= $canWrite ? '1' : '0' ?>">
+         data-write="<?= $canWrite ? '1' : '0' ?>"
+         data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>">
 
       <header class="topbar">
         <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(APP_NAME) ?></div>
@@ -132,6 +133,7 @@ function render_app(array $user): void {
         <button class="btn" id="btnUploadFolder"><i class="ti ti-cloud-upload"></i> Carica cartella</button>
         <button class="btn" id="btnNewFolder"><i class="ti ti-folder-plus"></i> Nuova cartella</button>
         <button class="btn" id="btnNewFile"><i class="ti ti-file-plus"></i> Nuovo file</button>
+        <button class="btn" id="btnNewNote"><i class="ti ti-note"></i> Nuova nota</button>
         <?php endif; ?>
         <button class="btn" id="btnZipCurrent"><i class="ti ti-file-zip"></i> Scarica ZIP</button>
         <div class="spacer"></div>

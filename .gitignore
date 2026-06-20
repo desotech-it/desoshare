@@ -15,3 +15,6 @@ tests/package-lock.json
 .DS_Store
 ._*
 *.log
+
+# Build del bundle editor (sorgente sì, dipendenze no)
+editor-src/node_modules/

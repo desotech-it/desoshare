@@ -19,7 +19,8 @@ function pageHtml(canWrite, isAdmin) {
         <button class="btn btn-primary" id="btnUpload">Carica file</button>
         <button class="btn" id="btnUploadFolder">Carica cartella</button>
         <button class="btn" id="btnNewFolder">Nuova cartella</button>
-        <button class="btn" id="btnNewFile">Nuovo file</button>` : '';
+        <button class="btn" id="btnNewFile">Nuovo file</button>
+        <button class="btn" id="btnNewNote">Nuova nota</button>` : '';
   const adminBtn = isAdmin ? `<button class="btn" id="btnUsers">Utenti</button>` : '';
   const delSel = canWrite ? `<button class="btn btn-danger" id="btnDelSel">Elimina</button>` : '';
   return `<!doctype html><html><body>
@@ -48,6 +49,7 @@ const listResponse = {
   items: [
     { name: 'documenti', type: 'dir', size: 0, size_h: '', mtime: '01/01/2026' },
     { name: 'foto.jpg', type: 'file', size: 2048, size_h: '2.0 KB', mtime: '02/01/2026' },
+    { name: 'nota.md', type: 'file', size: 12, size_h: '12 B', mtime: '03/01/2026' },
   ],
 };
 
@@ -80,11 +82,15 @@ async function run(label, canWrite, isAdmin) {
   else ok('nessun errore asincrono');
 
   const rows = win.document.querySelectorAll('#rows .row');
-  if (rows.length === 2) ok(`listing popolato (${rows.length} righe)`);
-  else bad(`listing NON popolato (righe trovate: ${rows.length}, attese: 2)`);
+  if (rows.length === 3) ok(`listing popolato (${rows.length} righe)`);
+  else bad(`listing NON popolato (righe trovate: ${rows.length}, attese: 3)`);
+  // la riga del file di testo deve avere l'icona "modifica" cablata
+  const editIcon = win.document.querySelector('#rows .ti-edit');
+  if (editIcon && typeof editIcon.onclick === 'function') ok('icona modifica nota cablata');
+  else bad('icona modifica nota NON cablata');
 
   // i pulsanti chiave hanno un handler?
-  const must = ['btnRefresh', 'btnShares', 'btnZipCurrent'].concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder'] : []);
+  const must = ['btnRefresh', 'btnShares', 'btnZipCurrent'].concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder', 'btnNewNote'] : []);
   for (const id of must) {
     const el = win.document.getElementById(id);
     if (el && typeof el.onclick === 'function') ok(`#${id} ha un handler onclick`);

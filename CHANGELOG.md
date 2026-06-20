@@ -6,6 +6,22 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.4.0] - 2026-06-20
+
+### Aggiunto
+- **Editor di note collaborativo** in stile Notepad++ (CodeMirror 6) con
+  **co-editing in tempo reale** stile Etherpad: più utenti modificano la stessa
+  nota e vedono cursori e modifiche degli altri. Le note **sono file di testo**
+  reali (download/condivisione/rinomina restano invariati).
+- Collaborazione realizzata con **CRDT (Yjs)** e un **relay PHP via polling**
+  (niente WebSocket, niente database): merge automatico senza conflitti,
+  awareness/presence, materializzazione del testo sul file. Endpoint
+  `note_open` / `note_sync` / `note_save`; intervallo e cap dimensione
+  configurabili in `config.php`. Utenti in sola lettura ricevono le modifiche
+  ma non possono scrivere.
+- Apertura editor con clic sul nome di un file di testo, icona "modifica" per
+  riga e pulsante "Nuova nota". Fallback a editor semplice se la CDN non risponde.
+
 ## [0.3.0] - 2026-06-20
 
 ### Aggiunto
@@ -51,6 +67,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.4.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.4.0
 [0.3.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.3.0
 [0.2.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.2.0
 [0.1.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.1.0

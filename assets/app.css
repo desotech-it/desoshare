@@ -148,6 +148,11 @@ body.dragging .dropzone-hint { display: flex; }
 .utable .uact .ti { font-size: 17px; color: var(--tertiary); cursor: pointer; margin-left: 10px; }
 .utable .uact .ti:hover { color: var(--text); }
 .modal.wide { width: 520px; }
+.editor-modal { width: min(900px, 96vw); }
+.editor-host { border: 1px solid var(--border-strong); border-radius: 8px; height: min(62vh, 480px); overflow: hidden; }
+.editor-host textarea { background: var(--surface); color: var(--text); }
+.editor-host .cm-editor { height: 100%; font-size: 13px; }
+.editor-host .cm-scroller { overflow: auto; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1f2328; color: #fff;
   padding: 10px 16px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; }
 .toast.show { opacity: 1; }
