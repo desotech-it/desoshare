@@ -104,6 +104,24 @@ case "$SG" in *settingsecretXYZ*) no "secret OIDC NON esposto in chiaro";; *) ok
 # discovery (best-effort) contro l'issuer reale
 DISC=$(apost --data-urlencode action=oidc_discovery --data-urlencode issuer=https://auth.deso.tech/application/o/desoshare/ "$B/api.php")
 case "$DISC" in *'"ok":true'*) has "discovery legge gli endpoint reali" "$DISC" 'authorize';; *) ok "discovery: issuer non raggiungibile (skip)";; esac
+
+# Autenticazione locale: toggle + salvaguardia anti-lockout (sessione admin SEMPRE attiva: non sloggo)
+# SSO è attivo (env + settings) → disabilitare il login locale è permesso.
+# NB: NON inviamo oidc_present (altrimenti riscriveremmo la config OIDC del test precedente).
+DA=$(apost --data-urlencode action=settings_save --data-urlencode local_auth_enabled=0 "$B/api.php")
+has "disabilita login locale (con SSO attivo) → ok" "$DA" '"ok":true'
+has "settings_get: login locale disabilitato" "$(curl -s -b $ALOG "$B/api.php?action=settings_get")" '"local_auth_enabled":false'
+# pagina di login (senza cookie): niente form locale, solo SSO
+LPL=$(curl -s "$B/")
+has "login: bottone SSO presente" "$LPL" 'Accedi con desoauth'
+case "$LPL" in *'name="password"'*) no "login locale disabilitato: il campo password NON deve comparire";; *) ok "login locale disabilitato: nessun campo password";; esac
+# un POST di login locale viene rifiutato finché è disabilitato
+RJ="$SBX/rj_lock"
+RLK=$(curl -s -c $RJ -b $RJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 "$B/index.php")
+has "login locale disabilitato: POST rifiutato" "$RLK" 'login locale è disabilitato'
+# riattiva il login locale usando la sessione admin ANCORA attiva (no lockout per le sessioni in corso)
+RA=$(apost --data-urlencode action=settings_save --data-urlencode local_auth_enabled=1 "$B/api.php")
+has "riabilita login locale (sessione admin attiva) → ok" "$RA" '"ok":true'
 # precedenza: il redirect usa i valori delle impostazioni, non le costanti/env
 curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
 LOC2=$(curl -s -b $ALOG -c $ALOG -o /dev/null -D - "$B/index.php?action=oidc_login" | sed -n 's/^[Ll]ocation: //p' | tr -d '\r')

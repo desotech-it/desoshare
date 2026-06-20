@@ -227,6 +227,18 @@ async function runOidcSettings() {
   await new Promise(r => setTimeout(r, 40));
   if (loadError) { bad(`Impostazioni SSO: errore ${loadError.message}`); return; }
   const doc = win.document;
+  // Sotto-sezioni: Generale / Archiviazione / Autenticazione
+  const subTabs = [...doc.querySelectorAll('.set-tabs button')].map(b => b.textContent.trim());
+  (subTabs.length === 3 && /Generale/.test(subTabs[0]) && /Archiviazione/.test(subTabs[1]) && /Autenticazione/.test(subTabs[2]))
+    ? ok('sotto-sezioni Generale/Archiviazione/Autenticazione presenti') : bad(`sotto-sezioni errate (${subTabs.join('|')})`);
+  // di default è visibile "Generale", lo storage e l'auth sono nascosti
+  const authPaneHidden = doc.querySelector('.set-pane[data-pane="auth"]').hidden;
+  authPaneHidden ? ok('pannello Autenticazione nascosto di default') : bad('pannello Autenticazione non nascosto');
+  doc.querySelector('.set-tabs button[data-pane="auth"]').onclick();   // apre Autenticazione
+  await new Promise(r => setTimeout(r, 10));
+  !doc.querySelector('.set-pane[data-pane="auth"]').hidden ? ok('click su Autenticazione mostra il pannello') : bad('pannello Autenticazione non mostrato');
+  const la = doc.getElementById('local_auth_enabled');
+  la && la.checked ? ok('toggle "Autenticazione locale" presente e attivo') : bad('toggle auth locale mancante');
   const tog = doc.getElementById('oidc_enabled');
   tog && tog.checked ? ok('toggle "Abilita SSO" presente e attivo') : bad('toggle SSO mancante/spento');
   const iss = doc.getElementById('oidc_issuer');

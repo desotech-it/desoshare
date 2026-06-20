@@ -6,6 +6,21 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.13.0] - 2026-06-20
+
+### Modificato
+- **Pannello Impostazioni riorganizzato in sotto-sezioni** (Generale, Archiviazione,
+  Autenticazione) con sotto-tab, per non avere più tutto in un unico blocco
+  accatastato. I campi delle sezioni non visibili restano comunque nel DOM, così un
+  unico "Salva" registra tutto.
+
+### Aggiunto
+- **Interruttore "Autenticazione locale"**: l'admin può disabilitare il login con
+  username e password (sezione *Autenticazione*), lasciando il solo accesso **SSO**.
+  Con una **salvaguardia anti-lockout**: non è possibile disabilitarlo se l'SSO non
+  è abilitato, e la pagina di login mostra comunque il form locale come fail-safe se
+  l'SSO non è attivo. La configurazione SSO/OIDC è raggruppata sotto *Autenticazione*.
+
 ## [0.12.0] - 2026-06-20
 
 ### Aggiunto
@@ -259,6 +274,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.13.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.13.0
 [0.12.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.12.0
 [0.11.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.11.0
 [0.10.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.10.0

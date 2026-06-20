@@ -48,9 +48,14 @@ if (oidc_enabled() && $action === 'oidc_callback') { oidc_callback(); exit; }
 // ─── Login ───────────────────────────────────────────────────────────────────
 if (!current_user()) {
     $err = null;
+    // Login locale disponibile se abilitato, OPPURE come fail-safe se l'SSO non è attivo
+    // (così non ci si può mai chiudere completamente fuori).
+    $localLogin = local_auth_enabled() || !oidc_enabled();
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'login') {
         $u = find_user(trim($_POST['username'] ?? ''));
-        if ($u && !empty($u['sso'])) {
+        if (!$localLogin) {
+            $err = 'Il login locale è disabilitato: accedi con "Accedi con desoauth".';
+        } elseif ($u && !empty($u['sso'])) {
             $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
         } elseif ($u && !empty($u['password_hash']) && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
             session_regenerate_id(true);
@@ -62,7 +67,7 @@ if (!current_user()) {
             $err = 'Credenziali non valide.';
         }
     }
-    render_login($err); exit;
+    render_login($err, $localLogin); exit;
 }
 
 // ─── App ─────────────────────────────────────────────────────────────────────
@@ -104,22 +109,24 @@ function render_setup(?string $err): void {
     <?php
 }
 
-function render_login(?string $err): void {
+function render_login(?string $err, bool $localLogin = true): void {
     echo page_head('Accesso');
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=login">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(app_title()) ?></h1>
-        <p class="muted">Inserisci le credenziali per accedere</p>
+        <p class="muted"><?= $localLogin ? "Inserisci le credenziali per accedere" : "Accedi con il tuo account aziendale" ?></p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
+        <?php if ($localLogin): ?>
         <label>Username</label>
         <input type="text" name="username" autocomplete="username" required autofocus>
         <label>Password</label>
         <input type="password" name="password" autocomplete="current-password" required>
         <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
+        <?php endif; ?>
         <?php if (oidc_enabled()): ?>
-        <div class="sso-sep"><span>oppure</span></div>
+        <?php if ($localLogin): ?><div class="sso-sep"><span>oppure</span></div><?php endif; ?>
         <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
         <?php endif; ?>
         <p class="hint"><i class="ti ti-shield-lock"></i> Sessione protetta · v<?= h(APP_VERSION) ?></p>

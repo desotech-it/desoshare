@@ -454,6 +454,7 @@ function action_settings_get(): void {
         'note_poll_ms'   => note_poll_ms(),
         'note_max_bytes' => note_max_bytes(),
         'default_quota_bytes' => (int) setting('default_quota_bytes', 0),
+        'local_auth_enabled' => local_auth_enabled(),
         'storage' => [
             'backend'      => (($s['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local',
             'endpoint'     => (string) ($s3['endpoint'] ?? ''),
@@ -520,6 +521,15 @@ function action_settings_save(): void {
     // ─ SSO / OpenID Connect (config dinamica) ─
     if (isset($_POST['oidc_present'])) {
         $s['oidc'] = oidc_config_from_post($s['oidc'] ?? []);
+    }
+
+    // ─ Autenticazione locale (con salvaguardia anti-lockout) ─
+    if (isset($_POST['local_auth_enabled'])) {
+        $localOn = $_POST['local_auth_enabled'] === '1';
+        if (!$localOn && !oidc_enabled_for($s)) {
+            json_out(['ok' => false, 'error' => 'Non puoi disabilitare il login locale senza un SSO abilitato: resteresti chiuso fuori.'], 400);
+        }
+        $s['local_auth_enabled'] = $localOn;
     }
 
     settings_save($s);

@@ -162,6 +162,11 @@ body.dragging .dropzone-hint { display: flex; }
 .quota-txt { font-size: 11px; color: var(--tertiary); }
 .sw { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .sw input { width: auto; margin: 0; }
+.set-tabs { display: flex; gap: 4px; margin: 0 0 14px; border-bottom: 1px solid var(--border); }
+.set-tabs button { width: auto; margin: 0; background: none; border: none; border-bottom: 2px solid transparent;
+  padding: 7px 12px; font-size: 13px; color: var(--tertiary); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.set-tabs button:hover { color: var(--text); }
+.set-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
 .modal.wide { width: 520px; }
 .editor-modal { width: min(900px, 96vw); }
 .editor-host { border: 1px solid var(--border-strong); border-radius: 8px; height: min(62vh, 480px); overflow: hidden; }

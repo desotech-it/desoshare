@@ -517,6 +517,8 @@ function setting(string $key, $default = null) {
     return array_key_exists($key, $s) && $s[$key] !== '' ? $s[$key] : $default;
 }
 function app_title(): string { return (string) setting('site_title', APP_NAME); }
+// Login locale (username+password) abilitato? Default: sì.
+function local_auth_enabled(): bool { return setting('local_auth_enabled', true) !== false; }
 function note_poll_ms(): int { return max(500, (int) setting('note_poll_ms', NOTE_POLL_MS)); }
 function note_max_bytes(): int { return max(1024, (int) setting('note_max_bytes', NOTE_MAX_BYTES)); }
 

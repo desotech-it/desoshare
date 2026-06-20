@@ -133,13 +133,15 @@ function oidc_cfg(): array {
     ];
 }
 // SSO attivo se c'è client_id+secret e (toggle UI true) oppure (retrocompat: secret da env).
-function oidc_enabled(): bool {
-    $c = oidc_cfg();
-    if ($c['secret'] === '' || $c['client_id'] === '') return false;
-    $o = oidc_settings();
+function oidc_enabled_for(array $s): bool {
+    $o = is_array($s['oidc'] ?? null) ? $s['oidc'] : [];
+    $secret   = (($o['secret'] ?? '') !== '') || OIDC_CLIENT_SECRET !== '';
+    $clientId = (($o['client_id'] ?? '') !== '') || OIDC_CLIENT_ID !== '';
+    if (!$secret || !$clientId) return false;
     if (array_key_exists('enabled', $o)) return (bool) $o['enabled'];
     return OIDC_CLIENT_SECRET !== '';
 }
+function oidc_enabled(): bool { return oidc_enabled_for(settings_load()); }
 
 // ─── Mappatura gruppi AD → ruolo/permesso ────────────────────────────────────
 function oidc_perms_from_groups(array $groups, array $cfg): array {

@@ -486,41 +486,62 @@
     if (!s.ok) { body.textContent = s.error || 'Errore'; return; }
     const st = s.storage || { backend: 'local' };
     const isS3 = st.backend === 's3';
+    const localOn = s.local_auth_enabled !== false;
     body.innerHTML = `
-      <label>Titolo del sito</label>
-      <input type="text" id="set_title" value="${esc(s.site_title)}" maxlength="40" placeholder="Share">
-      <label style="margin-top:10px">Intervallo di sincronizzazione note (ms)</label>
-      <input type="text" id="set_poll" value="${s.note_poll_ms}">
-      <label style="margin-top:10px">Dimensione massima di una nota (MB)</label>
-      <input type="text" id="set_maxmb" value="${Math.round(s.note_max_bytes / 1048576)}">
-      <label style="margin-top:10px">Quota predefinita per nuovo utente (MB, 0 = illimitata)</label>
-      <input type="text" id="set_defquota" value="${Math.round((s.default_quota_bytes || 0) / 1048576)}">
-
-      <h3 style="margin:18px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-database"></i> Archiviazione file</h3>
-      <p class="muted" style="font-size:12px;margin:0 0 8px">Dove vengono salvati i file caricati. S3 usa uno storage esterno compatibile (es. Wasabi).</p>
-      <label>Backend</label>
-      <select id="set_backend">
-        <option value="local"${isS3 ? '' : ' selected'}>Locale (server)</option>
-        <option value="s3"${isS3 ? ' selected' : ''}>S3 compatibile (Wasabi)</option>
-      </select>
-      <div id="s3_box" style="margin-top:10px${isS3 ? '' : ';display:none'}">
-        <label>Endpoint</label>
-        <input type="text" id="s3_endpoint" value="${esc(st.endpoint || '')}" placeholder="s3.eu-south-1.wasabisys.com">
-        <label style="margin-top:8px">Regione</label>
-        <input type="text" id="s3_region" value="${esc(st.region || '')}" placeholder="eu-south-1">
-        <label style="margin-top:8px">Bucket</label>
-        <input type="text" id="s3_bucket" value="${esc(st.bucket || '')}" placeholder="desotech-desoshare">
-        <label style="margin-top:8px">Access Key ID</label>
-        <input type="text" id="s3_key" value="${esc(st.access_key || '')}" autocomplete="off">
-        <label style="margin-top:8px">Secret Access Key</label>
-        <input type="password" id="s3_secret" value="" autocomplete="new-password" placeholder="${st.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Lascia vuoto il secret per non modificarlo. È salvato cifrato sul server.</p>
-        <div style="margin-top:8px"><button class="btn" id="s3_testbtn"><i class="ti ti-plug-connected"></i> Prova connessione</button> <span id="s3_testmsg" class="muted" style="font-size:12px"></span></div>
+      <div class="set-tabs">
+        <button type="button" class="active" data-pane="general"><i class="ti ti-adjustments"></i> Generale</button>
+        <button type="button" data-pane="storage"><i class="ti ti-database"></i> Archiviazione</button>
+        <button type="button" data-pane="auth"><i class="ti ti-shield-lock"></i> Autenticazione</button>
       </div>
 
-      ${oidcSection(s.oidc || {})}
+      <div class="set-pane" data-pane="general">
+        <label>Titolo del sito</label>
+        <input type="text" id="set_title" value="${esc(s.site_title)}" maxlength="40" placeholder="Share">
+        <label style="margin-top:10px">Intervallo di sincronizzazione note (ms)</label>
+        <input type="text" id="set_poll" value="${s.note_poll_ms}">
+        <label style="margin-top:10px">Dimensione massima di una nota (MB)</label>
+        <input type="text" id="set_maxmb" value="${Math.round(s.note_max_bytes / 1048576)}">
+        <label style="margin-top:10px">Quota predefinita per nuovo utente (MB, 0 = illimitata)</label>
+        <input type="text" id="set_defquota" value="${Math.round((s.default_quota_bytes || 0) / 1048576)}">
+      </div>
+
+      <div class="set-pane" data-pane="storage" hidden>
+        <p class="muted" style="font-size:12px;margin:0 0 8px">Dove vengono salvati i file caricati. S3 usa uno storage esterno compatibile (es. Wasabi).</p>
+        <label>Backend</label>
+        <select id="set_backend">
+          <option value="local"${isS3 ? '' : ' selected'}>Locale (server)</option>
+          <option value="s3"${isS3 ? ' selected' : ''}>S3 compatibile (Wasabi)</option>
+        </select>
+        <div id="s3_box" style="margin-top:10px${isS3 ? '' : ';display:none'}">
+          <label>Endpoint</label>
+          <input type="text" id="s3_endpoint" value="${esc(st.endpoint || '')}" placeholder="s3.eu-south-1.wasabisys.com">
+          <label style="margin-top:8px">Regione</label>
+          <input type="text" id="s3_region" value="${esc(st.region || '')}" placeholder="eu-south-1">
+          <label style="margin-top:8px">Bucket</label>
+          <input type="text" id="s3_bucket" value="${esc(st.bucket || '')}" placeholder="desotech-desoshare">
+          <label style="margin-top:8px">Access Key ID</label>
+          <input type="text" id="s3_key" value="${esc(st.access_key || '')}" autocomplete="off">
+          <label style="margin-top:8px">Secret Access Key</label>
+          <input type="password" id="s3_secret" value="" autocomplete="new-password" placeholder="${st.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
+          <p class="muted" style="font-size:12px;margin:4px 0 0">Lascia vuoto il secret per non modificarlo. È salvato cifrato sul server.</p>
+          <div style="margin-top:8px"><button class="btn" id="s3_testbtn"><i class="ti ti-plug-connected"></i> Prova connessione</button> <span id="s3_testmsg" class="muted" style="font-size:12px"></span></div>
+        </div>
+      </div>
+
+      <div class="set-pane" data-pane="auth" hidden>
+        <h3 style="margin:2px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-key"></i> Autenticazione locale</h3>
+        <label class="sw"><input type="checkbox" id="local_auth_enabled" ${localOn ? 'checked' : ''}> Abilita login con username e password</label>
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Se disattivata, l'accesso sarà possibile <b>solo via SSO</b>: assicurati che l'SSO sia abilitato e funzionante, altrimenti rischi di restare fuori.</p>
+        ${oidcSection(s.oidc || {})}
+      </div>
 
       <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" id="set_save"><i class="ti ti-device-floppy"></i> Salva</button></div>`;
+
+    // sotto-tab: mostra solo il pannello selezionato (i campi degli altri restano nel DOM)
+    modalBg.querySelectorAll('.set-tabs button').forEach(b => b.onclick = () => {
+      modalBg.querySelectorAll('.set-tabs button').forEach(x => x.classList.toggle('active', x === b));
+      modalBg.querySelectorAll('.set-pane').forEach(p => { p.hidden = p.dataset.pane !== b.dataset.pane; });
+    });
 
     const backendSel = $('#set_backend', modalBg);
     backendSel.onchange = () => { $('#s3_box', modalBg).style.display = backendSel.value === 's3' ? '' : 'none'; };
@@ -575,6 +596,7 @@
         note_poll_ms: $('#set_poll', modalBg).value,
         note_max_mb: $('#set_maxmb', modalBg).value,
         default_quota_mb: $('#set_defquota', modalBg).value,
+        local_auth_enabled: $('#local_auth_enabled', modalBg) && $('#local_auth_enabled', modalBg).checked ? '1' : '0',
       }, s3fields(), oidcfields()));
       if (r.ok) toast('Impostazioni salvate'); else toast(r.error || 'Errore', true);
     };
