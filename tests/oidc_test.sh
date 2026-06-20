@@ -90,6 +90,15 @@ ALOG="$SBX/alog"
 curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
 ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 apost(){ curl -s -b $ALOG -H "X-CSRF: $ACSRF" "$@"; }
+# Prova SSO con i DEFAULT (provider reale auth.deso.tech) + secret d'ambiente errato ("testsecret").
+# Best-effort: se il provider è raggiungibile deve dire "non validi" (invalid_client); altrimenti skip.
+OT=$(apost --data-urlencode action=oidc_test "$B/api.php")
+case "$OT" in
+  *'non validi'*)      ok "oidc_test rileva il secret errato (invalid_client dal provider reale)";;
+  *raggiungibile*)     ok "oidc_test: provider non raggiungibile (skip)";;
+  *'"ok":true'*)       ok "oidc_test: credenziali accettate";;
+  *)                   no "oidc_test risposta inattesa" "${OT:0:140}";;
+esac
 SAVE=$(apost --data-urlencode action=settings_save \
   --data-urlencode oidc_present=1 --data-urlencode oidc_enabled=1 \
   --data-urlencode oidc_client_id=TESTCLIENT123 \

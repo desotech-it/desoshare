@@ -24,6 +24,7 @@ switch ($action) {
     case 'settings_save': csrf_check(); action_settings_save(); break;
     case 's3_test':      csrf_check(); action_s3_test();      break;
     case 'oidc_discovery': csrf_check(); action_oidc_discovery(); break;
+    case 'oidc_test':    csrf_check(); action_oidc_test();    break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
@@ -557,6 +558,58 @@ function oidc_config_from_post(array $prev): array {
         // secret vuoto = mantieni quello già salvato (cifrato)
         'secret'      => $secretIn !== '' ? secret_encrypt($secretIn) : (string) ($prev['secret'] ?? ''),
     ];
+}
+
+// ─── SSO: prova di funzionamento (raggiungibilità provider + auth client) ────
+function action_oidc_test(): void {
+    require_admin();
+    $saved = is_array(settings_load()['oidc'] ?? null) ? settings_load()['oidc'] : [];
+    $pick = function (string $postKey, string $savedKey, string $const) use ($saved) {
+        $v = trim((string) ($_POST[$postKey] ?? ''));
+        if ($v !== '') return $v;
+        if (($saved[$savedKey] ?? '') !== '') return (string) $saved[$savedKey];
+        return $const;
+    };
+    $clientId = $pick('oidc_client_id', 'client_id', OIDC_CLIENT_ID);
+    $tokenUrl = $pick('oidc_token', 'token', OIDC_TOKEN);
+    $jwksUrl  = $pick('oidc_jwks', 'jwks', OIDC_JWKS);
+    $redirect = $pick('oidc_redirect', 'redirect', OIDC_REDIRECT);
+    $secretIn = (string) ($_POST['oidc_secret'] ?? '');
+    $secret = $secretIn !== '' ? $secretIn
+            : ((($saved['secret'] ?? '') !== '') ? secret_decrypt((string) $saved['secret']) : OIDC_CLIENT_SECRET);
+    if ($clientId === '' || $secret === '') json_out(['ok' => false, 'error' => 'Inserisci Client ID e Client Secret prima di provare'], 400);
+
+    // 1) JWKS raggiungibile e con chiavi
+    $jr = oidc_http_get_bearer($jwksUrl, '');
+    $jwksOk = ($jr['code'] === 200 && strpos($jr['body'], '"keys"') !== false);
+
+    // 2) Probe di autenticazione client sul token endpoint con il grant REALE
+    //    (authorization_code + un code fittizio): il provider autentica PRIMA il
+    //    client (Basic), poi valuta il code → distingue il secret sbagliato.
+    //    invalid_client = client_id/secret errati; invalid_grant/invalid_request
+    //    (code/redirect non validi) = client autenticato correttamente.
+    $tr = oidc_http_post($tokenUrl, [
+        'grant_type'   => 'authorization_code',
+        'code'         => 'desoshare-connection-test',
+        'redirect_uri' => $redirect,
+    ], $clientId, $secret);
+    $body = json_decode($tr['body'], true);
+    $errCode = is_array($body) ? (string) ($body['error'] ?? '') : '';
+    if ($errCode === 'invalid_client') {
+        $ok = false; $detail = 'Client ID o Client Secret non validi';
+    } elseif (in_array($errCode, ['invalid_grant', 'invalid_request', 'unauthorized_client', 'unsupported_grant_type'], true)) {
+        $ok = true; $detail = 'autenticazione client riuscita (credenziali valide)';
+    } elseif ($tr['code'] >= 200 && $tr['code'] < 300 && is_array($body) && isset($body['access_token'])) {
+        $ok = true; $detail = 'credenziali client valide (token ottenuto)';
+    } elseif (($tr['error'] ?? '') !== '') {
+        $ok = false; $detail = 'token endpoint non raggiungibile (' . $tr['error'] . ')';
+    } elseif ($errCode !== '') {
+        $ok = true; $detail = 'il provider ha risposto "' . $errCode . '" (client raggiunto)';
+    } else {
+        $ok = false; $detail = 'risposta inattesa dal token endpoint (HTTP ' . $tr['code'] . ')';
+    }
+    if (!$ok) json_out(['ok' => false, 'error' => $detail . ($jwksOk ? '' : ' · JWKS non raggiungibile')], 200);
+    json_out(['ok' => true, 'message' => $detail . ' · JWKS ' . ($jwksOk ? 'ok' : 'NON raggiungibile') . '. Per la prova completa, esegui un login.']);
 }
 
 // ─── SSO: discovery (.well-known) per auto-compilare gli endpoint dall'issuer ──

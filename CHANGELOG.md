@@ -6,6 +6,21 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.15.0] - 2026-06-20
+
+### Aggiunto
+- **Pulsante "Prova SSO"** nelle Impostazioni (#9): verifica il provider OIDC senza
+  fare un login completo. Carica il **JWKS** e fa un probe di autenticazione client
+  sul token endpoint con il grant reale (`authorization_code` + code fittizio): così
+  il provider autentica il client e si distingue il **secret errato**
+  (`invalid_client`) da una configurazione valida. Endpoint `oidc_test` (admin).
+
+### Modificato
+- **Impostazioni SSO più leggibili** (#9): in primo piano solo i campi che contano
+  (Abilita SSO, Issuer + Discovery, Client ID/Secret, Scopes, gruppi); i sei
+  endpoint OIDC (di norma compilati dal Discovery) sono ora in una sezione
+  **"Endpoint avanzati" richiudibile**, chiusa di default.
+
 ## [0.14.1] - 2026-06-20
 
 ### Corretto
@@ -299,6 +314,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.15.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.0
 [0.14.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.1
 [0.14.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.0
 [0.13.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.13.0

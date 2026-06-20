@@ -471,16 +471,23 @@
           <div class="fld"><label>Client Secret</label>
             <input type="password" id="oidc_secret" value="" autocomplete="new-password" placeholder="${o.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
             <span class="muted" style="font-size:11px">Vuoto = non modificare (cifrato sul server)</span></div>
-          ${fld('oidc_authz', 'Authorization endpoint', o.authz)}
-          ${fld('oidc_token', 'Token endpoint', o.token)}
-          ${fld('oidc_userinfo', 'Userinfo endpoint', o.userinfo)}
-          ${fld('oidc_jwks', 'JWKS URI', o.jwks)}
-          ${fld('oidc_endsession', 'End-session endpoint', o.endsession)}
-          ${fld('oidc_redirect', 'Redirect URI', o.redirect)}
-          ${fld('oidc_scopes', 'Scopes', o.scopes, 'openid email profile')}
           ${fld('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare_admin')}
           ${fld('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare_user')}
         </div>
+        <label style="margin-top:8px">Scopes</label>
+        <input type="text" id="oidc_scopes" value="${esc(o.scopes || '')}" placeholder="openid email profile" autocomplete="off">
+        <details class="adv">
+          <summary>Endpoint avanzati (di solito compilati dal Discovery)</summary>
+          <div class="grid2" style="margin-top:8px">
+            ${fld('oidc_authz', 'Authorization endpoint', o.authz)}
+            ${fld('oidc_token', 'Token endpoint', o.token)}
+            ${fld('oidc_userinfo', 'Userinfo endpoint', o.userinfo)}
+            ${fld('oidc_jwks', 'JWKS URI', o.jwks)}
+            ${fld('oidc_endsession', 'End-session endpoint', o.endsession)}
+            ${fld('oidc_redirect', 'Redirect URI', o.redirect)}
+          </div>
+        </details>
+        <div style="margin-top:10px"><button class="btn" id="oidc_testbtn" type="button"><i class="ti ti-plug-connected"></i> Prova SSO</button> <span id="oidc_testmsg" class="muted" style="font-size:12px"></span></div>
       </div>`;
   }
 
@@ -591,6 +598,14 @@
       set('oidc_authz', d.authz); set('oidc_token', d.token); set('oidc_userinfo', d.userinfo);
       set('oidc_jwks', d.jwks); set('oidc_endsession', d.endsession);
       msg.textContent = 'Endpoint compilati dal discovery ✓'; msg.style.color = 'var(--ok, #1a7f37)';
+    };
+    const ssoTest = $('#oidc_testbtn', modalBg);
+    if (ssoTest) ssoTest.onclick = async () => {
+      const msg = $('#oidc_testmsg', modalBg);
+      msg.textContent = 'verifica in corso…'; msg.style.color = '';
+      const r = await apiPost('oidc_test', oidcfields());
+      msg.textContent = r.ok ? (r.message || 'OK') : (r.error || 'Verifica fallita');
+      msg.style.color = r.ok ? 'var(--ok, #1a7f37)' : 'var(--danger, #c0392b)';
     };
 
     $('#set_save', modalBg).onclick = async () => {

@@ -173,6 +173,11 @@ body.dragging .dropzone-hint { display: flex; }
 .grid2 .fld label { margin: 0 0 4px; }
 .grid2 .fld input { width: 100%; box-sizing: border-box; }
 @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+details.adv { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+details.adv summary { cursor: pointer; font-size: 12px; color: var(--primary); user-select: none; list-style: none; padding: 2px 0; }
+details.adv summary::-webkit-details-marker { display: none; }
+details.adv summary::before { content: "▸ "; }
+details.adv[open] summary::before { content: "▾ "; }
 .modal.wide { width: 520px; }
 .editor-modal { width: min(900px, 96vw); }
 .editor-host { border: 1px solid var(--border-strong); border-radius: 8px; height: min(62vh, 480px); overflow: hidden; }

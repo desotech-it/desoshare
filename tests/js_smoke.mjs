@@ -251,10 +251,17 @@ async function runOidcSettings() {
   disco && typeof disco.onclick === 'function' ? ok('bottone Discovery cablato') : bad('Discovery non cablato');
   const grp = doc.getElementById('oidc_admin_group');
   grp && grp.value === 'desoshare-admins' ? ok('Gruppo admin precompilato') : bad('Gruppo admin errato');
-  // i campi OIDC sono disposti su griglia a 2 colonne
+  // campi principali in griglia a 2 colonne (client id + gruppo admin)
   const grid = doc.querySelector('#oidc_box .grid2');
-  (grid && grid.querySelector('#oidc_token') && grid.querySelector('#oidc_redirect'))
-    ? ok('campi OIDC in griglia a 2 colonne') : bad('campi OIDC non in griglia');
+  (grid && grid.querySelector('#oidc_client_id') && grid.querySelector('#oidc_admin_group'))
+    ? ok('campi principali in griglia a 2 colonne') : bad('campi principali non in griglia');
+  // endpoint avanzati in una sezione richiudibile <details>
+  const adv = doc.querySelector('#oidc_box details.adv');
+  (adv && adv.querySelector('#oidc_token') && adv.querySelector('#oidc_redirect'))
+    ? ok('endpoint avanzati in sezione richiudibile') : bad('sezione endpoint avanzati assente');
+  // pulsante "Prova SSO" cablato
+  const tbtn = doc.getElementById('oidc_testbtn');
+  tbtn && typeof tbtn.onclick === 'function' ? ok('pulsante "Prova SSO" cablato') : bad('pulsante Prova SSO non cablato');
 }
 
 console.log('=== JS smoke test (jsdom) ===');
