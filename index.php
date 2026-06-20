@@ -52,6 +52,8 @@ function page_head(string $title): string {
     return '<!doctype html><html lang="it"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<title>' . h($title) . ' · ' . h(APP_NAME) . '</title>'
+        . '<link rel="icon" href="favicon.ico?v=' . @filemtime(PUBLIC_DIR . '/favicon.ico') . '">'
+        . '<link rel="apple-touch-icon" href="apple-touch-icon.png">'
         . '<link rel="stylesheet" href="' . $icons . '">'
         . '<link rel="stylesheet" href="assets/app.css?v=' . @filemtime(PUBLIC_DIR . '/assets/app.css') . '">'
         . '</head><body>';
@@ -62,7 +64,7 @@ function render_setup(?string $err): void {
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=setup">
-        <div class="auth-logo"><i class="ti ti-folder"></i></div>
+        <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(APP_NAME) ?></h1>
         <p class="muted">Primo avvio — crea l'account amministratore</p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
@@ -82,7 +84,7 @@ function render_login(?string $err): void {
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=login">
-        <div class="auth-logo"><i class="ti ti-lock"></i></div>
+        <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(APP_NAME) ?></h1>
         <p class="muted">Inserisci le credenziali per accedere</p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
@@ -110,7 +112,7 @@ function render_app(array $user): void {
          data-write="<?= $canWrite ? '1' : '0' ?>">
 
       <header class="topbar">
-        <div class="brand"><i class="ti ti-folder"></i> <?= h(APP_NAME) ?></div>
+        <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(APP_NAME) ?></div>
         <div class="topbar-right">
           <span class="who"><i class="ti ti-user"></i> <?= h($user['username']) ?>
             <span class="badge <?= $canWrite ? 'badge-w' : 'badge-r' ?>">

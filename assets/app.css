@@ -26,6 +26,7 @@ body {
   color: var(--primary); display: flex; align-items: center; justify-content: center;
   font-size: 26px; margin: 0 auto 12px;
 }
+.auth-logo-img { display: block; width: 130px; max-width: 75%; height: auto; margin: 4px auto 14px; }
 .auth-card h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
 .auth-card .muted { margin: 0 0 1.25rem; font-size: 13px; }
 .auth-card label { display: block; text-align: left; font-size: 13px; color: var(--muted); margin: 10px 0 5px; }
@@ -57,6 +58,7 @@ body {
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 4px; }
 .brand { font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .brand .ti { color: var(--primary); }
+.brand-logo { height: 28px; width: auto; display: block; }
 .topbar-right { display: flex; align-items: center; gap: 10px; }
 .who { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; }

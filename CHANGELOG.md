@@ -6,6 +6,12 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.2.0] - 2026-06-20
+
+### Aggiunto
+- Branding **DesoLabs**: logo nella pagina di login e nel setup, simbolo nell'header
+  del file manager e favicon (anche apple-touch-icon).
+
 ## [0.1.0] - 2026-06-20
 
 Prima release.
@@ -30,4 +36,5 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.2.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.2.0
 [0.1.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.1.0
