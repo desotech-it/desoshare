@@ -6,6 +6,14 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.15.2] - 2026-06-20
+
+### Modificato
+- **Pagina di login con menu a tendina** (#11): quando sono attivi sia il login
+  locale sia l'SSO, si sceglie il metodo da un menu a tendina ("Metodo di accesso")
+  con **desoauth (SSO) predefinito**, invece dei due blocchi impilati. Con un solo
+  metodo attivo la pagina resta invariata (nessuna tendina).
+
 ## [0.15.1] - 2026-06-20
 
 ### Corretto / Sicurezza
@@ -324,6 +332,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.15.2]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.2
 [0.15.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.1
 [0.15.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.0
 [0.14.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.1

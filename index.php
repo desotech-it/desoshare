@@ -122,26 +122,51 @@ function render_setup(?string $err): void {
 
 function render_login(?string $err, bool $localLogin = true): void {
     echo page_head('Accesso');
+    $sso  = oidc_enabled();
+    $both = $localLogin && $sso;   // entrambi i metodi → menu a tendina (desoauth predefinito)
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=login">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(app_title()) ?></h1>
-        <p class="muted"><?= $localLogin ? "Inserisci le credenziali per accedere" : "Accedi con il tuo account aziendale" ?></p>
+        <p class="muted"><?= $localLogin && !$sso ? "Inserisci le credenziali per accedere" : "Scegli come accedere" ?></p>
         <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
+
+        <?php if ($both): ?>
+        <label>Metodo di accesso</label>
+        <select id="login-method">
+          <option value="sso" selected>desoauth (SSO aziendale)</option>
+          <option value="local">Account locale</option>
+        </select>
+        <?php endif; ?>
+
+        <?php if ($sso): ?>
+        <div id="m-sso" style="margin-top:14px">
+          <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
+        </div>
+        <?php endif; ?>
+
         <?php if ($localLogin): ?>
-        <label>Username</label>
-        <input type="text" name="username" autocomplete="username" required autofocus>
-        <label>Password</label>
-        <input type="password" name="password" autocomplete="current-password" required>
-        <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
+        <div id="m-local"<?= $both ? ' hidden' : '' ?> style="margin-top:<?= $both ? '0' : '14px' ?>">
+          <label>Username</label>
+          <input type="text" name="username" autocomplete="username"<?= $both ? '' : ' required autofocus' ?>>
+          <label>Password</label>
+          <input type="password" name="password" autocomplete="current-password"<?= $both ? '' : ' required' ?>>
+          <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
+        </div>
         <?php endif; ?>
-        <?php if (oidc_enabled()): ?>
-        <?php if ($localLogin): ?><div class="sso-sep"><span>oppure</span></div><?php endif; ?>
-        <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
-        <?php endif; ?>
+
         <p class="hint"><i class="ti ti-shield-lock"></i> Sessione protetta · v<?= h(APP_VERSION) ?></p>
       </form>
+      <?php if ($both): ?>
+      <script>(function(){
+        var s=document.getElementById('login-method'),sso=document.getElementById('m-sso'),loc=document.getElementById('m-local');
+        function upd(){var v=s.value;sso.hidden=(v!=='sso');loc.hidden=(v!=='local');
+          var u=loc.querySelector('input[name=username]'),p=loc.querySelector('input[name=password]');
+          if(v==='local'){u.required=p.required=true;u.focus();}else{u.required=p.required=false;}}
+        s.addEventListener('change',upd);upd();
+      })();</script>
+      <?php endif; ?>
     </div>
     </body></html>
     <?php
