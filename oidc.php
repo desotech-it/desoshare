@@ -156,15 +156,21 @@ function oidc_login(): void {
     $c = oidc_cfg();
     $state = bin2hex(random_bytes(32));
     $nonce = bin2hex(random_bytes(32));
+    // PKCE (S256): difesa in più e spesso richiesto da Authentik.
+    $verifier = rtrim(strtr(base64_encode(random_bytes(32)), '+/', '-_'), '=');
+    $challenge = rtrim(strtr(base64_encode(hash('sha256', $verifier, true)), '+/', '-_'), '=');
     $_SESSION['oidc_state'] = $state;
     $_SESSION['oidc_nonce'] = $nonce;
+    $_SESSION['oidc_pkce']  = $verifier;
     $q = http_build_query([
-        'response_type' => 'code',
-        'client_id'     => $c['client_id'],
-        'redirect_uri'  => $c['redirect'],
-        'scope'         => $c['scopes'],
-        'state'         => $state,
-        'nonce'         => $nonce,
+        'response_type'         => 'code',
+        'client_id'             => $c['client_id'],
+        'redirect_uri'          => $c['redirect'],
+        'scope'                 => $c['scopes'],
+        'state'                 => $state,
+        'nonce'                 => $nonce,
+        'code_challenge'        => $challenge,
+        'code_challenge_method' => 'S256',
     ]);
     header('Location: ' . $c['authz'] . '?' . $q);
     exit;
@@ -172,7 +178,7 @@ function oidc_login(): void {
 
 // Errore → torna alla pagina di login con messaggio (render_login è in index.php).
 function oidc_fail(string $msg): void {
-    unset($_SESSION['oidc_state'], $_SESSION['oidc_nonce']);
+    unset($_SESSION['oidc_state'], $_SESSION['oidc_nonce'], $_SESSION['oidc_pkce']);
     render_login('SSO: ' . $msg);
     exit;
 }
@@ -182,7 +188,11 @@ function oidc_callback(): void {
     if (!oidc_enabled()) { header('Location: index.php'); exit; }
     $c = oidc_cfg();
 
-    if (!empty($_GET['error'])) oidc_fail('accesso negato dal provider (' . preg_replace('/[^a-zA-Z0-9_\-]/', '', (string) $_GET['error']) . ').');
+    if (!empty($_GET['error'])) {
+        $e = preg_replace('/[^a-zA-Z0-9_\-]/', '', (string) $_GET['error']);
+        $desc = trim(mb_substr(preg_replace('/[\x00-\x1F]+/', ' ', (string) ($_GET['error_description'] ?? '')), 0, 200));
+        oidc_fail('accesso negato dal provider (' . $e . ($desc !== '' ? ': ' . $desc : '') . ').');
+    }
 
     // CSRF: lo state deve combaciare con quello in sessione, poi va azzerato.
     $state = (string) ($_GET['state'] ?? '');
@@ -194,12 +204,14 @@ function oidc_callback(): void {
     $code = (string) ($_GET['code'] ?? '');
     if ($code === '') oidc_fail('codice di autorizzazione mancante.');
 
-    // Scambio del code (client_secret_basic).
+    // Scambio del code (client_secret_basic) con code_verifier (PKCE).
     $tr = oidc_http_post($c['token'], [
-        'grant_type'   => 'authorization_code',
-        'code'         => $code,
-        'redirect_uri' => $c['redirect'],
+        'grant_type'    => 'authorization_code',
+        'code'          => $code,
+        'redirect_uri'  => $c['redirect'],
+        'code_verifier' => (string) ($_SESSION['oidc_pkce'] ?? ''),
     ], $c['client_id'], $c['secret']);
+    unset($_SESSION['oidc_pkce']);
     if ($tr['code'] !== 200) oidc_fail('scambio del token fallito.');
     $tok = json_decode($tr['body'], true);
     $idToken     = (string) ($tok['id_token'] ?? '');

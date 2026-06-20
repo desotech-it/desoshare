@@ -67,6 +67,8 @@ has "redirect: client_id corretto" "$LOC" 'Pubj2VIXKulUumtmb7bBiAuu7E9ddUan7VPwJ
 has "redirect: scope openid" "$LOC" 'openid'
 has "redirect: state presente" "$LOC" 'state='
 has "redirect: nonce presente" "$LOC" 'nonce='
+has "redirect: PKCE code_challenge presente" "$LOC" 'code_challenge='
+has "redirect: PKCE method S256" "$LOC" 'code_challenge_method=S256'
 has "redirect: redirect_uri = callback" "$LOC" 'oidc_callback'
 
 CB=$(curl -s -b $JAR "$B/index.php?action=oidc_callback&state=sbagliato&code=x")
@@ -74,6 +76,9 @@ has "callback con state errato -> errore SSO" "$CB" 'SSO'
 has "callback con state errato -> resta sul login" "$CB" 'action=login'
 CE=$(curl -s -b $JAR "$B/index.php?action=oidc_callback&error=access_denied")
 has "callback con error del provider -> messaggio SSO" "$CE" 'SSO'
+# error_description del provider mostrato all'utente
+CED=$(curl -s "$B/index.php?action=oidc_callback&error=invalid_request&error_description=PKCE+is+required")
+has "callback mostra l'error_description del provider" "$CED" 'PKCE is required'
 # Redirect MALFORMATO (doppio '?' di Authentik): l'app deve recuperare i parametri
 D1=$(curl -s "$B/index.php?action=oidc_callback?error=access_denied&state=x")
 has "doppio-? con error -> azione riconosciuta e gestita" "$D1" 'accesso negato'

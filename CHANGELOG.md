@@ -6,6 +6,16 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.15.1] - 2026-06-20
+
+### Corretto / Sicurezza
+- **SSO con PKCE** (#10): la richiesta di autorizzazione include ora
+  `code_challenge`/`code_challenge_method=S256` e lo scambio del token invia il
+  `code_verifier`. Risolve l'`invalid_request` restituito da provider (es.
+  Authentik) che richiedono PKCE, ed è comunque una protezione in più.
+- **Messaggi d'errore SSO più chiari**: in caso di errore dal provider viene
+  mostrato anche l'`error_description` (prima solo il codice, es. `invalid_request`).
+
 ## [0.15.0] - 2026-06-20
 
 ### Aggiunto
@@ -314,6 +324,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.15.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.1
 [0.15.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.0
 [0.14.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.1
 [0.14.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.0
