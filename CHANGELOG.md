@@ -6,6 +6,14 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.18.0] - 2026-06-20
+
+### Modificato (interno, nessun cambiamento di comportamento)
+- **Modularizzazione FASE 1**: `api.php` (826 righe, 39 funzioni) scisso in un
+  dispatcher sottile + 7 moduli `api_*.php` (files, upload, zip, users, settings,
+  shares, notes). Lo switch e la gestione CSRF restano identici. 28=28 azioni,
+  39=39 funzioni; 85 API + 45 S3 + 38 OIDC + smoke JS verdi.
+
 ## [0.17.0] - 2026-06-20
 
 ### Modificato (interno, nessun cambiamento di comportamento)
@@ -385,6 +393,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.18.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.18.0
 [0.17.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.17.0
 [0.16.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.1
 [0.16.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.0
