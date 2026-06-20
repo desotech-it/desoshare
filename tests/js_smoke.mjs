@@ -262,6 +262,14 @@ async function runOidcSettings() {
   // pulsante "Prova SSO" cablato
   const tbtn = doc.getElementById('oidc_testbtn');
   tbtn && typeof tbtn.onclick === 'function' ? ok('pulsante "Prova SSO" cablato') : bad('pulsante Prova SSO non cablato');
+  // Salva e Chiudi nello STESSO footer .modal-actions (fuori dallo scroll), non dentro #adm_body
+  const actions = doc.querySelector('.admin-modal .modal-actions');
+  const saveInFooter = actions && actions.querySelector('#adm_save') && typeof doc.getElementById('adm_save').onclick === 'function';
+  const noSaveInBody = !doc.querySelector('#adm_body #adm_save') && !doc.querySelector('#adm_body #set_save');
+  (saveInFooter && noSaveInBody) ? ok('Salva e Chiudi nel footer unico (fuori dallo scroll)') : bad('barra azioni non unificata');
+  // visibile nella tab Impostazioni
+  const sv = doc.getElementById('adm_save');
+  (sv && !sv.hidden) ? ok('Salva visibile nella tab Impostazioni') : bad('Salva non visibile in Impostazioni');
 }
 
 console.log('=== JS smoke test (jsdom) ===');

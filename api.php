@@ -77,7 +77,7 @@ function action_mkdir(): void {
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     if (!storage()->makeDir($target)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
     json_out(['ok' => true]);
 }
@@ -89,7 +89,7 @@ function action_newfile(): void {
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     $content = (string) ($_POST['content'] ?? '');
     quota_check(strlen($content));
     if (!storage()->writeFile($target, $content)) {
@@ -158,7 +158,7 @@ function action_rename(): void {
     if (storage()->typeOf($from) === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
     $target = logical_join($parent, $newName);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
     if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
     json_out(['ok' => true]);
 }
@@ -817,5 +817,10 @@ function action_note_save(): void {
     quota_check_user($ctx['owner'] ?? null, strlen($content), $prev);   // conta solo il delta, sulla quota del proprietario
     if (!storage()->writeFile($ctx['logical'], $content)) json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
     if (!empty($ctx['owner'])) usage_bump((string) $ctx['owner'], strlen($content) - $prev);
+    // Il salvataggio è il "commit": il file è la sorgente di verità. Azzera il relay
+    // Yjs (e l'awareness) così alla riapertura si riparte dal file, senza testo stantio.
+    $id = note_id($ctx['logical']);
+    @unlink(note_relay_path($id));
+    @unlink(note_aware_path($id));
     json_out(['ok' => true]);
 }

@@ -122,7 +122,16 @@ function clean_logical(string $rel): string {
     }
     return implode('/', $parts);
 }
-function logical_join(string $dir, string $name): string { return $dir === '' ? $name : $dir . '/' . $name; }
+// Unione robusta di percorsi logici: normalizza gli slash così non si producono
+// mai chiavi con '//' (critico su S3, dove le chiavi sono letterali). Gestisce
+// $dir con slash finale (es. prefisso utente) e $name vuoto.
+function logical_join(string $dir, string $name): string {
+    $dir = rtrim($dir, '/');
+    $name = trim($name, '/');
+    if ($dir === '') return $name;
+    if ($name === '') return $dir;
+    return $dir . '/' . $name;
+}
 
 // ─── Isolamento per-utente: ogni utente lavora sotto il prefisso <username>/ ──
 // Prefisso logico (sandbox) di un utente. Lo username è già validato

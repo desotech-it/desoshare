@@ -399,13 +399,18 @@
   async function adminPanel(section) {
     section = section || 'users';
     const tab = (k, ic, lbl) => `<button class="btn ${section === k ? 'btn-primary' : ''}" data-sec="${k}"><i class="ti ${ic}"></i> ${lbl}</button>`;
-    openModal(`<div class="modal wide"><h3><i class="ti ti-settings"></i> Amministrazione</h3>
-      <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+    openModal(`<div class="modal wide admin-modal"><h3><i class="ti ti-settings"></i> Amministrazione</h3>
+      <div class="adm-tabs">
         ${tab('users', 'ti-users-group', 'Utenti')}${tab('settings', 'ti-adjustments', 'Impostazioni')}${tab('audit', 'ti-history', 'Registro')}
       </div>
       <div id="adm_body">Caricamento…</div>
-      <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="adm_save" hidden><i class="ti ti-device-floppy"></i> Salva</button>
+        <button class="btn" onclick="closeModal()">Chiudi</button>
+      </div></div>`);
     modalBg.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => adminPanel(b.dataset.sec));
+    const saveBtn = $('#adm_save', modalBg);
+    if (saveBtn) saveBtn.hidden = (section !== 'settings');   // "Salva" solo nella tab Impostazioni
     const body = $('#adm_body', modalBg);
     if (section === 'settings') await renderSettingsSection(body);
     else if (section === 'audit') await renderAuditSection(body);
@@ -543,9 +548,7 @@
         <label class="sw"><input type="checkbox" id="local_auth_enabled" ${localOn ? 'checked' : ''}> Abilita login con username e password</label>
         <p class="muted" style="font-size:12px;margin:4px 0 0">Se disattivata, l'accesso sarà possibile <b>solo via SSO</b>: assicurati che l'SSO sia abilitato e funzionante, altrimenti rischi di restare fuori.</p>
         ${oidcSection(s.oidc || {})}
-      </div>
-
-      <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" id="set_save"><i class="ti ti-device-floppy"></i> Salva</button></div>`;
+      </div>`;
 
     // sotto-tab: mostra solo il pannello selezionato (i campi degli altri restano nel DOM)
     modalBg.querySelectorAll('.set-tabs button').forEach(b => b.onclick = () => {
@@ -608,7 +611,7 @@
       msg.style.color = r.ok ? 'var(--ok, #1a7f37)' : 'var(--danger, #c0392b)';
     };
 
-    $('#set_save', modalBg).onclick = async () => {
+    $('#adm_save', modalBg).onclick = async () => {
       const r = await apiPost('settings_save', Object.assign({
         site_title: $('#set_title', modalBg).value,
         note_poll_ms: $('#set_poll', modalBg).value,
@@ -624,10 +627,10 @@
     const r = await apiGet('audit_list');
     if (!r.ok) { body.textContent = r.error || 'Errore'; return; }
     if (!r.entries.length) { body.innerHTML = '<p class="muted">Nessuna attività registrata.</p>'; return; }
-    body.innerHTML = `<div style="max-height:360px;overflow:auto"><table class="utable">
+    body.innerHTML = `<table class="utable">
       <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${
       r.entries.map(e => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('')
-      }</tbody></table></div>`;
+      }</tbody></table>`;
   }
 
   function userForm(u = null) {

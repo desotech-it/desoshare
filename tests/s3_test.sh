@@ -128,6 +128,54 @@ has "note_save su S3" "$(post --data-urlencode action=note_save --data-urlencode
 DL=$(curl -s -b $JAR -L "$B/api.php?action=download&path=$DIR/sub/nota.md")
 has "nota materializzata su S3" "$DL" 'Aggiornato su Wasabi'
 
+echo "=== HOME ROOT + utente NON-admin col PUNTO (regressione doppio-slash) ==="
+# Crea un utente con username che contiene un punto (come gli SSO tipo n.decandia)
+post --data-urlencode action=user_save --data-urlencode username=tester.dot --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php" >/dev/null
+TDJAR="$SBX/tdjar"
+curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=tester.dot --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+TDCSRF=$(curl -s -b $TDJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+tdpost(){ curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" "$@"; }
+# crea file NELLA HOME ROOT (path='') — è qui che viveva il bug del doppio slash
+has "tester.dot crea test.md nella root" "$(tdpost --data-urlencode action=newfile --data-urlencode path= --data-urlencode name=test.md --data-urlencode content='ciao root' "$B/api.php")" '"ok":true'
+has "tester.dot crea 'test' (no estensione) nella root → NESSUNA falsa collisione" "$(tdpost --data-urlencode action=newfile --data-urlencode path= --data-urlencode name=test --data-urlencode content='senza ext' "$B/api.php")" '"ok":true'
+RL=$(curl -s -b $TDJAR "$B/api.php?action=list&path=")
+has "la root ELENCA test.md (il file non sparisce)" "$RL" '"name":"test.md"'
+has "la root ELENCA anche 'test'" "$RL" '"name":"test"'
+has "download di test.md dalla root ok" "$(curl -s -b $TDJAR -L "$B/api.php?action=download&path=test.md")" 'ciao root'
+has "note_open su file in root ok" "$(curl -s -b $TDJAR "$B/api.php?action=note_open&path=test.md")" '"ok":true'
+# ASSERT ANTI-'//': nel bucket NON deve esistere alcuna chiave 'tester.dot//...'
+DS=$(AK="$AK" SK="$SK" php -r '
+require "'"$APP_DIR"'/config.php"; require "'"$APP_DIR"'/storage.php";
+$cfg=["endpoint"=>"'"$ENDPOINT"'","region"=>"'"$REGION"'","bucket"=>"'"$BUCKET"'","key"=>getenv("AK"),"secret"=>getenv("SK")];
+$r=s3_request($cfg,"GET","",["list-type"=>"2","prefix"=>"tester.dot/","max-keys"=>"1000"]);
+echo (strpos($r["body"],"tester.dot//")!==false)?"DOPPIOSLASH":"pulito";')
+has "nessuna chiave col doppio slash nel bucket" "$DS" 'pulito'
+
+echo "=== sizeOf ancorato alla Key esatta (no prefix-match) ==="
+SZ=$(AK="$AK" SK="$SK" php -r '
+require "'"$APP_DIR"'/config.php"; require "'"$APP_DIR"'/storage.php";
+$cfg=["endpoint"=>"'"$ENDPOINT"'","region"=>"'"$REGION"'","bucket"=>"'"$BUCKET"'","key"=>getenv("AK"),"secret"=>getenv("SK")];
+$s=new S3Backend($cfg); $P="sztest-".getmypid();
+$s->writeFile("$P/x.md","12345");
+echo "exact=".$s->sizeOf("$P/x.md")." prefix=".$s->sizeOf("$P/x")."\n";
+$s->deletePath($P,true);')
+has "sizeOf(x.md) corretto (5)" "$SZ" 'exact=5'
+has "sizeOf(x) su chiave inesistente = 0 (non la dimensione di x.md)" "$SZ" 'prefix=0'
+
+echo "=== Note: il salvataggio invalida il relay (no testo stantio alla riapertura) ==="
+tdpost --data-urlencode action=newfile --data-urlencode path= --data-urlencode name=appunti.md --data-urlencode content='v1' "$B/api.php" >/dev/null
+NOP=$(curl -s -b $TDJAR "$B/api.php?action=note_open&path=appunti.md")
+NID=$(printf '%s' "$NOP" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')
+UX=$(printf 'updateXXXX' | openssl base64 -A)
+tdpost --data-urlencode action=note_sync --data-urlencode id=$NID --data-urlencode since=0 --data-urlencode client=cli1 --data-urlencode "updates=[\"$UX\"]" --data-urlencode path=appunti.md "$B/api.php" >/dev/null
+tdpost --data-urlencode action=note_save --data-urlencode path=appunti.md --data-urlencode content='v2 salvato' "$B/api.php" >/dev/null
+REOPEN=$(curl -s -b $TDJAR "$B/api.php?action=note_open&path=appunti.md")
+has "dopo il save il relay è azzerato (offset 0)" "$REOPEN" '"offset":0'
+EXPV2=$(printf 'v2 salvato' | openssl base64 -A)   # confronto sul base64 (evita quirk di decode su macOS)
+has "riapertura mostra il testo salvato (v2)" "$REOPEN" "\"text\":\"$EXPV2\""
+# pulizia file di tester.dot
+tdpost --data-urlencode action=delete --data-urlencode 'paths=["test.md","test","appunti.md"]' "$B/api.php" >/dev/null
+
 echo "=== Pulizia (delete ricorsivo su S3) ==="
 has "delete $DIR ricorsivo" "$(post --data-urlencode action=delete --data-urlencode "paths=[\"$DIR\"]" "$B/api.php")" '"deleted":1'
 L=$(curl -s -b $JAR "$B/api.php?action=list&path=")

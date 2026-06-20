@@ -6,6 +6,40 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.16.0] - 2026-06-20
+
+### Corretto (bug critici su S3, emersi con un'indagine multi-agente)
+- **File/note creati nella radice della home "spariti"** (#12): `logical_join`
+  produceva chiavi a **doppio slash** (`<utente>//file`) per i file creati nella
+  home root, perché `user_path('')` ritornava il prefisso con slash finale e poi si
+  univa di nuovo. Su S3 quelle chiavi non comparivano nell'elenco e `typeOf` dava
+  404 ("Non è un file"). In locale il `//` collassava, quindi i test non lo
+  vedevano. **Fix:** `logical_join` ora normalizza gli slash (mai `//`). Eseguita la
+  **bonifica del bucket** in produzione (file reali recuperati, marker di test
+  rimossi).
+- **Note: perdita di dati.** Il relay Yjs non veniva mai invalidato dal salvataggio:
+  alla riapertura l'editor ripartiva dallo storico stantio ignorando il file. Ora
+  `note_save` **azzera il relay** (il file è la sorgente di verità).
+- **`sizeOf()` su S3 faceva prefix-match** (prefisso senza slash): la dimensione di
+  un omonimo (`test.md` per `test`) falsava quota/consumo e poteva causare falsi
+  "Quota superata". Ora è ancorato alla **Key esatta**.
+- **File e cartella omonimi**: `listDir` mostrava il nome due volte (cartella+file);
+  ora **deduplica** (la cartella prevale). Pulizia/robustezza di `typeOf`.
+- I messaggi di **collisione** ora riportano il nome reale ("Esiste già un elemento
+  chiamato …").
+
+### Modificato (UI)
+- **Pannello Amministrazione**: barra azioni unica e fissa in fondo (**Salva** e
+  **Chiudi** affiancati, "Salva" solo nella tab Impostazioni), **un solo contesto di
+  scroll** (niente più "finestre innestate" né bottoni nascosti sotto la piega), tab
+  sticky, rimosso lo scroll annidato nel Registro.
+
+### Test
+- Colmate le lacune che lasciavano passare i bug: `s3_test.sh` ora prova la **home
+  root** con un utente **col punto** (come gli SSO), con assert **anti-`//`**,
+  `sizeOf` esatto, e il **giro relay note** (riapertura dopo salvataggio). `js_smoke`
+  verifica la barra azioni unica del modale admin. Totale: 85 API + 45 S3 + 38 OIDC.
+
 ## [0.15.2] - 2026-06-20
 
 ### Modificato
@@ -332,6 +366,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.16.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.0
 [0.15.2]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.2
 [0.15.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.1
 [0.15.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.0

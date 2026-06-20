@@ -203,7 +203,7 @@ class S3Backend implements StorageBackend {
 
     public function listDir(string $dir): array {
         $prefix = $dir === '' ? '' : rtrim($dir, '/') . '/';
-        $out = []; $token = null;
+        $byName = []; $token = null;   // dedup per nome (un nome può esistere sia come file sia come cartella)
         do {
             $q = ['list-type' => '2', 'delimiter' => '/', 'prefix' => $prefix, 'max-keys' => '1000'];
             if ($token) $q['continuation-token'] = $token;
@@ -212,28 +212,29 @@ class S3Backend implements StorageBackend {
             $xml = @simplexml_load_string($r['body']); if (!$xml) break;
             foreach ($xml->CommonPrefixes as $cp) {
                 $name = rtrim((string) $cp->Prefix, '/'); $name = substr($name, strlen($prefix));
-                if ($name !== '') $out[] = ['name' => $name, 'type' => 'dir', 'size' => 0, 'mtime' => time()];
+                if ($name === '' || strpos($name, '/') !== false) continue;   // scarta artefatti (es. chiavi '//')
+                $byName[$name] = ['name' => $name, 'type' => 'dir', 'size' => 0, 'mtime' => time()];
             }
             foreach ($xml->Contents as $c) {
                 $k = (string) $c->Key;
                 if ($k === $prefix) continue;                 // marker della cartella stessa
                 $name = substr($k, strlen($prefix));
                 if ($name === '' || substr($name, -1) === '/') continue;
-                $out[] = ['name' => $name, 'type' => 'file', 'size' => (int) $c->Size, 'mtime' => strtotime((string) $c->LastModified) ?: time()];
+                if (isset($byName[$name]) && $byName[$name]['type'] === 'dir') continue;   // la cartella omonima prevale
+                $byName[$name] = ['name' => $name, 'type' => 'file', 'size' => (int) $c->Size, 'mtime' => strtotime((string) $c->LastModified) ?: time()];
             }
             $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
         } while ($token);
-        return $out;
+        return array_values($byName);
     }
     public function typeOf(string $path) {
         if ($path === '') return 'dir';
-        $r = s3_request($this->cfg, 'HEAD', $this->key($path));
+        $key = $this->key($path);
+        $r = s3_request($this->cfg, 'HEAD', $key);
         if ($r['code'] === 200) return 'file';
-        // cartella? cerca oggetti col prefisso
-        $q = ['list-type' => '2', 'prefix' => rtrim($path, '/') . '/', 'max-keys' => '1'];
-        $r2 = s3_request($this->cfg, 'GET', '', $q);
+        // cartella? esistono oggetti sotto 'key/'
+        $r2 = s3_request($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => rtrim($key, '/') . '/', 'max-keys' => '1']);
         if ($r2['code'] === 200 && strpos($r2['body'], '<Contents>') !== false) return 'dir';
-        if ($r2['code'] === 200 && strpos($r2['body'], '<KeyCount>0') === false && strpos($r2['body'], '<CommonPrefixes>') !== false) return 'dir';
         return false;
     }
     public function readFile(string $path): string {
@@ -300,8 +301,15 @@ class S3Backend implements StorageBackend {
         return true;
     }
     public function sizeOf(string $path): int {
-        $r = s3_request($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => $this->key($path), 'max-keys' => '1']);
-        if (preg_match('/<Size>(\d+)<\/Size>/', $r['body'], $m)) return (int) $m[1];
+        // Dimensione SOLO della chiave esatta: la <Key> restituita deve combaciare,
+        // altrimenti un omonimo-prefisso (es. 'test.md' per 'test') falserebbe il valore.
+        $key = $this->key($path);
+        $r = s3_request($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => $key, 'max-keys' => '1']);
+        if (preg_match('/<Key>(.*?)<\/Key>/s', $r['body'], $mk)
+            && html_entity_decode($mk[1], ENT_QUOTES | ENT_XML1) === $key
+            && preg_match('/<Size>(\d+)<\/Size>/', $r['body'], $ms)) {
+            return (int) $ms[1];
+        }
         return 0;
     }
     public function usageOf(string $prefix): int {
