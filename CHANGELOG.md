@@ -6,6 +6,32 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.10.0] - 2026-06-20
+
+### Aggiunto
+- **Login SSO via OpenID Connect** ("Accedi con desoauth", Authorization Code,
+  client confidenziale) verso **desoauth/Authentik**, accanto al login locale che
+  resta come fallback. Implementazione in **PHP vanilla** (solo cURL + openssl,
+  nessuna dipendenza Composer), in `oidc.php`.
+- **Auto-provisioning**: al primo accesso SSO l'utente viene creato in `users.json`
+  come utente SSO **senza password locale** (`sso: true`); ai login successivi
+  ruolo e permessi vengono riallineati. **Mappa gruppi→permessi**: gruppo admin →
+  amministratore, gruppo read-write → lettura e scrittura, altrimenti **sola
+  lettura**. La home (sandbox) e la quota di default vengono applicate come per gli
+  utenti locali.
+- **Logout federato**: gli utenti SSO vengono reindirizzati all'`end_session_endpoint`
+  per chiudere anche la sessione su desoauth.
+
+### Sicurezza
+- Flusso Authorization Code con `state` (anti-CSRF) e `nonce` validati; controllo di
+  `iss`, `aud`, `exp` dell'id_token; verifica della firma **RS256 via JWKS**
+  (ricostruzione della chiave pubblica con solo openssl) best-effort. cURL con
+  verifica TLS attiva, `redirect_uri` con match esatto, segreto client **solo da
+  ambiente** (`OIDC_CLIENT_SECRET`), mai in chiaro né nei log. Gli utenti SSO **non
+  possono** autenticarsi con la password locale.
+- SSO attivo solo se `OIDC_CLIENT_SECRET` è presente nell'ambiente (di default
+  disattivato). Nuovi test: 15 controlli OIDC (unit crypto + flusso HTTP).
+
 ## [0.9.0] - 2026-06-20
 
 ### Aggiunto
@@ -177,6 +203,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.10.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.10.0
 [0.9.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.9.0
 [0.8.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.8.0
 [0.7.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.7.0

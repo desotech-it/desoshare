@@ -23,6 +23,9 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
   di spazio (0 = illimitata) e vede il consumo di tutti gli utenti, con barra
   percentuale, nel pannello di amministrazione. Le scritture oltre quota vengono
   rifiutate.
+- **Login SSO (OpenID Connect)**: accesso "Accedi con desoauth" via OAuth2
+  Authorization Code, con auto-provisioning degli utenti e mappatura dei permessi
+  dai gruppi; il login locale resta come fallback (vedi sotto).
 - **File manager**: navigazione tra cartelle (breadcrumb), creazione di cartelle
   e file, rinomina, eliminazione (con conferma), ricerca.
 - **Upload a blocchi** (chunk da 16 MB) **in parallelo** e con **ripresa
@@ -109,6 +112,30 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
 
 Le cartelle `storage/` e `appdata/` vengono create automaticamente al primo
 accesso, accanto a `public_html`.
+
+### Login SSO (OpenID Connect / desoauth)
+
+Oltre al login locale, l'app supporta l'accesso **SSO** tramite OpenID Connect
+(Authorization Code) verso un provider come **desoauth/Authentik**. È in **PHP
+vanilla** (cURL + openssl, nessun Composer) e si attiva quando il **segreto client
+è presente nell'ambiente**:
+
+```apache
+# es. in .htaccess o nella configurazione PHP dell'hosting
+SetEnv OIDC_CLIENT_SECRET "il-tuo-client-secret"
+# opzionali: nomi dei gruppi AD per la mappatura dei permessi
+SetEnv OIDC_ADMIN_GROUP "desoshare-admins"
+SetEnv OIDC_RW_GROUP    "desoshare-readwrite"
+```
+
+Gli endpoint del provider, il `client_id` e il `redirect_uri`
+(`…/index.php?action=oidc_callback`) si configurano in `config.php`. Quando
+`OIDC_CLIENT_SECRET` è impostato, nella pagina di login compare il pulsante
+**"Accedi con desoauth"**. Al primo accesso l'utente viene creato automaticamente
+(senza password locale) con i permessi derivati dai suoi gruppi: gruppo admin →
+amministratore, gruppo read-write → lettura e scrittura, altrimenti **sola
+lettura**. Il login locale resta disponibile come fallback (es. per l'admin di
+bootstrap). Senza il segreto nell'ambiente l'SSO resta disattivato.
 
 ## Versioning e changelog
 

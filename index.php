@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/lib.php';
+require_once __DIR__ . '/oidc.php';
 boot();
 $action = $_REQUEST['action'] ?? '';
 
@@ -27,21 +28,37 @@ if (!users_exist()) {
 }
 
 // ─── Logout ──────────────────────────────────────────────────────────────────
-if ($action === 'logout') { $_SESSION = []; session_destroy(); header('Location: index.php'); exit; }
+if ($action === 'logout') {
+    $wasSso = !empty(current_user()['sso']);
+    $idHint = (string) ($_SESSION['oidc_id_token'] ?? '');
+    $_SESSION = []; session_destroy();
+    if (OIDC_ENABLED && $wasSso) {       // chiude anche la sessione su desoauth
+        $q = ['id_token_hint' => $idHint];
+        header('Location: ' . OIDC_ENDSESSION . ($idHint !== '' ? '?' . http_build_query($q) : '')); exit;
+    }
+    header('Location: index.php'); exit;
+}
+
+// ─── SSO (OpenID Connect) ────────────────────────────────────────────────────
+if (OIDC_ENABLED && $action === 'oidc_login')    { oidc_login();    exit; }
+if (OIDC_ENABLED && $action === 'oidc_callback') { oidc_callback(); exit; }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
 if (!current_user()) {
     $err = null;
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'login') {
         $u = find_user(trim($_POST['username'] ?? ''));
-        if ($u && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
+        if ($u && !empty($u['sso'])) {
+            $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
+        } elseif ($u && !empty($u['password_hash']) && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
             session_regenerate_id(true);
             $_SESSION['username'] = $u['username'];
             ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
             audit('login');
             header('Location: index.php'); exit;
+        } else {
+            $err = 'Credenziali non valide.';
         }
-        $err = 'Credenziali non valide.';
     }
     render_login($err); exit;
 }
@@ -97,6 +114,10 @@ function render_login(?string $err): void {
         <label>Password</label>
         <input type="password" name="password" autocomplete="current-password" required>
         <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
+        <?php if (OIDC_ENABLED): ?>
+        <div class="sso-sep"><span>oppure</span></div>
+        <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
+        <?php endif; ?>
         <p class="hint"><i class="ti ti-shield-lock"></i> Sessione protetta · v<?= h(APP_VERSION) ?></p>
       </form>
     </div>
