@@ -16,5 +16,6 @@ tests/package-lock.json
 ._*
 *.log
 
-# Build del bundle editor (sorgente sì, dipendenze no)
+# Build dei bundle (sorgente sì, dipendenze no)
 editor-src/node_modules/
+app-src/node_modules/

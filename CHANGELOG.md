@@ -6,6 +6,29 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.19.0] - 2026-06-21
+
+### Modificato (interno, nessun cambiamento di comportamento)
+- **Modularizzazione FASE 2**: `assets/app.js` (868 righe, IIFE a closure
+  condivisa) scisso in moduli ES sotto `app-src/` e ricomposto in un unico
+  `assets/app.js` (IIFE) con **esbuild** (`npm run build` in `app-src/`), stesso
+  schema già usato per `editor-src/` → `assets/editor-bundle.js`. Moduli:
+  `state`, `net`, `util`, `modal`, `listing`, `zip`, `dialogs`, `upload`,
+  `editor`, `shares`, `admin`, `main` (entry).
+- Lo stato condiviso mutabile (`cwd`, `items`, `shareTimer`, `editorCleanup`)
+  vive ora nell'oggetto `S` esportato da `state.js` (i binding `import` ES sono
+  read-only: le variabili riassegnate devono stare in un oggetto). `selected`,
+  i riferimenti DOM e le costanti `dataset` restano export const diretti.
+- `assets/app.js` è ora **generato**: non va modificato a mano (banner in testa).
+  La sorgente è `app-src/`. Vedi README per il comando di build.
+
+### Test
+- Rete di sicurezza `tests/js_smoke.mjs` estesa da 6 a 12 casi, coprendo gli
+  hotspot di stato condiviso toccati dallo split: pannello Condivisioni
+  (`shareTimer`), mount/cleanup editor (`editorCleanup`), wiring upload (`cwd`),
+  filtro ricerca, azioni di riga (rename/delete) e salvataggio Impostazioni.
+  Tutti verdi contro l'`app.js` **bundlato** (parità funzioni 44=44).
+
 ## [0.18.0] - 2026-06-20
 
 ### Modificato (interno, nessun cambiamento di comportamento)

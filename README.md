@@ -69,7 +69,7 @@ Versione: **0.12.0** · stato: in sviluppo (0.x.x)
   │   ├── config.php       costanti e percorsi
   │   ├── storage.php      astrazione dello storage (backend Locale o S3/Wasabi)
   │   ├── share.php        pagina pubblica dei link di condivisione
-  │   ├── assets/          app.css, app.js, editor delle note (frontend, vanilla JS)
+  │   ├── assets/          app.css, app.js (bundle), editor note (frontend, vanilla JS)
   │   ├── .htaccess        protezioni
   │   └── .user.ini        limiti di upload PHP
   ├── storage/            ← i file gestiti in locale (NON accessibili dal web)
@@ -86,6 +86,24 @@ Versione: **0.12.0** · stato: in sviluppo (0.x.x)
 
 - **Frontend** senza framework (vanilla JS): chiama `api.php` in AJAX e gestisce
   upload a chunk, dialoghi, drag&drop e tabella file.
+
+### Build del frontend (esbuild)
+
+Due asset in `assets/` sono **generati** e non vanno modificati a mano (hanno un
+banner in testa che lo ricorda); la sorgente vive accanto, in cartelle `*-src/`:
+
+| Asset generato            | Sorgente      | Comando di build                 |
+| ------------------------- | ------------- | -------------------------------- |
+| `assets/app.js`           | `app-src/`    | `cd app-src && npm i && npm run build` |
+| `assets/editor-bundle.js` | `editor-src/` | `cd editor-src && npm i && esbuild …`  |
+
+`app-src/` contiene i moduli ES dell'applicazione (`state`, `net`, `util`,
+`modal`, `listing`, `zip`, `dialogs`, `upload`, `editor`, `shares`, `admin`,
+`main`) e `main.js` è l'entry point. `npm run build` (script `build.mjs`) li
+bundla con **esbuild** in un unico IIFE `assets/app.js`. Lo stato condiviso
+mutabile è raccolto nell'oggetto `S` di `state.js`. Le `node_modules` delle
+cartelle `*-src/` sono escluse dal repo; **il bundle generato è committato** così
+la produzione non richiede una build.
 
 ## Sicurezza
 
