@@ -216,17 +216,29 @@
   }
   window.closeModal = closeModal;
 
+  // Esegue un submit asincrono UNA sola volta (anti doppio-click / Enter+click):
+  // ignora le invocazioni mentre una è in corso e disabilita il bottone.
+  function guardSubmit(btn, fn) {
+    let busy = false;
+    return async (...a) => {
+      if (busy) return;
+      busy = true; if (btn) btn.disabled = true;
+      try { return await fn(...a); }
+      finally { busy = false; if (btn) btn.disabled = false; }
+    };
+  }
+
   function promptDialog(title, icon, label, placeholder, onok, okText = 'Crea') {
     openModal(`<div class="modal"><h3><i class="ti ${icon}"></i> ${esc(title)}</h3>
       <label>${esc(label)}</label><input type="text" id="m_input" placeholder="${esc(placeholder)}">
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Annulla</button>
         <button class="btn btn-primary" id="m_ok">${esc(okText)}</button></div></div>`);
     const input = $('#m_input', modalBg);
-    const go = async () => {
+    const go = guardSubmit($('#m_ok', modalBg), async () => {
       const val = input.value.trim(); if (!val) return;
       const res = await onok(val);
       if (res && res.ok) { closeModal(); load(cwd); } else toast(res && res.error || 'Errore', true);
-    };
+    });
     $('#m_ok', modalBg).onclick = go;
     input.onkeydown = e => { if (e.key === 'Enter') go(); };
   }
@@ -241,11 +253,11 @@
       <label>Contenuto (opzionale)</label><textarea id="f_body"></textarea>
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Annulla</button>
         <button class="btn btn-primary" id="f_ok">Crea</button></div></div>`);
-    $('#f_ok', modalBg).onclick = async () => {
+    $('#f_ok', modalBg).onclick = guardSubmit($('#f_ok', modalBg), async () => {
       const name = $('#f_name', modalBg).value.trim(); if (!name) return;
       const res = await apiPost('newfile', { path: cwd, name, content: $('#f_body', modalBg).value });
       if (res.ok) { closeModal(); load(cwd); } else toast(res.error || 'Errore', true);
-    };
+    });
   }
   function renameDialog(oldName, rel) {
     promptDialog('Rinomina', 'ti-pencil', 'Nuovo nome', oldName,
@@ -790,14 +802,15 @@
       <label>Nome nota</label><input type="text" id="nn_name" placeholder="es. appunti.md">
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Annulla</button>
         <button class="btn btn-primary" id="nn_ok"><i class="ti ti-edit"></i> Crea e apri</button></div></div>`);
-    const go = async () => {
+    const go = guardSubmit($('#nn_ok', modalBg), async () => {
       let name = $('#nn_name', modalBg).value.trim(); if (!name) return;
       if (!/\.[a-z0-9]+$/i.test(name)) name += '.md';
       const r = await apiPost('newfile', { path: cwd, name, content: '' });
-      if (!r.ok) { toast(r.error || 'Errore', true); return; }
       const rel = (cwd ? cwd + '/' : '') + name;
-      closeModal(); load(cwd); openEditor(rel, name);
-    };
+      // creata, OPPURE esiste già → in entrambi i casi apri la nota ("Crea e apri")
+      if (r.ok || /esiste già/i.test(r.error || '')) { closeModal(); load(cwd); openEditor(rel, name); }
+      else toast(r.error || 'Errore', true);
+    });
     $('#nn_ok', modalBg).onclick = go;
     $('#nn_name', modalBg).onkeydown = e => { if (e.key === 'Enter') go(); };
   }

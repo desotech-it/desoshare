@@ -6,6 +6,15 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.16.1] - 2026-06-20
+
+### Corretto
+- **Creazione nota: falso "Esiste già"** (#13). Il dialog "Crea e apri" legava
+  l'azione sia al click sia all'Enter senza protezione: un doppio invio creava il
+  file e poi mostrava la collisione. Aggiunto `guardSubmit` (un solo submit,
+  bottone disabilitato durante l'operazione) a creazione note, file e cartelle/
+  rinomina. Per le note, se il nome esiste già ora si **apre** la nota esistente.
+
 ## [0.16.0] - 2026-06-20
 
 ### Corretto (bug critici su S3, emersi con un'indagine multi-agente)
@@ -366,6 +375,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.16.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.1
 [0.16.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.0
 [0.15.2]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.2
 [0.15.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.1

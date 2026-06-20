@@ -272,12 +272,41 @@ async function runOidcSettings() {
   (sv && !sv.hidden) ? ok('Salva visibile nella tab Impostazioni') : bad('Salva non visibile in Impostazioni');
 }
 
+// Creazione nota: il doppio click/Enter NON deve generare un secondo 'newfile' (falso "esiste già")
+async function runNoteGuard() {
+  console.log('\nCaso: creazione nota — anti doppio-submit');
+  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true });
+  const win = dom.window;
+  win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+  let newfileCalls = 0;
+  win.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('action=newfile')) { newfileCalls++; await new Promise(r => setTimeout(r, 25)); return { ok: true, json: async () => ({ ok: true }) }; }
+    if (u.includes('action=note_open')) return { ok: true, json: async () => ({ ok: true, id: 'x', name: 'appunti.md', editable: true, text: '', updates: [], offset: 0, poll_ms: 1500 }) };
+    return { ok: true, json: async () => listResponse, text: async () => JSON.stringify(listResponse) };
+  };
+  let loadError = null;
+  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.eval(appJs);
+  await new Promise(r => setTimeout(r, 30));
+  win.document.getElementById('btnNewNote').onclick();    // apre il dialog "Nuova nota"
+  await new Promise(r => setTimeout(r, 10));
+  win.document.getElementById('nn_name').value = 'appunti';
+  const okBtn = win.document.getElementById('nn_ok');
+  okBtn.onclick(); okBtn.onclick();                       // doppio click rapido
+  await new Promise(r => setTimeout(r, 80));
+  newfileCalls === 1 ? ok('doppio click → una sola creazione (guard)') : bad(`newfile chiamato ${newfileCalls} volte (atteso 1)`);
+  loadError ? bad('errore nel flusso nota: ' + loadError.message) : ok('nessun errore nel flusso nota');
+}
+
 console.log('=== JS smoke test (jsdom) ===');
 await run('admin (lettura+scrittura)', true, true);
 await run('utente sola lettura', false, false);
 await runAdmin();
 await runClientZip();
 await runOidcSettings();
+await runNoteGuard();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);
