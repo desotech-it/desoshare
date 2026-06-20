@@ -13,6 +13,7 @@ interface StorageBackend {
     public function deletePath(string $path, bool $recursive): bool;
     public function renamePath(string $from, string $to): bool;
     public function sizeOf(string $path): int;
+    public function usageOf(string $prefix): int;           // somma byte sotto il prefisso (per la quota)
     public function downloadRedirect(string $path, string $filename): ?string; // URL presigned o null (→ proxy)
     public function fetchToLocal(string $path, string $localPath): bool;        // per lo ZIP
 }
@@ -55,6 +56,15 @@ class LocalBackend implements StorageBackend {
         return @rename($this->abs($from), $dst);
     }
     public function sizeOf(string $path): int { return (int) (@filesize($this->abs($path)) ?: 0); }
+    public function usageOf(string $prefix): int {
+        $base = $this->abs($prefix);
+        if (is_file($base)) return (int) (@filesize($base) ?: 0);
+        if (!is_dir($base)) return 0;
+        $sum = 0;
+        $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS));
+        foreach ($it as $f) if ($f->isFile()) $sum += (int) $f->getSize();
+        return $sum;
+    }
     public function downloadRedirect(string $path, string $filename): ?string { return null; } // niente presigned: si usa lo stream PHP
     public function fetchToLocal(string $path, string $localPath): bool { return @copy($this->abs($path), $localPath); }
     public function absForStream(string $path): string { return $this->abs($path); }
@@ -269,6 +279,21 @@ class S3Backend implements StorageBackend {
         $r = s3_request($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => $this->key($path), 'max-keys' => '1']);
         if (preg_match('/<Size>(\d+)<\/Size>/', $r['body'], $m)) return (int) $m[1];
         return 0;
+    }
+    public function usageOf(string $prefix): int {
+        // Somma le dimensioni di TUTTI gli oggetti sotto <prefix>/ (paginazione completa).
+        $p = $prefix === '' ? '' : rtrim($prefix, '/') . '/';
+        $sum = 0; $token = null;
+        do {
+            $q = ['list-type' => '2', 'prefix' => $p, 'max-keys' => '1000'];
+            if ($token) $q['continuation-token'] = $token;
+            $r = s3_request($this->cfg, 'GET', '', $q);
+            if ($r['code'] !== 200) break;
+            $xml = @simplexml_load_string($r['body']); if (!$xml) break;
+            foreach ($xml->Contents as $c) $sum += (int) $c->Size;
+            $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
+        } while ($token);
+        return $sum;
     }
     public function downloadRedirect(string $path, string $filename): ?string {
         return s3_presigned_get($this->cfg, $this->key($path), 300, $filename);

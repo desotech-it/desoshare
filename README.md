@@ -19,6 +19,10 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
   **totale** — anche l'amministratore vede solo i propri file, non quelli degli
   altri utenti. Lo scambio di file tra utenti avviene tramite i link di
   condivisione.
+- **Quota per-utente e consumo**: l'amministratore assegna a ogni utente un limite
+  di spazio (0 = illimitata) e vede il consumo di tutti gli utenti, con barra
+  percentuale, nel pannello di amministrazione. Le scritture oltre quota vengono
+  rifiutate.
 - **File manager**: navigazione tra cartelle (breadcrumb), creazione di cartelle
   e file, rinomina, eliminazione (con conferma), ricerca.
 - **Upload a blocchi** (chunk da 16 MB) **in parallelo** e con **ripresa

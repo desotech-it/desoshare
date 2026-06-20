@@ -6,6 +6,30 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.9.0] - 2026-06-20
+
+### Aggiunto
+- **Quota di archiviazione per-utente**: l'amministratore può assegnare a ogni
+  utente un limite di spazio (in MB; **0 = illimitata**) dal form utente. Default
+  per i nuovi utenti configurabile globalmente in *Impostazioni → Quota predefinita*.
+- **Vista del consumo nel pannello di amministrazione**: la sezione Utenti mostra,
+  per ciascun utente, lo spazio occupato e la quota con una **barra percentuale**
+  (verde < 80%, ambra 80–99%, rosso ≥ 100%) e un pulsante **Aggiorna** per
+  ricalcolare al volo. Tutto senza database.
+- **Applicazione della quota** su tutte le vie di scrittura: upload semplice
+  (controllo sul totale del batch), upload a blocchi (pre-controllo al primo
+  blocco → **413**, ri-controllo alla finalizzazione con pulizia dei blocchi
+  orfani), creazione file e salvataggio note (conteggio del solo delta). Oltre la
+  quota la richiesta è rifiutata con **507** (o **413** per i blocchi).
+
+### Tecnico
+- Nuovo metodo `usageOf()` nell'astrazione storage (somma paginata su S3, ricorsiva
+  in locale). Consumo mantenuto in **cache incrementale** (`appdata/usage.json`,
+  TTL di riconciliazione) aggiornata col delta sul percorso caldo, così la verifica
+  della quota non interroga lo storage a ogni upload. Endpoint `usage_list` (admin).
+- Quota come **soft-limit**: in caso di upload concorrenti è possibile un piccolo
+  sforamento, corretto dalla riconciliazione periodica.
+
 ## [0.8.0] - 2026-06-20
 
 ### Aggiunto
@@ -153,6 +177,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.9.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.9.0
 [0.8.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.8.0
 [0.7.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.7.0
 [0.6.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.6.0

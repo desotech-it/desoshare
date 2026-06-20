@@ -101,6 +101,27 @@ has "scrittore vede il proprio 'segreto.txt'" "$(curl -s -b $WJAR "$B/api.php?ac
 hasnt "admin NON vede 'segreto.txt' di scrittore" "$(curl -s -b $JAR "$B/api.php?action=list&path=")" '"name":"segreto.txt"'
 has "scrittore NON può scaricare un file di admin (400, non esiste nella sua sandbox)" "$(curl -s -o /dev/null -w '%{http_code}' -b $WJAR "$B/api.php?action=download&path=note.txt")" '400'
 
+echo "=== Quota per-utente ==="
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=quotato --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user --data-urlencode quota_mb=1 "$B/api.php?action=user_save" >/dev/null
+QJAR="$SBX/qjar"
+curl -s -c $QJAR -b $QJAR --data-urlencode action=login --data-urlencode username=quotato --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+QCSRF=$(curl -s -b $QJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+has "quotato crea file piccolo (entro quota)" "$(curl -s -b $QJAR -H "X-CSRF: $QCSRF" --data-urlencode path= --data-urlencode name=piccolo.txt --data-urlencode content=ciao "$B/api.php?action=newfile")" '"ok":true'
+UU=$(curl -s -b $JAR "$B/api.php?action=usage_list&refresh=quotato")
+has "usage_list mostra l'utente quotato" "$UU" '"username":"quotato"'
+has "usage_list: quota 1 MB" "$UU" '"quota":1048576'
+has "usage_list: consumo registrato (>0)" "$UU" '"usage":4'
+# upload semplice oltre quota → rifiutato (507)
+BIG="$SBX/big.bin"; head -c 2097152 /dev/urandom > "$BIG"
+has "upload semplice oltre quota → rifiutato" "$(curl -s -b $QJAR -H "X-CSRF: $QCSRF" -F "path=" -F "files[]=@$BIG;filename=grosso.bin" "$B/api.php?action=upload")" 'Quota superata'
+# upload a chunk: pre-check al primo blocco (total oltre quota) → 413
+QUID=$(openssl rand -hex 16); head -c 1000 /dev/urandom > "$SBX/ch0"
+RCH=$(curl -s -w '|%{http_code}' -b $QJAR -H "X-CSRF: $QCSRF" -F "uid=$QUID" -F index=0 -F offset=0 -F chunk_size=524288 -F total=2097152 -F "chunk=@$SBX/ch0" "$B/api.php?action=upload_chunk")
+has "chunk init oltre quota → messaggio quota" "$RCH" 'Quota superata'
+has "chunk init oltre quota → HTTP 413" "$RCH" '|413'
+# admin con quota 0 = illimitata: upload grande OK
+has "admin (quota illimitata) carica file grande" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -F "path=" -F "files[]=@$BIG;filename=grosso-admin.bin" "$B/api.php?action=upload")" '"saved":1'
+
 echo "=== Condivisioni (link a scadenza) ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode name=inside.txt --data-urlencode content=ciao "$B/api.php?action=newfile" >/dev/null
 SR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 "$B/api.php?action=share_create")

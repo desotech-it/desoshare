@@ -147,6 +147,13 @@ body.dragging .dropzone-hint { display: flex; }
 .utable td { padding: 9px 8px; border-bottom: 1px solid var(--border); }
 .utable .uact .ti { font-size: 17px; color: var(--tertiary); cursor: pointer; margin-left: 10px; }
 .utable .uact .ti:hover { color: var(--text); }
+.utable .uspace { min-width: 150px; }
+.quota-bar { height: 6px; border-radius: 4px; background: var(--border); overflow: hidden; margin-bottom: 3px; }
+.quota-bar > div { height: 100%; border-radius: 4px; }
+.quota-bar .q-green { background: #1a7f37; }
+.quota-bar .q-amber { background: #c98a00; }
+.quota-bar .q-red   { background: #c0392b; }
+.quota-txt { font-size: 11px; color: var(--tertiary); }
 .modal.wide { width: 520px; }
 .editor-modal { width: min(900px, 96vw); }
 .editor-host { border: 1px solid var(--border-strong); border-radius: 8px; height: min(62vh, 480px); overflow: hidden; }

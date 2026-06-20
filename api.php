@@ -16,6 +16,7 @@ switch ($action) {
     case 'note_open':   action_note_open();    break;
     case 'settings_get': action_settings_get(); break;
     case 'audit_list':  action_audit_list();   break;
+    case 'usage_list':  action_usage_list();    break;
 
     // Modifiche (POST + CSRF)
     case 'settings_save': csrf_check(); action_settings_save(); break;
@@ -85,9 +86,12 @@ function action_newfile(): void {
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
-    if (!storage()->writeFile($target, (string) ($_POST['content'] ?? ''))) {
+    $content = (string) ($_POST['content'] ?? '');
+    quota_check(strlen($content));
+    if (!storage()->writeFile($target, $content)) {
         json_out(['ok' => false, 'error' => 'Impossibile creare il file'], 500);
     }
+    usage_bump((string) $_SESSION['username'], strlen($content));
     json_out(['ok' => true]);
 }
 
@@ -98,15 +102,24 @@ function action_upload(): void {
     if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
     $f = $_FILES['files'];
     $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
-    $saved = 0; $errors = [];
+    // Pre-check quota sul totale dei file validi del batch (rifiuto del batch se sfora).
+    $batchBytes = 0;
+    for ($i = 0; $i < count($names); $i++) {
+        if (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) $batchBytes += (int) filesize((string) $tmp[$i]);
+    }
+    quota_check($batchBytes);
+    $saved = 0; $savedBytes = 0; $errors = [];
     for ($i = 0; $i < count($names); $i++) {
         $n = basename((string) $names[$i]);
         if (!valid_name($n)) { $errors[] = "$n: nome non valido"; continue; }
         if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
         if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
+        $sz = (int) filesize((string) $tmp[$i]);
+        $repl = (storage()->typeOf(logical_join($dir, $n)) === 'file') ? storage()->sizeOf(logical_join($dir, $n)) : 0;
         if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; continue; }
-        $saved++;
+        $saved++; $savedBytes += $sz - $repl;
     }
+    if ($savedBytes !== 0) usage_bump((string) $_SESSION['username'], $savedBytes);
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
 }
 
@@ -116,13 +129,17 @@ function action_delete(): void {
     $paths = $_POST['paths'] ?? [];
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
     $deleted = 0; $errors = [];
+    $freed = 0;
     foreach ($paths as $rel) {
         $clean = clean_logical((string) $rel);
         if ($clean === '') { $errors[] = 'la radice non è eliminabile'; continue; }
         $p = logical_join(user_home(), $clean);
-        if (storage()->typeOf($p) === false) { $errors[] = "$rel: non trovato"; continue; }
-        if (storage()->deletePath($p, true)) $deleted++; else $errors[] = "$rel: impossibile eliminare";
+        $t = storage()->typeOf($p);
+        if ($t === false) { $errors[] = "$rel: non trovato"; continue; }
+        $sz = ($t === 'dir') ? storage()->usageOf($p) : storage()->sizeOf($p);   // byte liberati (prima della cancellazione)
+        if (storage()->deletePath($p, true)) { $deleted++; $freed += $sz; } else $errors[] = "$rel: impossibile eliminare";
     }
+    if ($freed > 0) usage_bump((string) $_SESSION['username'], -$freed);
     json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
 }
 
@@ -191,6 +208,9 @@ function action_upload_chunk(): void {
     if (empty($_FILES['chunk']) || ($_FILES['chunk']['error'] ?? 1) !== UPLOAD_ERR_OK) {
         json_out(['ok' => false, 'error' => 'Blocco non ricevuto'], 400);
     }
+    // Pre-check quota al primo blocco usando la dimensione totale dichiarata.
+    // 413 (NON 5xx) così il client non ritenta e mostra subito l'errore.
+    if (!is_file(upload_part($uid))) quota_check($total, 0, 413);
     // scrive il blocco al suo offset; 'c+b' crea il file se assente e non lo tronca
     $part = upload_part($uid);
     $fh = fopen($part, 'c+b');
@@ -223,9 +243,18 @@ function action_upload_finish(): void {
     }
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
     $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
+    // Re-check quota (un altro upload può aver consumato spazio nel frattempo).
+    $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
+    $u = current_user();
+    $quota = $u ? user_quota_of($u) : 0;
+    if ($quota > 0 && (usage_get($u['username']) - $repl + $total) > $quota) {
+        @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
+        json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
+    }
     if (!storage()->putFromLocal($part, $dest)) {
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
+    usage_bump((string) $_SESSION['username'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
     json_out(['ok' => true]);
@@ -285,13 +314,49 @@ function action_users_list(): void {
     $out = [];
     foreach (users_load()['users'] as $u) {
         $role = $u['role'] ?? 'user';
+        $q = user_quota_of($u);
         $out[] = [
             'username'   => $u['username'],
             'role'       => $role,
             'permission' => $role === 'admin' ? 'write' : ($u['permission'] ?? 'read'),
+            'quota_bytes' => $q,
+            'quota_mb'   => $q > 0 ? (int) round($q / 1048576) : 0,
         ];
     }
     json_out(['ok' => true, 'users' => $out]);
+}
+
+// ─── Admin: consumo di storage per-utente ────────────────────────────────────
+// Serve valori in cache; ricalcola solo le voci stale (con un tetto per richiesta)
+// o quelle indicate da ?refresh=<username|all> (bottone "Aggiorna").
+function action_usage_list(): void {
+    require_admin();
+    $refresh = (string) ($_GET['refresh'] ?? '');
+    $cap = 8; $recalc = 0; $out = [];
+    foreach (users_load()['users'] as $u) {
+        $name = (string) $u['username'];
+        $quota = user_quota_of($u);
+        $cache = usage_load()[$name] ?? null;
+        $fresh = is_array($cache) && isset($cache['ts']) && (time() - (int) $cache['ts'] < USAGE_TTL);
+        $stale = false;
+        if ($refresh === $name || $refresh === 'all' || (!$fresh && $recalc < $cap)) {
+            $usage = usage_get($name, true); $recalc++;            // ricalcolo completo (LIST/scandir)
+        } elseif (is_array($cache)) {
+            $usage = (int) $cache['bytes']; $stale = !$fresh;
+        } else {
+            $usage = 0; $stale = true;                            // ignoto: oltre il tetto, "da aggiornare"
+        }
+        $out[] = [
+            'username' => $name,
+            'usage'    => $usage,
+            'usage_h'  => human_size($usage),
+            'quota'    => $quota,
+            'quota_h'  => $quota ? human_size($quota) : 'illimitata',
+            'pct'      => $quota ? (int) min(100, round($usage / $quota * 100)) : null,
+            'stale'    => $stale,
+        ];
+    }
+    json_out(['ok' => true, 'users' => $out, 'is_s3' => storage_is_s3()]);
 }
 
 // ─── Utenti: crea/modifica (admin) ───────────────────────────────────────────
@@ -305,6 +370,11 @@ function action_user_save(): void {
     if (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $username)) {
         json_out(['ok' => false, 'error' => 'Username non valido (3-32: lettere, numeri, . _ -)'], 400);
     }
+    // Quota: quota_mb >= 0 (0 = illimitata); -1/assente = non modificare (in update) o default (in create).
+    $quotaMbIn = isset($_POST['quota_mb']) && $_POST['quota_mb'] !== '' ? (int) $_POST['quota_mb'] : -1;
+    if ($quotaMbIn !== -1 && ($quotaMbIn < 0 || $quotaMbIn > QUOTA_MAX_MB)) {
+        json_out(['ok' => false, 'error' => 'Quota non valida (0 = illimitata, max ' . QUOTA_MAX_MB . ' MB)'], 400);
+    }
     $data = users_load();
     $idx = -1;
     foreach ($data['users'] as $i => $u) if ($u['username'] === $original) $idx = $i;
@@ -317,17 +387,20 @@ function action_user_save(): void {
         $data['users'][$idx]['role']       = $role;
         $data['users'][$idx]['permission'] = $permission;
         if ($password !== '') $data['users'][$idx]['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
+        if ($quotaMbIn !== -1) $data['users'][$idx]['quota_bytes'] = $quotaMbIn * 1024 * 1024;
         if ($wasAdmin && $role !== 'admin' && count_admins($data) < 1) {
             json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
         }
-        audit('user_update', $username . ' → ' . $role . '/' . $permission);
+        $qNow = user_quota_of($data['users'][$idx]);
+        audit('user_update', $username . ' → ' . $role . '/' . $permission . ' quota=' . ($qNow ? human_size($qNow) : 'illimitata'));
     } else {
         if (strlen($password) < 6) json_out(['ok' => false, 'error' => 'Password obbligatoria (min 6 caratteri)'], 400);
+        $quotaBytes = ($quotaMbIn !== -1) ? $quotaMbIn * 1024 * 1024 : (int) setting('default_quota_bytes', 0);
         $data['users'][] = [
             'username' => $username, 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
-            'role' => $role, 'permission' => $permission,
+            'role' => $role, 'permission' => $permission, 'quota_bytes' => $quotaBytes,
         ];
-        audit('user_create', $username . ' (' . $role . '/' . $permission . ')');
+        audit('user_create', $username . ' (' . $role . '/' . $permission . ') quota=' . ($quotaBytes ? human_size($quotaBytes) : 'illimitata'));
     }
     users_save($data);
     ensure_user_home($username);   // predispone la cartella (sandbox) dell'utente
@@ -360,6 +433,7 @@ function action_settings_get(): void {
         'site_title'     => (string) ($s['site_title'] ?? APP_NAME),
         'note_poll_ms'   => note_poll_ms(),
         'note_max_bytes' => note_max_bytes(),
+        'default_quota_bytes' => (int) setting('default_quota_bytes', 0),
         'storage' => [
             'backend'      => (($s['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local',
             'endpoint'     => (string) ($s3['endpoint'] ?? ''),
@@ -383,6 +457,11 @@ function action_settings_save(): void {
     if ($poll > 0) { if ($poll < 500 || $poll > 60000) json_out(['ok' => false, 'error' => 'Intervallo 500–60000 ms'], 400); $s['note_poll_ms'] = $poll; }
     $maxmb = (int) ($_POST['note_max_mb'] ?? 0);
     if ($maxmb > 0) { if ($maxmb < 1 || $maxmb > 64) json_out(['ok' => false, 'error' => 'Dimensione nota 1–64 MB'], 400); $s['note_max_bytes'] = $maxmb * 1024 * 1024; }
+    if (isset($_POST['default_quota_mb']) && $_POST['default_quota_mb'] !== '') {
+        $dq = (int) $_POST['default_quota_mb'];
+        if ($dq < 0 || $dq > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Quota predefinita non valida'], 400);
+        if ($dq > 0) $s['default_quota_bytes'] = $dq * 1024 * 1024; else unset($s['default_quota_bytes']);
+    }
 
     // ─ Storage: backend locale o S3-compatibile (Wasabi) ─
     $backend = (($_POST['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local';
@@ -517,11 +596,12 @@ function note_context(bool $checkCsrf): array {
         if (!$share || (($share['type'] ?? '') !== 'file')) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
         $logical = share_base($share);
         if (storage()->typeOf($logical) !== 'file' || !note_is_text(basename($logical))) json_out(['ok' => false, 'error' => 'Nota non disponibile'], 400);
-        return ['logical' => $logical, 'editable' => (($share['mode'] ?? 'view') === 'edit'), 'user' => 'ospite'];
+        // owner = proprietario della share: la nota sta nella sua sandbox, la quota è la sua.
+        return ['logical' => $logical, 'editable' => (($share['mode'] ?? 'view') === 'edit'), 'user' => 'ospite', 'owner' => (string) ($share['created_by'] ?? '')];
     }
     $u = require_login();
     if ($checkCsrf) csrf_check();
-    return ['logical' => user_path($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username']];
+    return ['logical' => user_path($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username'], 'owner' => (string) $u['username']];
 }
 
 // ─── Note: apertura nell'editor (sessione o link condiviso) ──────────────────
@@ -578,6 +658,9 @@ function action_note_save(): void {
     if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
     $content = (string) ($_POST['content'] ?? '');
     if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
+    $prev = (storage()->typeOf($ctx['logical']) === 'file') ? storage()->sizeOf($ctx['logical']) : 0;
+    quota_check_user($ctx['owner'] ?? null, strlen($content), $prev);   // conta solo il delta, sulla quota del proprietario
     if (!storage()->writeFile($ctx['logical'], $content)) json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
+    if (!empty($ctx['owner'])) usage_bump((string) $ctx['owner'], strlen($content) - $prev);
     json_out(['ok' => true]);
 }

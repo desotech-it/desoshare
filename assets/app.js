@@ -352,26 +352,41 @@
     else await renderUsersSection(body);
   }
 
-  async function renderUsersSection(body) {
-    const res = await apiGet('users_list');
+  async function renderUsersSection(body, usageRefresh) {
+    const useParams = usageRefresh ? { refresh: usageRefresh } : {};
+    const [res, use] = await Promise.all([apiGet('users_list'), apiGet('usage_list', useParams)]);
     if (!res.ok) { body.textContent = res.error || 'Errore'; return; }
+    const usage = {};
+    if (use && use.ok) use.users.forEach(u => usage[u.username] = u);
+    const spaceCell = (name) => {
+      const u = usage[name];
+      if (!u) return '<span class="muted">—</span>';
+      if (!u.quota) return `${esc(u.usage_h)} <span class="muted">/ illimitata</span>${u.stale ? ' <span class="muted" title="valore in cache">~</span>' : ''}`;
+      const pct = u.pct == null ? 0 : u.pct;
+      const cls = pct >= 100 ? 'q-red' : (pct >= 80 ? 'q-amber' : 'q-green');
+      return `<div class="quota-bar"><div class="${cls}" style="width:${Math.min(100, pct)}%"></div></div>`
+        + `<span class="quota-txt">${esc(u.usage_h)} / ${esc(u.quota_h)} (${pct}%)${u.stale ? ' ~' : ''}</span>`;
+    };
     const rows = res.users.map(u => `
       <tr><td><i class="ti ti-user"></i> ${esc(u.username)}</td>
         <td>${u.role === 'admin' ? '<b>admin</b>' : 'utente'}</td>
         <td>${u.permission === 'write' ? 'lettura e scrittura' : 'sola lettura'}</td>
+        <td class="uspace">${spaceCell(u.username)}</td>
         <td class="uact">
-          <i class="ti ti-edit" data-u="${esc(u.username)}" data-r="${u.role}" data-p="${u.permission}"></i>
+          <i class="ti ti-refresh" title="Aggiorna spazio" data-refresh="${esc(u.username)}"></i>
+          <i class="ti ti-edit" data-u="${esc(u.username)}" data-r="${u.role}" data-p="${u.permission}" data-q="${u.quota_mb || 0}"></i>
           <i class="ti ti-trash" data-del="${esc(u.username)}"></i></td></tr>`).join('');
     body.innerHTML = `<div style="text-align:right;margin-bottom:8px"><button class="btn btn-primary" id="u_new"><i class="ti ti-user-plus"></i> Nuovo utente</button></div>
-      <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th>Spazio</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     $('#u_new', modalBg).onclick = () => userForm();
     modalBg.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
       if (!confirm(`Eliminare l'utente "${b.dataset.del}"?`)) return;
       const r = await apiPost('user_delete', { username: b.dataset.del });
       if (r.ok) { toast('Utente eliminato'); adminPanel('users'); } else toast(r.error || 'Errore', true);
     });
+    modalBg.querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => renderUsersSection(body, b.dataset.refresh));
     modalBg.querySelectorAll('[data-u]').forEach(b => b.onclick = () =>
-      userForm({ username: b.dataset.u, role: b.dataset.r, permission: b.dataset.p }));
+      userForm({ username: b.dataset.u, role: b.dataset.r, permission: b.dataset.p, quota_mb: parseInt(b.dataset.q || '0', 10) }));
   }
 
   async function renderSettingsSection(body) {
@@ -386,6 +401,8 @@
       <input type="text" id="set_poll" value="${s.note_poll_ms}">
       <label style="margin-top:10px">Dimensione massima di una nota (MB)</label>
       <input type="text" id="set_maxmb" value="${Math.round(s.note_max_bytes / 1048576)}">
+      <label style="margin-top:10px">Quota predefinita per nuovo utente (MB, 0 = illimitata)</label>
+      <input type="text" id="set_defquota" value="${Math.round((s.default_quota_bytes || 0) / 1048576)}">
 
       <h3 style="margin:18px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-database"></i> Archiviazione file</h3>
       <p class="muted" style="font-size:12px;margin:0 0 8px">Dove vengono salvati i file caricati. S3 usa uno storage esterno compatibile (es. Wasabi).</p>
@@ -437,6 +454,7 @@
         site_title: $('#set_title', modalBg).value,
         note_poll_ms: $('#set_poll', modalBg).value,
         note_max_mb: $('#set_maxmb', modalBg).value,
+        default_quota_mb: $('#set_defquota', modalBg).value,
       }, s3fields()));
       if (r.ok) toast('Impostazioni salvate'); else toast(r.error || 'Errore', true);
     };
@@ -465,6 +483,8 @@
         <div class="perm-opt ${perm === 'read' ? 'active' : ''}" data-v="read"><i class="ti ti-eye"></i> Sola lettura</div>
         <div class="perm-opt ${perm === 'write' ? 'active' : ''}" data-v="write"><i class="ti ti-pencil"></i> Lettura e scrittura</div>
       </div>
+      <label style="margin-top:12px">Quota di archiviazione (MB, 0 = illimitata)</label>
+      <input type="text" id="u_quota" value="${u && u.quota_mb ? u.quota_mb : 0}">
       <label style="margin-top:12px"><input type="checkbox" id="u_admin" ${isAdminRole ? 'checked' : ''}> Amministratore (gestione utenti + accesso completo)</label>
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Annulla</button>
         <button class="btn btn-primary" id="u_save">Salva</button></div></div>`);
@@ -479,6 +499,7 @@
         password: $('#u_pass', modalBg).value,
         permission: chosen,
         role: $('#u_admin', modalBg).checked ? 'admin' : 'user',
+        quota_mb: $('#u_quota', modalBg).value.trim(),
       };
       if (editing) data.original = u.username;
       const r = await apiPost('user_save', data);

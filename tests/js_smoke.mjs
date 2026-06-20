@@ -101,8 +101,58 @@ async function run(label, canWrite, isAdmin) {
 }
 
 console.log('=== JS smoke test (jsdom) ===');
+// Verifica del pannello Amministrazione → Utenti con quota e consumo.
+async function runAdmin() {
+  console.log('\nCaso: pannello Amministrazione (quota + consumo)');
+  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true });
+  const win = dom.window;
+  win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+  win.confirm = () => true;
+  const responses = {
+    list: listResponse,
+    users_list: { ok: true, users: [
+      { username: 'admin', role: 'admin', permission: 'write', quota_bytes: 0, quota_mb: 0 },
+      { username: 'mario', role: 'user', permission: 'write', quota_bytes: 104857600, quota_mb: 100 },
+    ] },
+    usage_list: { ok: true, is_s3: true, users: [
+      { username: 'admin', usage: 5000, usage_h: '4.9 KB', quota: 0, quota_h: 'illimitata', pct: null, stale: false },
+      { username: 'mario', usage: 52428800, usage_h: '50.0 MB', quota: 104857600, quota_h: '100.0 MB', pct: 50, stale: false },
+    ] },
+  };
+  win.fetch = async (url) => {
+    const action = (String(url).match(/action=([a-z_]+)/) || [])[1] || 'list';
+    const body = responses[action] || { ok: true };
+    return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
+  };
+  let loadError = null;
+  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.eval(appJs);
+  await new Promise(r => setTimeout(r, 30));
+  win.document.getElementById('btnAdmin').onclick();          // apre il pannello (sezione Utenti)
+  await new Promise(r => setTimeout(r, 60));
+  if (loadError) { bad(`errore nel pannello admin: ${loadError.message}`); return; }
+  const doc = win.document;
+  const headers = [...doc.querySelectorAll('.utable th')].map(t => t.textContent.trim());
+  headers.includes('Spazio') ? ok('colonna "Spazio" presente') : bad(`colonna "Spazio" assente (${headers.join(',')})`);
+  const bar = doc.querySelector('.utable .quota-bar > .q-amber, .utable .quota-bar > .q-green, .utable .quota-bar > .q-red');
+  bar ? ok('barra quota renderizzata') : bad('barra quota assente');
+  const txt = [...doc.querySelectorAll('.quota-txt')].some(e => /50\.0 MB \/ 100\.0 MB \(50%\)/.test(e.textContent));
+  txt ? ok('consumo/quota mostrato (50%)') : bad('testo consumo/quota errato');
+  const illim = [...doc.querySelectorAll('.uspace')].some(e => /illimitata/.test(e.textContent));
+  illim ? ok('utente senza quota mostrato "illimitata"') : bad('"illimitata" non mostrato');
+  const refresh = doc.querySelector('.utable [data-refresh]');
+  refresh && typeof refresh.onclick === 'function' ? ok('bottone "Aggiorna spazio" cablato') : bad('refresh non cablato');
+  doc.querySelector('.utable [data-u="mario"]').onclick();    // apre il form utente
+  await new Promise(r => setTimeout(r, 20));
+  const qin = doc.getElementById('u_quota');
+  qin && qin.value === '100' ? ok('form utente: quota precompilata (100 MB)') : bad(`form quota errata (${qin && qin.value})`);
+}
+
+console.log('=== JS smoke test (jsdom) ===');
 await run('admin (lettura+scrittura)', true, true);
 await run('utente sola lettura', false, false);
+await runAdmin();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);
