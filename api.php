@@ -18,8 +18,8 @@ switch ($action) {
     // Modifiche (POST + CSRF)
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
-    case 'note_sync':    csrf_check(); action_note_sync();    break;
-    case 'note_save':    csrf_check(); action_note_save();    break;
+    case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
+    case 'note_save':    action_note_save();    break;
     case 'upload_chunk':  csrf_check(); action_upload_chunk();  break;
     case 'upload_finish': csrf_check(); action_upload_finish(); break;
     case 'mkdir':       csrf_check(); action_mkdir();       break;
@@ -345,6 +345,11 @@ function action_share_create(): void {
     $ttl = (int) ($_POST['ttl'] ?? 0);
     $allowed = [3600, 86400, 604800, 2592000];          // 1h, 24h, 7g, 30g
     if (!in_array($ttl, $allowed, true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
+    $mode = (($_POST['mode'] ?? 'view') === 'edit') ? 'edit' : 'view';
+    if ($mode === 'edit') {
+        if (is_dir($abs)) json_out(['ok' => false, 'error' => 'Le cartelle non sono modificabili via link'], 400);
+        if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
+    }
 
     $d = shares_load();
     $token = gen_share_token();
@@ -353,6 +358,7 @@ function action_share_create(): void {
         'path'       => ltrim(rel_display($abs), '/'),
         'type'       => is_dir($abs) ? 'dir' : 'file',
         'name'       => basename($abs) ?: '/',
+        'mode'       => $mode,
         'created_at' => time(),
         'expires_at' => time() + $ttl,
         'created_by' => $u['username'],
@@ -375,6 +381,7 @@ function action_share_list(): void {
             'path'       => $s['path'],
             'name'       => $s['name'] ?? basename($s['path']),
             'type'       => $s['type'] ?? 'file',
+            'mode'       => $s['mode'] ?? 'view',
             'expires_at' => $s['expires_at'],
             'created_by' => $s['created_by'] ?? '',
             'url'        => share_url($s['token']),
@@ -400,10 +407,28 @@ function action_share_revoke(): void {
     json_out(['ok' => true]);
 }
 
-// ─── Note: apertura nell'editor ──────────────────────────────────────────────
-function action_note_open(): void {
+// Contesto di una nota: da sessione (path) oppure da TOKEN di condivisione (accesso pubblico).
+// Ritorna ['abs','editable','user']. Per i token, il file è fissato dalla condivisione
+// (l'anonimo non può scegliere percorsi arbitrari) e l'editing dipende dalla modalità del link.
+function note_context(bool $checkCsrf): array {
+    $token = $_REQUEST['t'] ?? '';
+    if ($token !== '') {
+        $share = share_find($token);
+        if (!$share || (($share['type'] ?? '') !== 'file')) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
+        $abs = share_base($share);
+        if (!is_file($abs) || !note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Nota non disponibile'], 400);
+        return ['abs' => $abs, 'editable' => (($share['mode'] ?? 'view') === 'edit'), 'user' => 'ospite'];
+    }
     $u = require_login();
-    $abs = resolve_path($_GET['path'] ?? '', true);
+    if ($checkCsrf) csrf_check();
+    $abs = resolve_path($_REQUEST['path'] ?? '', true);
+    return ['abs' => $abs, 'editable' => can_write(), 'user' => $u['username']];
+}
+
+// ─── Note: apertura nell'editor (sessione o link condiviso) ──────────────────
+function action_note_open(): void {
+    $ctx = note_context(false);
+    $abs = $ctx['abs'];
     if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo di file non modificabile come testo'], 415);
     $size = (int) filesize($abs);
@@ -412,25 +437,21 @@ function action_note_open(): void {
     $id = note_id(ltrim(rel_display($abs), '/'));
     $updates = note_relay_lines($id);
     json_out([
-        'ok' => true,
-        'id' => $id,
-        'name' => basename($abs),
-        'editable' => can_write(),
+        'ok' => true, 'id' => $id, 'name' => basename($abs), 'editable' => $ctx['editable'],
         'text' => base64_encode((string) file_get_contents($abs)),
-        'updates' => $updates,
-        'offset' => count($updates),
-        'poll_ms' => NOTE_POLL_MS,
-        'user' => $u['username'],
+        'updates' => $updates, 'offset' => count($updates), 'poll_ms' => NOTE_POLL_MS, 'user' => $ctx['user'],
     ]);
 }
 
 // ─── Note: relay di sincronizzazione (Yjs updates + awareness) ───────────────
 function action_note_sync(): void {
-    $u = require_login();
+    $ctx = note_context(true);
     $id = $_POST['id'] ?? '';
     if (!preg_match('/^[a-f0-9]{40}$/', $id)) json_out(['ok' => false, 'error' => 'Identificativo nota non valido'], 400);
+    // Il client non può sincronizzare un id diverso dalla nota del suo contesto.
+    if ($id !== note_id(ltrim(rel_display($ctx['abs']), '/'))) json_out(['ok' => false, 'error' => 'Nota non corrispondente'], 403);
     $since = max(0, (int) ($_POST['since'] ?? 0));
-    $editable = can_write();
+    $editable = $ctx['editable'];
     $incoming = $_POST['updates'] ?? [];
     if (is_string($incoming)) $incoming = json_decode($incoming, true) ?: [];
 
@@ -448,16 +469,15 @@ function action_note_sync(): void {
     }
     fflush($h); flock($h, LOCK_UN); fclose($h);
 
-    $aware = note_aware_exchange($id, (string) ($_POST['client'] ?? ''), (string) ($_POST['aware'] ?? ''), $u['username']);
+    $aware = note_aware_exchange($id, (string) ($_POST['client'] ?? ''), (string) ($_POST['aware'] ?? ''), $ctx['user']);
     json_out(['ok' => true, 'updates' => array_slice($lines, $since), 'offset' => count($lines), 'aware' => $aware]);
 }
 
 // ─── Note: materializza il testo sul file vero ───────────────────────────────
 function action_note_save(): void {
-    require_write();
-    $abs = resolve_path($_POST['path'] ?? '', true);
-    if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
-    if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo non testuale'], 415);
+    $ctx = note_context(true);
+    if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
+    $abs = $ctx['abs'];
     $content = (string) ($_POST['content'] ?? '');
     if (strlen($content) > NOTE_MAX_BYTES) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
     $tmp = $abs . '.tmp.' . bin2hex(random_bytes(4));

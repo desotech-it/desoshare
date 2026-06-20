@@ -404,6 +404,7 @@
     if (d > 0) return d + 'g ' + h + 'h'; if (h > 0) return h + 'h ' + m + 'm'; if (m > 0) return m + 'm ' + x + 's'; return x + 's';
   }
   function shareDialog(rel, name) {
+    const canEdit = isTextFile(name);
     openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
       <label>Durata del link</label>
       <select id="sh_ttl">
@@ -412,15 +413,21 @@
         <option value="604800">7 giorni</option>
         <option value="2592000">30 giorni</option>
       </select>
+      ${canEdit ? `<label style="margin-top:10px">Accesso</label>
+      <select id="sh_mode">
+        <option value="view">Sola lettura</option>
+        <option value="edit">Modificabile (chiunque abbia il link co-edita)</option>
+      </select>` : ''}
       <div id="sh_result" style="margin-top:12px"></div>
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button>
         <button class="btn btn-primary" id="sh_create"><i class="ti ti-link"></i> Crea link</button></div></div>`);
     $('#sh_create', modalBg).onclick = async () => {
       const ttl = $('#sh_ttl', modalBg).value;
-      const r = await apiPost('share_create', { path: rel, ttl });
+      const mode = canEdit ? $('#sh_mode', modalBg).value : 'view';
+      const r = await apiPost('share_create', { path: rel, ttl, mode });
       if (!r.ok) { toast(r.error || 'Errore', true); return; }
       const when = new Date(r.expires_at * 1000).toLocaleString('it-IT');
-      $('#sh_result', modalBg).innerHTML = `<label>Link pubblico — scade il ${esc(when)}</label>
+      $('#sh_result', modalBg).innerHTML = `<label>Link pubblico (${mode === 'edit' ? 'modificabile' : 'sola lettura'}) — scade il ${esc(when)}</label>
         <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
         <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
       const inp = $('#sh_url', modalBg); inp.focus(); inp.select();
@@ -432,7 +439,7 @@
     if (!r.ok) { toast(r.error || 'Errore', true); return; }
     const body = r.shares.length ? `<table class="utable"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${
       r.shares.map(s => `<tr data-exp="${s.expires_at}">
-        <td><i class="ti ${s.type === 'dir' ? 'ti-folder' : 'ti-file'}"></i> ${esc(s.name)}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ''}</td>
+        <td><i class="ti ${s.type === 'dir' ? 'ti-folder' : 'ti-file'}"></i> ${esc(s.name)}${s.mode === 'edit' ? ' <span class="muted" style="font-size:11px">· modificabile</span>' : ''}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ''}</td>
         <td class="sh-rem" style="white-space:nowrap"></td>
         <td class="uact" style="white-space:nowrap">
           <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
@@ -460,25 +467,7 @@
   // ─── Editor di note collaborativo (CodeMirror 6 + Yjs via CDN) ─────────
   const BIN_EXT = new Set(['png','jpg','jpeg','gif','webp','bmp','ico','svgz','pdf','zip','rar','7z','gz','tgz','tar','bz2','mp3','wav','ogg','flac','mp4','mov','avi','mkv','webm','exe','dll','so','bin','dat','class','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','woff','woff2','ttf','otf','eot','psd','ai','eps']);
   function isTextFile(name) { return !BIN_EXT.has((name.split('.').pop() || '').toLowerCase()); }
-  function userColor(name) { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0; return 'hsl(' + (h % 360) + ',65%,45%)'; }
-  function genClientId() { const a = new Uint8Array(8); (crypto.getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => a[i] = i)); return 'c' + Array.from(a, b => ('0' + b.toString(16)).slice(-2)).join(''); }
   const b64ToU8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
-  const u8ToB64 = u => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
-
-  // Carica il bundle dell'editor (CodeMirror 6 + Yjs in un unico file servito dall'app)
-  let _edLibs = null;
-  function loadEditorLibs() {
-    if (window.DesoEditor) return Promise.resolve(window.DesoEditor);
-    if (_edLibs) return _edLibs;
-    _edLibs = new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'assets/editor-bundle.js?v=' + EDITOR_BUNDLE_V;
-      s.onload = () => window.DesoEditor ? resolve(window.DesoEditor) : reject(new Error('bundle non valido'));
-      s.onerror = () => reject(new Error('caricamento editor fallito'));
-      document.head.appendChild(s);
-    });
-    return _edLibs;
-  }
 
   async function openEditor(rel, name) {
     if (editorCleanup) closeModal();
@@ -492,68 +481,22 @@
     const host = $('#ed_host', modalBg), statusEl = $('#ed_status', modalBg), presEl = $('#ed_pres', modalBg);
     const info = await apiGet('note_open', { path: rel });
     if (!info.ok) { statusEl.textContent = ''; host.innerHTML = '<div style="padding:14px">' + esc(info.error || 'Errore') + '</div>'; return; }
-    let libs = null;
-    try { libs = await loadEditorLibs(); } catch (e) { libs = null; }
-    if (libs) startCollabEditor(rel, info, libs, host, statusEl, presEl);
-    else editorFallback(rel, info, host, statusEl);
-  }
-
-  function startCollabEditor(rel, info, L, host, statusEl, presEl) {
-    const { Y, EditorState, EditorView, basicExtensions, yCollab, Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } = L;
-    const doc = new Y.Doc();
-    const ytext = doc.getText('content');
-    (info.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
-    let offset = info.offset || 0;
-    if (ytext.length === 0 && info.text) {
-      const t = new TextDecoder().decode(b64ToU8(info.text));
-      if (t.length) ytext.insert(0, t);
+    let E = null;
+    try { E = await NoteEditor.loadBundle('assets/editor-bundle.js?v=' + EDITOR_BUNDLE_V); } catch (e) { E = null; }
+    if (E) {
+      editorCleanup = NoteEditor.mount({
+        host, statusEl, presEl, info,
+        sync: payload => apiPost('note_sync', Object.assign({ path: rel }, payload)),
+        save: content => apiPost('note_save', { path: rel, content }),
+      });
+    } else {
+      editorFallback(rel, info, host, statusEl);
     }
-    const awareness = new Awareness(doc);
-    awareness.setLocalStateField('user', { name: info.user || 'utente', color: userColor(info.user || '') });
-    const clientId = genClientId();
-    host.innerHTML = '';
-    const ev = new EditorView({
-      state: EditorState.create({ doc: ytext.toString(), extensions: [...basicExtensions(info.editable), yCollab(ytext, awareness)] }),
-      parent: host,
-    });
-    statusEl.textContent = info.editable ? 'connesso' : 'sola lettura';
-
-    const pending = [];
-    doc.on('update', (u, origin) => { if (origin !== 'remote') pending.push(u8ToB64(u)); });
-    let stopped = false, saveTimer = null, dirty = false;
-    const saveNow = async () => { if (!dirty || !info.editable) return; dirty = false; await apiPost('note_save', { path: rel, content: ytext.toString() }); };
-    ytext.observe(() => { if (info.editable) { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
-    const renderPresence = () => {
-      const names = new Set();
-      awareness.getStates().forEach((s, cid) => { if (cid !== awareness.clientID && s.user) names.add(s.user.name); });
-      presEl.textContent = names.size ? ('Online con te: ' + [...names].join(', ')) : 'Nessun altro collegato';
-    };
-    const tick = async () => {
-      if (stopped) return;
-      const send = pending.splice(0);
-      const awB64 = u8ToB64(encodeAwarenessUpdate(awareness, [awareness.clientID]));
-      const r = await apiPost('note_sync', { id: info.id, since: offset, client: clientId, updates: send, aware: awB64 });
-      if (r && r.ok) {
-        (r.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
-        offset = r.offset;
-        (r.aware || []).forEach(a => { try { applyAwarenessUpdate(awareness, b64ToU8(a.b64), 'remote'); } catch (_) {} });
-        renderPresence();
-      } else if (send.length) { pending.unshift.apply(pending, send); }
-    };
-    const iv = setInterval(tick, info.poll_ms || 1500);
-    tick();
-    editorCleanup = () => {
-      stopped = true; clearInterval(iv); clearTimeout(saveTimer);
-      saveNow().catch(() => {});
-      try { removeAwarenessStates(awareness, [awareness.clientID], 'local'); } catch (_) {}
-      try { ev.destroy(); } catch (_) {}
-      try { doc.destroy(); } catch (_) {}
-    };
   }
 
-  // Fallback: se il CDN non risponde, editor semplice (singolo utente, niente real-time)
+  // Fallback: se il bundle non si carica, editor semplice (singolo utente, niente real-time)
   function editorFallback(rel, info, host, statusEl) {
-    statusEl.textContent = info.editable ? 'editor semplice (CDN non disponibile)' : 'sola lettura';
+    statusEl.textContent = info.editable ? 'editor semplice' : 'sola lettura';
     const text = info.text ? new TextDecoder().decode(b64ToU8(info.text)) : '';
     host.innerHTML = '';
     const ta = document.createElement('textarea');

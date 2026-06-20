@@ -115,19 +115,39 @@ has "note_open ok" "$NO" '"ok":true'
 has "note_open editable (admin)" "$NO" '"editable":true'
 NID=$(printf '%s' "$NO" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')
 UA=$(printf 'updateAAAA' | openssl base64 -A); UB=$(printf 'updateBBBB' | openssl base64 -A)
-RA=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=0 --data-urlencode client=clientAAAAAA --data-urlencode "updates=[\"$UA\"]" "$B/api.php?action=note_sync")
+RA=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=0 --data-urlencode client=clientAAAAAA --data-urlencode "updates=[\"$UA\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync")
 has "clientA append → offset 1" "$RA" '"offset":1'
-RB=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=0 --data-urlencode client=clientBBBBBB "$B/api.php?action=note_sync")
+RB=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=0 --data-urlencode client=clientBBBBBB --data-urlencode path=nota.md "$B/api.php?action=note_sync")
 has "clientB riceve l'update di A" "$RB" "$UA"
-RB2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=1 --data-urlencode client=clientBBBBBB --data-urlencode "updates=[\"$UB\"]" "$B/api.php?action=note_sync")
+RB2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=1 --data-urlencode client=clientBBBBBB --data-urlencode "updates=[\"$UB\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync")
 has "clientB append → offset 2" "$RB2" '"offset":2'
-RA2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=1 --data-urlencode client=clientAAAAAA "$B/api.php?action=note_sync")
+RA2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=1 --data-urlencode client=clientAAAAAA --data-urlencode path=nota.md "$B/api.php?action=note_sync")
 has "clientA riceve l'update di B" "$RA2" "$UB"
 has "note_save (materializza su file)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")" '"ok":true'
 curl -s -b $JAR "$B/api.php?action=download&path=nota.md" -o "$SBX/nota.dl"
 grep -q "riga uno modificata" "$SBX/nota.dl" && ok "file aggiornato da note_save" || no "file aggiornato da note_save"
-RR=$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode id=$NID --data-urlencode since=2 --data-urlencode client=clientReadonly1 --data-urlencode "updates=[\"$UA\"]" "$B/api.php?action=note_sync")
+RR=$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode id=$NID --data-urlencode since=2 --data-urlencode client=clientReadonly1 --data-urlencode "updates=[\"$UA\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync")
 has "sola-lettura: update IGNORATO (offset resta 2)" "$RR" '"offset":2'
+
+echo "=== Note condivise (link editabile, accesso PUBBLICO via token) ==="
+SE=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")
+has "share_create link modificabile" "$SE" '"ok":true'
+ET=$(printf '%s' "$SE" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+NOE=$(curl -s "$B/api.php?action=note_open&t=$ET")   # SENZA cookie
+has "note_open via token (no login)" "$NOE" '"ok":true'
+has "note_open via token: editabile" "$NOE" '"editable":true'
+ENID=$(printf '%s' "$NOE" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')
+UC=$(printf 'updateCCCC' | openssl base64 -A)
+RSE=$(curl -s --data-urlencode t=$ET --data-urlencode id=$ENID --data-urlencode since=0 --data-urlencode client=anonClient01 --data-urlencode "updates=[\"$UC\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync")
+has "note_sync anonimo aggiunge e riceve" "$RSE" "$UC"
+has "note_save anonimo (editabile)" "$(curl -s --data-urlencode t=$ET --data-urlencode content='modificato via link' "$B/api.php?action=note_save")" '"ok":true'
+SV=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode ttl=86400 --data-urlencode mode=view "$B/api.php?action=share_create")
+VT=$(printf '%s' "$SV" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "note_open token sola-lettura: NON editabile" "$(curl -s "$B/api.php?action=note_open&t=$VT")" '"editable":false'
+has "note_save token sola-lettura → vietato" "$(curl -s --data-urlencode t=$VT --data-urlencode content='vietato' "$B/api.php?action=note_save")" 'sola lettura'
+has "id non corrispondente al token → 403" "$(curl -s --data-urlencode t=$ET --data-urlencode id=0000000000000000000000000000000000000000 --data-urlencode since=0 --data-urlencode client=anonClient01 --data-urlencode path=nota.md "$B/api.php?action=note_sync")" 'non corrispondente'
+has "edit-mode su file binario rifiutato" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" 'file di testo'
+has "pagina pubblica nota = editor" "$(curl -s "$B/share.php?t=$ET")" 'editor-bundle.js'
 
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'

@@ -6,6 +6,29 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.5.0] - 2026-06-20
+
+### Aggiunto
+- **Link di condivisione editabili**: creando un link per una nota di testo si
+  può scegliere "sola lettura" o "modificabile". Con il link modificabile
+  **chiunque abbia il link** (anche senza login) co-edita la nota in tempo reale
+  dalla pagina pubblica `share.php`, insieme agli utenti autenticati. I link in
+  sola lettura mostrano la nota live (aggiornata in tempo reale) in sola lettura.
+- Endpoint nota (`note_open`/`note_sync`/`note_save`) ora accettano anche un
+  **token di condivisione** oltre alla sessione: il file è fissato dal link
+  (niente accesso a percorsi arbitrari), l'editing dipende dalla modalità del
+  link, e il client non può sincronizzare una nota diversa da quella del token.
+
+### Modificato
+- Logica dell'editor collaborativo estratta in `assets/note-editor.js`, condivisa
+  tra l'app autenticata e la pagina pubblica.
+
+### Corretto
+- Sincronizzazione in tempo reale tra client: il testo iniziale di una nota ora
+  usa un **seed deterministico** (clientID Yjs fisso) e il relay è l'unica
+  sorgente di verità, così le modifiche di un utente si integrano correttamente
+  in tutti gli altri (prima potevano non propagarsi). Verificato in browser.
+
 ## [0.4.0] - 2026-06-20
 
 ### Aggiunto
@@ -67,6 +90,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.5.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.5.0
 [0.4.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.4.0
 [0.3.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.3.0
 [0.2.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.2.0

@@ -35,7 +35,8 @@ if (isset($_GET['zip']) && $type === 'dir') {
 if ($type === 'file') {
     $abs = share_base($share);
     if (!is_file($abs)) { share_invalid_page(); exit; }
-    share_file_page($share, $abs);
+    if (note_is_text(basename($abs))) share_editor_page($share, $abs);   // nota testuale → editor (live)
+    else share_file_page($share, $abs);                                  // binario → pagina download
 } else {
     $dir = share_resolve($share, $p);
     if ($dir === null || !is_dir($dir)) { share_invalid_page('Cartella non trovata'); exit; }
@@ -87,6 +88,37 @@ function share_file_page(array $s, string $abs): void {
        . share_expiry_html($s)
        . '<a class="btn btn-primary" style="justify-content:center;width:100%;margin-top:10px" href="' . h($dl) . '"><i class="ti ti-download"></i> Scarica</a>'
        . '</div></div>';
+    share_footer();
+}
+// Editor di una nota condivisa: collaborativo se il link è "modificabile", altrimenti sola lettura live.
+function share_editor_page(array $s, string $abs): void {
+    share_head('Nota condivisa');
+    $tok = $s['token'];
+    $editable = (($s['mode'] ?? 'view') === 'edit');
+    $bv = (string) @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js');
+    $nv = (string) @filemtime(PUBLIC_DIR . '/assets/note-editor.js');
+    $dl = 'share.php?t=' . urlencode($tok) . '&dl=1';
+    echo '<div class="share-wrap">'
+       . '<header class="topbar"><div class="brand"><img src="assets/desolabs-icon.png" class="brand-logo" alt=""> ' . h(APP_NAME) . '</div>'
+       . '<a class="btn" href="' . h($dl) . '"><i class="ti ti-download"></i> Scarica</a></header>'
+       . '<h3 style="display:flex;align-items:center;gap:8px;margin:6px 4px;font-size:16px;font-weight:500">'
+       . '<i class="ti ti-edit"></i> ' . h($s['name'])
+       . ' <span class="muted" style="font-size:12px;font-weight:400">' . ($editable ? 'modificabile' : 'sola lettura') . '</span>'
+       . ' <span id="ed_status" class="muted" style="font-size:12px;font-weight:400">apertura…</span></h3>'
+       . share_expiry_html($s)
+       . '<div id="ed_host" class="editor-host"></div>'
+       . '<p id="ed_pres" class="muted" style="font-size:12px;margin:8px 4px"></p>'
+       . '</div>'
+       . '<script src="assets/note-editor.js?v=' . h($nv) . '"></script>'
+       . '<script>(async function(){'
+       . 'var t=' . json_encode($tok) . ',BV=' . json_encode($bv) . ';'
+       . 'var host=document.getElementById("ed_host"),st=document.getElementById("ed_status"),pr=document.getElementById("ed_pres");'
+       . 'function post(a,d){var b=new FormData();b.append("t",t);for(var k in d){var v=d[k];b.append(k,Array.isArray(v)?JSON.stringify(v):v);}return fetch("api.php?action="+a,{method:"POST",body:b}).then(function(r){return r.json();});}'
+       . 'var info=await fetch("api.php?action=note_open&t="+encodeURIComponent(t)).then(function(r){return r.json();});'
+       . 'if(!info.ok){host.textContent=info.error||"Errore";st.textContent="";return;}'
+       . 'try{await NoteEditor.loadBundle("assets/editor-bundle.js?v="+BV);}catch(e){host.textContent="Impossibile caricare l\'editor";st.textContent="";return;}'
+       . 'NoteEditor.mount({host:host,statusEl:st,presEl:pr,info:info,sync:function(p){return post("note_sync",p);},save:function(c){return post("note_save",{content:c});}});'
+       . '})();</script>';
     share_footer();
 }
 function share_folder_page(array $s, string $dir, string $p): void {
