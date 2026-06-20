@@ -1,0 +1,404 @@
+<?php
+// Endpoint delle operazioni (AJAX + download). Tutte richiedono login.
+require_once __DIR__ . '/lib.php';
+boot();
+
+$action = $_REQUEST['action'] ?? '';
+
+switch ($action) {
+    // Lettura / binari (GET)
+    case 'list':        action_list();        break;
+    case 'download':    action_download();    break;
+    case 'zip':         action_zip();         break;
+    case 'users_list':  action_users_list();  break;
+    case 'upload_status': action_upload_status(); break;
+
+    // Modifiche (POST + CSRF)
+    case 'upload_chunk':  csrf_check(); action_upload_chunk();  break;
+    case 'upload_finish': csrf_check(); action_upload_finish(); break;
+    case 'mkdir':       csrf_check(); action_mkdir();       break;
+    case 'newfile':     csrf_check(); action_newfile();     break;
+    case 'upload':      csrf_check(); action_upload();      break;
+    case 'delete':      csrf_check(); action_delete();      break;
+    case 'rename':      csrf_check(); action_rename();      break;
+    case 'user_save':   csrf_check(); action_user_save();   break;
+    case 'user_delete': csrf_check(); action_user_delete(); break;
+
+    default: json_out(['ok' => false, 'error' => 'Azione sconosciuta'], 400);
+}
+
+// ─── File: elenco ────────────────────────────────────────────────────────────
+function action_list(): void {
+    require_login();
+    $dir = resolve_path($_GET['path'] ?? '', true);
+    if (!is_dir($dir)) json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
+    $items = [];
+    foreach (scandir($dir) as $name) {
+        if ($name === '.' || $name === '..') continue;
+        $p = $dir . '/' . $name;
+        $isDir = is_dir($p);
+        $size = $isDir ? 0 : (int) (@filesize($p) ?: 0);
+        $items[] = [
+            'name'   => $name,
+            'type'   => $isDir ? 'dir' : 'file',
+            'size'   => $size,
+            'size_h' => $isDir ? '' : human_size($size),
+            'mtime'  => date('d/m/Y', @filemtime($p) ?: time()),
+        ];
+    }
+    usort($items, fn($a, $b) =>
+        $a['type'] === $b['type'] ? strcasecmp($a['name'], $b['name']) : ($a['type'] === 'dir' ? -1 : 1));
+    json_out([
+        'ok' => true, 'path' => rel_display($dir), 'items' => $items,
+        'can_write' => can_write(), 'is_admin' => is_admin(),
+    ]);
+}
+
+// ─── File: crea cartella ─────────────────────────────────────────────────────
+function action_mkdir(): void {
+    require_write();
+    $dir = resolve_path($_POST['path'] ?? '', true);
+    $name = trim($_POST['name'] ?? '');
+    if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
+    $target = $dir . '/' . $name;
+    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (!@mkdir($target, 0755)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
+    json_out(['ok' => true]);
+}
+
+// ─── File: crea file ─────────────────────────────────────────────────────────
+function action_newfile(): void {
+    require_write();
+    $dir = resolve_path($_POST['path'] ?? '', true);
+    $name = trim($_POST['name'] ?? '');
+    if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
+    $target = $dir . '/' . $name;
+    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (file_put_contents($target, (string) ($_POST['content'] ?? '')) === false) {
+        json_out(['ok' => false, 'error' => 'Impossibile creare il file'], 500);
+    }
+    json_out(['ok' => true]);
+}
+
+// ─── File: upload (multiplo, tutti i tipi) ───────────────────────────────────
+function action_upload(): void {
+    require_write();
+    $dir = resolve_path($_POST['path'] ?? '', true);
+    if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
+    $f = $_FILES['files'];
+    $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
+    $saved = 0; $errors = [];
+    for ($i = 0; $i < count($names); $i++) {
+        $n = basename((string) $names[$i]);
+        if (!valid_name($n)) { $errors[] = "$n: nome non valido"; continue; }
+        if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
+        $dest = $dir . '/' . $n;
+        if (!move_uploaded_file($tmp[$i], $dest)) { $errors[] = "$n: impossibile salvare"; continue; }
+        @chmod($dest, 0644);
+        $saved++;
+    }
+    json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
+}
+
+// ─── File: elimina (file o cartelle, anche più di uno) ───────────────────────
+function action_delete(): void {
+    require_write();
+    $paths = $_POST['paths'] ?? [];
+    if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
+    $deleted = 0; $errors = [];
+    foreach ($paths as $rel) {
+        $p = resolve_path((string) $rel);
+        if ($p === storage_real()) { $errors[] = 'la radice non è eliminabile'; continue; }
+        if (!file_exists($p)) { $errors[] = "$rel: non trovato"; continue; }
+        if (is_dir($p) && !is_link($p)) rrmdir($p); else @unlink($p);
+        $deleted++;
+    }
+    json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
+}
+
+// ─── File: rinomina ──────────────────────────────────────────────────────────
+function action_rename(): void {
+    require_write();
+    $from = resolve_path($_POST['from'] ?? '', true);
+    $newName = trim($_POST['to'] ?? '');
+    if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
+    if ($from === storage_real()) json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
+    $target = dirname($from) . '/' . $newName;
+    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (!@rename($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
+    json_out(['ok' => true]);
+}
+
+// ─── File: download singolo (con supporto HTTP Range / resume) ───────────────
+function action_download(): void {
+    require_login();
+    $p = resolve_path($_GET['path'] ?? '', true);
+    if (!is_file($p)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
+    stream_file($p, basename($p));
+}
+
+// Streaming efficiente con supporto Range: abilita ripresa e download segmentato.
+function stream_file(string $path, string $name): void {
+    $size = filesize($path);
+    $fp = fopen($path, 'rb');
+    if ($fp === false) json_out(['ok' => false, 'error' => 'Impossibile aprire il file'], 500);
+
+    while (ob_get_level()) ob_end_clean();
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+
+    $start = 0; $end = $size - 1; $partial = false;
+    $range = $_SERVER['HTTP_RANGE'] ?? '';
+    if ($range !== '' && preg_match('/bytes=(\d*)-(\d*)/', $range, $m)) {
+        if ($m[1] === '' && $m[2] !== '') {           // bytes=-N (ultimi N byte)
+            $start = max(0, $size - (int) $m[2]);
+        } else {
+            $start = (int) $m[1];
+            if ($m[2] !== '') $end = min((int) $m[2], $size - 1);
+        }
+        if ($start > $end || $start >= $size) {
+            http_response_code(416);
+            header("Content-Range: bytes */$size");
+            fclose($fp); exit;
+        }
+        $partial = true;
+    }
+    $length = $end - $start + 1;
+
+    header('Accept-Ranges: bytes');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
+    header('Content-Length: ' . $length);
+    header('Cache-Control: no-store');
+    if ($partial) {
+        http_response_code(206);
+        header("Content-Range: bytes $start-$end/$size");
+    }
+
+    fseek($fp, $start);
+    $buffer = 1024 * 256;
+    $remaining = $length;
+    while ($remaining > 0 && !feof($fp) && !connection_aborted()) {
+        $read = $remaining > $buffer ? $buffer : $remaining;
+        $data = fread($fp, $read);
+        if ($data === false) break;
+        echo $data;
+        flush();
+        $remaining -= strlen($data);
+    }
+    fclose($fp);
+    exit;
+}
+
+// ─── Upload a chunk con ripresa ──────────────────────────────────────────────
+function upload_dir(): string {
+    $d = DATA_DIR . '/uploads';
+    if (!is_dir($d)) @mkdir($d, 0700, true);
+    return $d;
+}
+function upload_uid(string $uid): string {
+    if (!preg_match('/^[a-f0-9]{16,64}$/', $uid)) json_out(['ok' => false, 'error' => 'Identificativo upload non valido'], 400);
+    return $uid;
+}
+function upload_part(string $uid): string { return upload_dir() . '/' . $uid . '.part'; }
+
+// Stato dell'upload: quali blocchi sono già stati ricevuti (per riprendere).
+function action_upload_status(): void {
+    require_write();
+    $uid = upload_uid($_GET['uid'] ?? '');
+    $m = manifest_read($uid);
+    $parts = array_map('intval', array_keys($m['parts']));
+    sort($parts);
+    json_out(['ok' => true, 'parts' => $parts, 'chunk' => (int) $m['chunk'], 'size' => (int) $m['size']]);
+}
+
+// Riceve un blocco e lo scrive al suo offset. Supporta invii paralleli e fuori ordine.
+function action_upload_chunk(): void {
+    require_write();
+    $uid = upload_uid($_POST['uid'] ?? '');
+    $index = (int) ($_POST['index'] ?? -1);
+    $offset = (int) ($_POST['offset'] ?? -1);
+    $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
+    $total = (int) ($_POST['total'] ?? 0);
+    if ($index < 0 || $offset < 0 || $chunkSize <= 0 || $total <= 0) {
+        json_out(['ok' => false, 'error' => 'Parametri blocco non validi'], 400);
+    }
+    if (empty($_FILES['chunk']) || ($_FILES['chunk']['error'] ?? 1) !== UPLOAD_ERR_OK) {
+        json_out(['ok' => false, 'error' => 'Blocco non ricevuto'], 400);
+    }
+    // scrive il blocco al suo offset; 'c+b' crea il file se assente e non lo tronca
+    $part = upload_part($uid);
+    $fh = fopen($part, 'c+b');
+    if ($fh === false) json_out(['ok' => false, 'error' => 'Impossibile scrivere il blocco'], 500);
+    flock($fh, LOCK_EX);
+    fseek($fh, $offset);
+    $in = fopen($_FILES['chunk']['tmp_name'], 'rb');
+    if ($in !== false) { stream_copy_to_stream($in, $fh); fclose($in); }
+    fflush($fh); flock($fh, LOCK_UN); fclose($fh);
+    $count = manifest_mark($uid, $index, $total, $chunkSize);
+    json_out(['ok' => true, 'count' => $count]);
+}
+
+// Finalizza: verifica che tutti i blocchi ci siano e sposta il file (creando le cartelle).
+function action_upload_finish(): void {
+    require_write();
+    $uid = upload_uid($_POST['uid'] ?? '');
+    $name = basename(trim($_POST['name'] ?? ''));
+    $total = (int) ($_POST['total'] ?? -1);
+    $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
+    if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
+    if ($total < 0 || $chunkSize <= 0) json_out(['ok' => false, 'error' => 'Parametri non validi'], 400);
+
+    $part = upload_part($uid);
+    if (!is_file($part)) json_out(['ok' => false, 'error' => 'Upload non trovato'], 404);
+    $m = manifest_read($uid);
+    $expected = (int) ceil($total / $chunkSize);
+    if (count($m['parts']) !== $expected || (int) filesize($part) !== $total) {
+        json_out(['ok' => false, 'error' => 'Trasferimento incompleto', 'have' => count($m['parts']), 'expected' => $expected], 409);
+    }
+    // cartella di destinazione (creata se manca → upload di cartelle)
+    $dir = resolve_path($_POST['path'] ?? '', false);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        json_out(['ok' => false, 'error' => 'Impossibile creare la cartella di destinazione'], 500);
+    }
+    $dest = $dir . '/' . $name;
+    if (!@rename($part, $dest)) {
+        if (!@copy($part, $dest)) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
+        @unlink($part);
+    }
+    @chmod($dest, 0644);
+    @unlink(manifest_path($uid));
+    upload_gc();
+    json_out(['ok' => true]);
+}
+
+// ─── Manifest dei blocchi ricevuti (resume con invii paralleli) ──────────────
+function manifest_path(string $uid): string { return upload_dir() . '/' . $uid . '.json'; }
+function manifest_read(string $uid): array {
+    $f = manifest_path($uid);
+    $d = is_file($f) ? json_decode((string) file_get_contents($f), true) : null;
+    if (!is_array($d)) $d = [];
+    return $d + ['size' => 0, 'chunk' => 0, 'parts' => []];
+}
+function manifest_mark(string $uid, int $index, int $total, int $chunkSize): int {
+    $h = fopen(manifest_path($uid), 'c+');
+    flock($h, LOCK_EX);
+    $m = json_decode(stream_get_contents($h) ?: '', true);
+    if (!is_array($m)) $m = [];
+    $m += ['size' => 0, 'chunk' => 0, 'parts' => []];
+    $m['size'] = $total; $m['chunk'] = $chunkSize;
+    $m['parts'][(string) $index] = 1;
+    rewind($h); ftruncate($h, 0); fwrite($h, json_encode($m));
+    fflush($h); flock($h, LOCK_UN); fclose($h);
+    return count($m['parts']);
+}
+// rimuove blocchi/manifest orfani più vecchi di 24h
+function upload_gc(): void {
+    foreach (glob(upload_dir() . '/*') as $f) {
+        if (is_file($f) && time() - filemtime($f) > 86400) @unlink($f);
+    }
+}
+
+// ─── File: download ZIP (compressione) ───────────────────────────────────────
+function action_zip(): void {
+    require_login();
+    $paths = $_GET['paths'] ?? [];
+    if (is_string($paths)) $paths = [$paths];
+    $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
+    if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
+
+    if (!class_exists('ZipArchive')) json_out(['ok' => false, 'error' => 'ZipArchive non disponibile sul server'], 500);
+    $tmp = tempnam(sys_get_temp_dir(), 'shr');
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) json_out(['ok' => false, 'error' => 'Impossibile creare lo ZIP'], 500);
+
+    foreach ($paths as $rel) {
+        $abs = resolve_path((string) $rel, true);
+        $base = basename($abs);
+        if (is_dir($abs)) zip_add_dir($zip, $abs, $base);
+        else $zip->addFile($abs, $base);
+    }
+    $zip->close();
+
+    $dlname = (count($paths) === 1) ? basename(resolve_path((string) $paths[0])) . '.zip' : 'share-download.zip';
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename="' . addslashes($dlname) . '"');
+    header('Content-Length: ' . filesize($tmp));
+    header('Cache-Control: no-store');
+    readfile($tmp);
+    @unlink($tmp);
+    exit;
+}
+function zip_add_dir(ZipArchive $zip, string $dir, string $base): void {
+    $zip->addEmptyDir($base);
+    foreach (scandir($dir) as $n) {
+        if ($n === '.' || $n === '..') continue;
+        $p = $dir . '/' . $n;
+        if (is_dir($p)) zip_add_dir($zip, $p, $base . '/' . $n);
+        else $zip->addFile($p, $base . '/' . $n);
+    }
+}
+
+// ─── Utenti: elenco (admin) ──────────────────────────────────────────────────
+function action_users_list(): void {
+    require_admin();
+    $out = [];
+    foreach (users_load()['users'] as $u) {
+        $role = $u['role'] ?? 'user';
+        $out[] = [
+            'username'   => $u['username'],
+            'role'       => $role,
+            'permission' => $role === 'admin' ? 'write' : ($u['permission'] ?? 'read'),
+        ];
+    }
+    json_out(['ok' => true, 'users' => $out]);
+}
+
+// ─── Utenti: crea/modifica (admin) ───────────────────────────────────────────
+function action_user_save(): void {
+    require_admin();
+    $username = trim($_POST['username'] ?? '');
+    $original = trim($_POST['original'] ?? '');
+    $password = (string) ($_POST['password'] ?? '');
+    $role = (($_POST['role'] ?? 'user') === 'admin') ? 'admin' : 'user';
+    $permission = (($_POST['permission'] ?? 'read') === 'write') ? 'write' : 'read';
+    if (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $username)) {
+        json_out(['ok' => false, 'error' => 'Username non valido (3-32: lettere, numeri, . _ -)'], 400);
+    }
+    $data = users_load();
+    $idx = -1;
+    foreach ($data['users'] as $i => $u) if ($u['username'] === $original) $idx = $i;
+    foreach ($data['users'] as $i => $u) if ($u['username'] === $username && $i !== $idx) {
+        json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
+    }
+    if ($idx >= 0) {
+        $data['users'][$idx]['username']   = $username;
+        $data['users'][$idx]['role']       = $role;
+        $data['users'][$idx]['permission'] = $permission;
+        if ($password !== '') $data['users'][$idx]['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
+    } else {
+        if (strlen($password) < 6) json_out(['ok' => false, 'error' => 'Password obbligatoria (min 6 caratteri)'], 400);
+        $data['users'][] = [
+            'username' => $username, 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+            'role' => $role, 'permission' => $permission,
+        ];
+    }
+    users_save($data);
+    json_out(['ok' => true]);
+}
+
+// ─── Utenti: elimina (admin) ─────────────────────────────────────────────────
+function action_user_delete(): void {
+    $me = require_admin();
+    $username = trim($_POST['username'] ?? '');
+    if ($username === $me['username']) json_out(['ok' => false, 'error' => 'Non puoi eliminare te stesso'], 400);
+    $data = users_load();
+    $before = count($data['users']);
+    $data['users'] = array_values(array_filter($data['users'], fn($u) => $u['username'] !== $username));
+    if (!array_filter($data['users'], fn($u) => ($u['role'] ?? '') === 'admin')) {
+        json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
+    }
+    users_save($data);
+    json_out(['ok' => true, 'deleted' => $before - count($data['users'])]);
+}

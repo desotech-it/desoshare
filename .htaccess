@@ -1,0 +1,11 @@
+# Share file manager — protezioni di base
+Options -Indexes
+DirectoryIndex index.php
+
+# Blocca l'accesso diretto a file sensibili
+<FilesMatch "\.(json|md|log)$">
+  Require all denied
+</FilesMatch>
+<FilesMatch "^(config|lib)\.php$">
+  Require all denied
+</FilesMatch>

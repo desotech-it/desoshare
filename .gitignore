@@ -1,0 +1,17 @@
+# Segreti e file locali (NON committare)
+CREDENZIALI-ADMIN.txt
+.env
+*.env
+
+# Dati runtime (vengono creati accanto a public_html, non nel repo)
+storage/
+appdata/
+
+# Dipendenze dei test
+tests/node_modules/
+tests/package-lock.json
+
+# Sistema operativo / editor
+.DS_Store
+._*
+*.log
