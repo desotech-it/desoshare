@@ -86,6 +86,21 @@ RCSRF=$(curl -s -b $RJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | hea
 has "sola-lettura può leggere" "$(curl -s -b $RJAR "$B/api.php?action=list&path=")" '"ok":true'
 has "sola-lettura NON può scrivere (403)" "$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path= --data-urlencode name=vietato "$B/api.php?action=mkdir")" 'permessi di lettura'
 
+echo "=== Isolamento per-utente (ogni utente nella propria sandbox) ==="
+# 'lettore' ha la sua home: NON deve vedere i file/cartelle di admin (docs, note.txt creati prima)
+LL=$(curl -s -b $RJAR "$B/api.php?action=list&path=")
+hasnt "lettore NON vede la cartella 'docs' di admin" "$LL" '"name":"docs"'
+hasnt "lettore NON vede 'note.txt' di admin" "$LL" '"name":"note.txt"'
+# utente con scrittura: crea un file e admin NON lo vede (e viceversa)
+WJAR="$SBX/wjar"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=scrittore --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php?action=user_save" >/dev/null
+curl -s -c $WJAR -b $WJAR --data-urlencode action=login --data-urlencode username=scrittore --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+WCSRF=$(curl -s -b $WJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+has "scrittore crea 'segreto.txt' nella sua home" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" --data-urlencode path= --data-urlencode name=segreto.txt --data-urlencode content=top "$B/api.php?action=newfile")" '"ok":true'
+has "scrittore vede il proprio 'segreto.txt'" "$(curl -s -b $WJAR "$B/api.php?action=list&path=")" '"name":"segreto.txt"'
+hasnt "admin NON vede 'segreto.txt' di scrittore" "$(curl -s -b $JAR "$B/api.php?action=list&path=")" '"name":"segreto.txt"'
+has "scrittore NON può scaricare un file di admin (400, non esiste nella sua sandbox)" "$(curl -s -o /dev/null -w '%{http_code}' -b $WJAR "$B/api.php?action=download&path=note.txt")" '400'
+
 echo "=== Condivisioni (link a scadenza) ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode name=inside.txt --data-urlencode content=ciao "$B/api.php?action=newfile" >/dev/null
 SR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 "$B/api.php?action=share_create")
@@ -126,8 +141,8 @@ has "clientA riceve l'update di B" "$RA2" "$UB"
 has "note_save (materializza su file)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")" '"ok":true'
 curl -s -b $JAR "$B/api.php?action=download&path=nota.md" -o "$SBX/nota.dl"
 grep -q "riga uno modificata" "$SBX/nota.dl" && ok "file aggiornato da note_save" || no "file aggiornato da note_save"
-RR=$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode id=$NID --data-urlencode since=2 --data-urlencode client=clientReadonly1 --data-urlencode "updates=[\"$UA\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync")
-has "sola-lettura: update IGNORATO (offset resta 2)" "$RR" '"offset":2'
+# Con l'isolamento per-utente la collaborazione cross-utente avviene SOLO via link:
+# il test "sola-lettura: update ignorato nel relay" è spostato nella sezione Note condivise (token view).
 
 echo "=== Note condivise (link editabile, accesso PUBBLICO via token) ==="
 SE=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")
@@ -145,6 +160,12 @@ SV=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-url
 VT=$(printf '%s' "$SV" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
 has "note_open token sola-lettura: NON editabile" "$(curl -s "$B/api.php?action=note_open&t=$VT")" '"editable":false'
 has "note_save token sola-lettura → vietato" "$(curl -s --data-urlencode t=$VT --data-urlencode content='vietato' "$B/api.php?action=note_save")" 'sola lettura'
+# sola-lettura via token: l'update Yjs NON viene accettato nel relay (offset invariato)
+OFF0=$(curl -s --data-urlencode t=$ET --data-urlencode id=$ENID --data-urlencode since=999 --data-urlencode client=probe0 --data-urlencode path=nota.md "$B/api.php?action=note_sync" | sed -n 's/.*"offset":\([0-9]*\).*/\1/p')
+UD=$(printf 'updateDDDD' | openssl base64 -A)
+curl -s --data-urlencode t=$VT --data-urlencode id=$ENID --data-urlencode since=0 --data-urlencode client=roClient1 --data-urlencode "updates=[\"$UD\"]" --data-urlencode path=nota.md "$B/api.php?action=note_sync" >/dev/null
+OFF1=$(curl -s --data-urlencode t=$ET --data-urlencode id=$ENID --data-urlencode since=999 --data-urlencode client=probe0 --data-urlencode path=nota.md "$B/api.php?action=note_sync" | sed -n 's/.*"offset":\([0-9]*\).*/\1/p')
+[ -n "$OFF0" ] && [ "$OFF0" = "$OFF1" ] && ok "sola-lettura via link: update IGNORATO (offset invariato: $OFF0)" || no "sola-lettura via link: update IGNORATO" "off0=$OFF0 off1=$OFF1"
 has "id non corrispondente al token → 403" "$(curl -s --data-urlencode t=$ET --data-urlencode id=0000000000000000000000000000000000000000 --data-urlencode since=0 --data-urlencode client=anonClient01 --data-urlencode path=nota.md "$B/api.php?action=note_sync")" 'non corrispondente'
 has "edit-mode su file binario rifiutato" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" 'file di testo'
 has "pagina pubblica nota = editor" "$(curl -s "$B/share.php?t=$ET")" 'editor-bundle.js'

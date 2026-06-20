@@ -13,7 +13,12 @@ Versione: **0.7.0** · stato: in sviluppo (0.x.x)
 - **Gestione utenti** (riservata agli amministratori): creazione, modifica ed
   eliminazione utenti, con permesso **sola lettura** (solo download) oppure
   **lettura e scrittura** (tutte le operazioni). L'amministratore gestisce gli
-  utenti ed ha anche pieno accesso ai file.
+  account utente.
+- **Isolamento per-utente**: ogni utente lavora nella propria cartella privata
+  (prefisso `<username>/` nello storage, in locale e su S3). L'isolamento è
+  **totale** — anche l'amministratore vede solo i propri file, non quelli degli
+  altri utenti. Lo scambio di file tra utenti avviene tramite i link di
+  condivisione.
 - **File manager**: navigazione tra cartelle (breadcrumb), creazione di cartelle
   e file, rinomina, eliminazione (con conferma), ricerca.
 - **Upload a blocchi** (chunk da 16 MB) **in parallelo** e con **ripresa

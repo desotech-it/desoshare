@@ -18,6 +18,7 @@ if (!users_exist()) {
             ]]]);
             session_regenerate_id(true);
             $_SESSION['username'] = $u;
+            ensure_user_home($u);                    // crea la home (sandbox) dell'admin
             audit('setup_admin', $u);
             header('Location: index.php'); exit;
         }
@@ -36,6 +37,7 @@ if (!current_user()) {
         if ($u && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
             session_regenerate_id(true);
             $_SESSION['username'] = $u['username'];
+            ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
             audit('login');
             header('Location: index.php'); exit;
         }

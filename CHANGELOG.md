@@ -6,6 +6,29 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.8.0] - 2026-06-20
+
+### Aggiunto
+- **Isolamento dei file per-utente**: ogni utente lavora nella propria cartella,
+  identificata dal prefisso `<username>/` nello storage (sia in locale sia su
+  S3/Wasabi). **Isolamento totale**: anche l'amministratore è confinato alla
+  propria cartella e **non vede i file degli altri utenti** (l'admin gestisce gli
+  account, non i file altrui). Massima privacy tra utenti, sempre senza database.
+- La home di ogni utente viene creata automaticamente al login/creazione account
+  (su S3 con un marker di cartella) e l'elenco della radice si auto-ripara.
+
+### Modificato
+- Tutti gli handler delle API e le condivisioni traducono i percorsi **relativi**
+  del client in percorsi **assoluti** (con prefisso utente) prima di toccare lo
+  storage: il client continua a vedere la radice come `/`, senza prefisso. Le
+  condivisioni via link memorizzano il percorso completo del proprietario, così
+  l'accesso pubblico funziona senza sessione.
+
+### Sicurezza
+- Punto di applicazione unico (`user_path()`/`user_home()`, fail-closed): un utente
+  non può uscire dalla propria sandbox né accedere ai file di un altro utente.
+  Aggiunti test di isolamento tra due utenti (72 test API + 27 test E2E S3).
+
 ## [0.7.0] - 2026-06-20
 
 ### Aggiunto
@@ -130,6 +153,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.8.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.8.0
 [0.7.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.7.0
 [0.6.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.6.0
 [0.5.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.5.0

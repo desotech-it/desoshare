@@ -40,8 +40,13 @@ switch ($action) {
 // ─── File: elenco ────────────────────────────────────────────────────────────
 function action_list(): void {
     require_login();
-    $dir = clean_logical($_GET['path'] ?? '');
-    if (storage()->typeOf($dir) !== 'dir') json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
+    $rel = clean_logical($_GET['path'] ?? '');
+    $dir = logical_join(user_home(), $rel);            // percorso assoluto nello storage (sandbox utente)
+    if ($rel === '') {                                  // la home dell'utente esiste sempre (auto-riparazione)
+        if (storage()->typeOf($dir) !== 'dir') storage()->makeDir($dir);
+    } elseif (storage()->typeOf($dir) !== 'dir') {
+        json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
+    }
     $items = [];
     foreach (storage()->listDir($dir) as $e) {
         $items[] = [
@@ -55,7 +60,7 @@ function action_list(): void {
     usort($items, fn($a, $b) =>
         $a['type'] === $b['type'] ? strcasecmp($a['name'], $b['name']) : ($a['type'] === 'dir' ? -1 : 1));
     json_out([
-        'ok' => true, 'path' => '/' . $dir, 'items' => $items,
+        'ok' => true, 'path' => '/' . $rel, 'items' => $items,   // path RELATIVO (senza prefisso utente)
         'can_write' => can_write(), 'is_admin' => is_admin(),
     ]);
 }
@@ -63,7 +68,7 @@ function action_list(): void {
 // ─── File: crea cartella ─────────────────────────────────────────────────────
 function action_mkdir(): void {
     require_write();
-    $dir = clean_logical($_POST['path'] ?? '');
+    $dir = user_path($_POST['path'] ?? '');
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
@@ -75,7 +80,7 @@ function action_mkdir(): void {
 // ─── File: crea file ─────────────────────────────────────────────────────────
 function action_newfile(): void {
     require_write();
-    $dir = clean_logical($_POST['path'] ?? '');
+    $dir = user_path($_POST['path'] ?? '');
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
@@ -89,7 +94,7 @@ function action_newfile(): void {
 // ─── File: upload (multiplo, tutti i tipi) ───────────────────────────────────
 function action_upload(): void {
     require_write();
-    $dir = clean_logical($_POST['path'] ?? '');
+    $dir = user_path($_POST['path'] ?? '');
     if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
     $f = $_FILES['files'];
     $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
@@ -112,8 +117,9 @@ function action_delete(): void {
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
     $deleted = 0; $errors = [];
     foreach ($paths as $rel) {
-        $p = clean_logical((string) $rel);
-        if ($p === '') { $errors[] = 'la radice non è eliminabile'; continue; }
+        $clean = clean_logical((string) $rel);
+        if ($clean === '') { $errors[] = 'la radice non è eliminabile'; continue; }
+        $p = logical_join(user_home(), $clean);
         if (storage()->typeOf($p) === false) { $errors[] = "$rel: non trovato"; continue; }
         if (storage()->deletePath($p, true)) $deleted++; else $errors[] = "$rel: impossibile eliminare";
     }
@@ -123,10 +129,11 @@ function action_delete(): void {
 // ─── File: rinomina ──────────────────────────────────────────────────────────
 function action_rename(): void {
     require_write();
-    $from = clean_logical($_POST['from'] ?? '');
+    $fromRel = clean_logical($_POST['from'] ?? '');
     $newName = trim($_POST['to'] ?? '');
     if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
-    if ($from === '') json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
+    if ($fromRel === '') json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
+    $from = logical_join(user_home(), $fromRel);
     if (storage()->typeOf($from) === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
     $target = logical_join($parent, $newName);
@@ -138,7 +145,7 @@ function action_rename(): void {
 // ─── File: download singolo (con supporto HTTP Range / resume) ───────────────
 function action_download(): void {
     require_login();
-    $p = clean_logical($_GET['path'] ?? '');
+    $p = user_path($_GET['path'] ?? '');
     if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     $name = basename($p);
     $url = storage()->downloadRedirect($p, $name);   // S3 → presigned diretto
@@ -215,7 +222,7 @@ function action_upload_finish(): void {
         json_out(['ok' => false, 'error' => 'Trasferimento incompleto', 'have' => count($m['parts']), 'expected' => $expected], 409);
     }
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
-    $dest = logical_join(clean_logical($_POST['path'] ?? ''), $name);
+    $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
     if (!storage()->putFromLocal($part, $dest)) {
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
@@ -259,8 +266,8 @@ function action_zip(): void {
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
     if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
 
-    $logical = array_map(fn($rel) => clean_logical((string) $rel), $paths);
-    $tmp = zip_logical($logical);   // zip via storage (Local o S3)
+    $logical = array_map(fn($rel) => user_path((string) $rel), $paths);
+    $tmp = zip_logical($logical);   // zip via storage (Local o S3), confinato alla home utente
     $dlname = (count($logical) === 1) ? (basename($logical[0]) ?: 'cartella') . '.zip' : 'share-download.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
@@ -323,6 +330,7 @@ function action_user_save(): void {
         audit('user_create', $username . ' (' . $role . '/' . $permission . ')');
     }
     users_save($data);
+    ensure_user_home($username);   // predispone la cartella (sandbox) dell'utente
     json_out(['ok' => true]);
 }
 
@@ -431,7 +439,7 @@ function action_audit_list(): void {
 // ─── Condivisioni: crea link a scadenza ──────────────────────────────────────
 function action_share_create(): void {
     $u = require_login();
-    $p = clean_logical($_POST['path'] ?? '');           // percorso logico
+    $p = user_path($_POST['path'] ?? '');               // percorso assoluto (con prefisso utente)
     $kind = storage()->typeOf($p);                      // 'file' | 'dir' | false
     if ($kind === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $ttl = (int) ($_POST['ttl'] ?? 0);
@@ -470,7 +478,7 @@ function action_share_list(): void {
         if (!$admin && ($s['created_by'] ?? '') !== $u['username']) continue;
         $out[] = [
             'token'      => $s['token'],
-            'path'       => $s['path'],
+            'path'       => user_strip($s['path'], $s['created_by'] ?? ''),   // relativo (niente prefisso)
             'name'       => $s['name'] ?? basename($s['path']),
             'type'       => $s['type'] ?? 'file',
             'mode'       => $s['mode'] ?? 'view',
@@ -513,7 +521,7 @@ function note_context(bool $checkCsrf): array {
     }
     $u = require_login();
     if ($checkCsrf) csrf_check();
-    return ['logical' => clean_logical($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username']];
+    return ['logical' => user_path($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username']];
 }
 
 // ─── Note: apertura nell'editor (sessione o link condiviso) ──────────────────

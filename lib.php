@@ -124,6 +124,40 @@ function clean_logical(string $rel): string {
 }
 function logical_join(string $dir, string $name): string { return $dir === '' ? $name : $dir . '/' . $name; }
 
+// ─── Isolamento per-utente: ogni utente lavora sotto il prefisso <username>/ ──
+// Prefisso logico (sandbox) di un utente. Lo username è già validato
+// [A-Za-z0-9._-]{3,32}, quindi è un singolo segmento sicuro; togliamo comunque
+// ogni separatore per difesa in profondità.
+function user_prefix(string $username): string {
+    return str_replace(['/', '\\', "\0"], '', $username);
+}
+// Home (prefisso) dell'utente di sessione. Fallisce in modo chiuso: senza un
+// utente valido NON si ricade mai sulla radice condivisa.
+function user_home(): string {
+    $u = current_user();
+    if (!$u) json_out(['ok' => false, 'error' => 'Non autenticato'], 401);
+    $p = user_prefix((string) ($u['username'] ?? ''));
+    if ($p === '') json_out(['ok' => false, 'error' => 'Utente non valido'], 400);
+    return $p;
+}
+// Percorso logico ASSOLUTO (con prefisso utente) da un percorso RELATIVO del client.
+function user_path(string $rel): string {
+    return logical_join(user_home(), clean_logical($rel));
+}
+// Rimuove il prefisso di un utente da un percorso assoluto → percorso relativo per il client.
+function user_strip(string $abs, string $username): string {
+    $pre = user_prefix($username);
+    if ($abs === $pre) return '';
+    if (str_starts_with($abs, $pre . '/')) return substr($abs, strlen($pre) + 1);
+    return $abs;
+}
+// Garantisce che la "home" dell'utente esista nello storage (su S3 le cartelle
+// vuote non esistono: serve un marker di cartella).
+function ensure_user_home(string $username): void {
+    $p = user_prefix($username);
+    if ($p !== '' && storage()->typeOf($p) !== 'dir') storage()->makeDir($p);
+}
+
 // ─── Utilità ─────────────────────────────────────────────────────────────────
 function human_size(int $b): string {
     if ($b < 1024) return $b . ' B';
