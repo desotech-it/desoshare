@@ -10,9 +10,10 @@ DirectoryIndex index.php
   Require all denied
 </FilesMatch>
 
-# Link di condivisione "belli": /c/<slug> → share.php?t=<slug>
+# Link di condivisione "belli": /d/<slug> → share.php?t=<slug>
 # Namespace dedicato: non oscura file o cartelle reali (che stanno nella root).
+# /c/ è mantenuto come alias legacy (link generati prima del passaggio a /d/).
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteRule ^c/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$ share.php?t=$1 [L,QSA]
+  RewriteRule ^[dc]/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$ share.php?t=$1 [L,QSA]
 </IfModule>

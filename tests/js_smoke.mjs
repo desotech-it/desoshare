@@ -524,7 +524,7 @@ async function runSettingsSave() {
 // Dialog "Condividi": campo slug precompilato col nome file, invio dello slug,
 // e URL personalizzato (/c/<slug>) mostrato nel risultato.
 async function runShareCreate() {
-  console.log('\nCaso: dialog Condividi — slug personalizzato (/c/<slug>)');
+  console.log('\nCaso: dialog Condividi — slug personalizzato (/d/<slug>)');
   const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://share.deso.tech/' });
   const win = dom.window;
   win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
@@ -537,7 +537,7 @@ async function runShareCreate() {
       lastPost = { action, data };
     }
     const body = action === 'share_create'
-      ? { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/c/mia-foto', expires_at: exp }
+      ? { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/d/mia-foto', expires_at: exp }
       : listResponse;
     return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   };
@@ -552,7 +552,7 @@ async function runShareCreate() {
   const slugEl = doc.getElementById('sh_slug');
   (slugEl && slugEl.value === 'foto') ? ok('campo slug precompilato col nome file (foto)') : bad(`slug precompilato errato (${slugEl && slugEl.value})`);
   const hint = doc.getElementById('sh_slughint');
-  (hint && /\/c\/foto$/.test(hint.textContent)) ? ok('anteprima URL live (/c/foto)') : bad(`anteprima errata (${hint && hint.textContent})`);
+  (hint && /\/d\/foto$/.test(hint.textContent)) ? ok('anteprima URL live (/d/foto)') : bad(`anteprima errata (${hint && hint.textContent})`);
   slugEl.value = 'mia-foto'; slugEl.oninput();
   doc.getElementById('sh_create').onclick();
   await new Promise(r => setTimeout(r, 20));
@@ -560,7 +560,7 @@ async function runShareCreate() {
   (lastPost && lastPost.action === 'share_create' && lastPost.data.slug === 'mia-foto')
     ? ok('create invia lo slug scelto (mia-foto)') : bad(`slug non inviato (${JSON.stringify(lastPost && lastPost.data)})`);
   const urlEl = doc.getElementById('sh_url');
-  (urlEl && /\/c\/mia-foto$/.test(urlEl.value)) ? ok('risultato mostra URL personalizzato /c/mia-foto') : bad(`URL risultato errato (${urlEl && urlEl.value})`);
+  (urlEl && /\/d\/mia-foto$/.test(urlEl.value)) ? ok('risultato mostra URL personalizzato /d/mia-foto') : bad(`URL risultato errato (${urlEl && urlEl.value})`);
 }
 
 console.log('=== JS smoke test (jsdom) ===');

@@ -23,7 +23,7 @@ export function shareDialog(rel, name) {
     </select>` : ''}
     <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
     <div style="display:flex;align-items:center;gap:3px;font-size:13px">
-      <span class="muted" style="white-space:nowrap">/c/</span>
+      <span class="muted" style="white-space:nowrap">/d/</span>
       <input type="text" id="sh_slug" placeholder="link-casuale" value="${esc(defSlug)}" style="flex:1" autocomplete="off">
     </div>
     <span id="sh_slughint" class="muted" style="font-size:11px"></span>
@@ -34,7 +34,7 @@ export function shareDialog(rel, name) {
   const updHint = () => {
     hintEl.style.color = '';
     const sl = slugify(slugEl.value);
-    hintEl.textContent = sl ? '→ ' + base + '/c/' + sl : 'Vuoto = link casuale non indovinabile.';
+    hintEl.textContent = sl ? '→ ' + base + '/d/' + sl : 'Vuoto = link casuale non indovinabile.';
   };
   slugEl.oninput = updHint; updHint();
   $('#sh_create', modalBg).onclick = async () => {

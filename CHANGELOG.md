@@ -6,6 +6,14 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.20.1] - 2026-06-21
+
+### Modificato
+- Prefisso dei link di condivisione personalizzati da `/c/` a **`/d/`** (desotech):
+  `https://share.deso.tech/d/relazione-2026`. La forma `/c/` resta valida come
+  **alias legacy** (un'unica RewriteRule `^[dc]/…`), così i link eventualmente già
+  generati continuano a funzionare. Aggiornati `share_url()`, il dialog e i test.
+
 ## [0.20.0] - 2026-06-21
 
 ### Aggiunto

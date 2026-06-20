@@ -75,7 +75,7 @@ function share_url(array $share): string {
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $dir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
     $slug = $share['slug'] ?? '';
-    if ($slug !== '') return "$scheme://$host$dir/c/" . rawurlencode($slug);
+    if ($slug !== '') return "$scheme://$host$dir/d/" . rawurlencode($slug);
     return "$scheme://$host$dir/share.php?t=" . ($share['token'] ?? '');
 }
 
