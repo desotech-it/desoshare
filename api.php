@@ -12,8 +12,11 @@ switch ($action) {
     case 'zip':         action_zip();         break;
     case 'users_list':  action_users_list();  break;
     case 'upload_status': action_upload_status(); break;
+    case 'share_list':  action_share_list();   break;
 
     // Modifiche (POST + CSRF)
+    case 'share_create': csrf_check(); action_share_create(); break;
+    case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'upload_chunk':  csrf_check(); action_upload_chunk();  break;
     case 'upload_finish': csrf_check(); action_upload_finish(); break;
     case 'mkdir':       csrf_check(); action_mkdir();       break;
@@ -137,58 +140,7 @@ function action_download(): void {
     stream_file($p, basename($p));
 }
 
-// Streaming efficiente con supporto Range: abilita ripresa e download segmentato.
-function stream_file(string $path, string $name): void {
-    $size = filesize($path);
-    $fp = fopen($path, 'rb');
-    if ($fp === false) json_out(['ok' => false, 'error' => 'Impossibile aprire il file'], 500);
-
-    while (ob_get_level()) ob_end_clean();
-    @set_time_limit(0);
-    @ini_set('zlib.output_compression', '0');
-
-    $start = 0; $end = $size - 1; $partial = false;
-    $range = $_SERVER['HTTP_RANGE'] ?? '';
-    if ($range !== '' && preg_match('/bytes=(\d*)-(\d*)/', $range, $m)) {
-        if ($m[1] === '' && $m[2] !== '') {           // bytes=-N (ultimi N byte)
-            $start = max(0, $size - (int) $m[2]);
-        } else {
-            $start = (int) $m[1];
-            if ($m[2] !== '') $end = min((int) $m[2], $size - 1);
-        }
-        if ($start > $end || $start >= $size) {
-            http_response_code(416);
-            header("Content-Range: bytes */$size");
-            fclose($fp); exit;
-        }
-        $partial = true;
-    }
-    $length = $end - $start + 1;
-
-    header('Accept-Ranges: bytes');
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
-    header('Content-Length: ' . $length);
-    header('Cache-Control: no-store');
-    if ($partial) {
-        http_response_code(206);
-        header("Content-Range: bytes $start-$end/$size");
-    }
-
-    fseek($fp, $start);
-    $buffer = 1024 * 256;
-    $remaining = $length;
-    while ($remaining > 0 && !feof($fp) && !connection_aborted()) {
-        $read = $remaining > $buffer ? $buffer : $remaining;
-        $data = fread($fp, $read);
-        if ($data === false) break;
-        echo $data;
-        flush();
-        $remaining -= strlen($data);
-    }
-    fclose($fp);
-    exit;
-}
+// stream_file() è definita in lib.php (riusata anche dalla pagina pubblica share.php).
 
 // ─── Upload a chunk con ripresa ──────────────────────────────────────────────
 function upload_dir(): string {
@@ -307,20 +259,9 @@ function action_zip(): void {
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
     if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
 
-    if (!class_exists('ZipArchive')) json_out(['ok' => false, 'error' => 'ZipArchive non disponibile sul server'], 500);
-    $tmp = tempnam(sys_get_temp_dir(), 'shr');
-    $zip = new ZipArchive();
-    if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) json_out(['ok' => false, 'error' => 'Impossibile creare lo ZIP'], 500);
-
-    foreach ($paths as $rel) {
-        $abs = resolve_path((string) $rel, true);
-        $base = basename($abs);
-        if (is_dir($abs)) zip_add_dir($zip, $abs, $base);
-        else $zip->addFile($abs, $base);
-    }
-    $zip->close();
-
-    $dlname = (count($paths) === 1) ? basename(resolve_path((string) $paths[0])) . '.zip' : 'share-download.zip';
+    $absPaths = array_map(fn($rel) => resolve_path((string) $rel, true), $paths);
+    $tmp = make_zip($absPaths);   // make_zip()/zip_add_dir() sono in lib.php
+    $dlname = (count($paths) === 1) ? basename($absPaths[0]) . '.zip' : 'share-download.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . addslashes($dlname) . '"');
@@ -329,15 +270,6 @@ function action_zip(): void {
     readfile($tmp);
     @unlink($tmp);
     exit;
-}
-function zip_add_dir(ZipArchive $zip, string $dir, string $base): void {
-    $zip->addEmptyDir($base);
-    foreach (scandir($dir) as $n) {
-        if ($n === '.' || $n === '..') continue;
-        $p = $dir . '/' . $n;
-        if (is_dir($p)) zip_add_dir($zip, $p, $base . '/' . $n);
-        else $zip->addFile($p, $base . '/' . $n);
-    }
 }
 
 // ─── Utenti: elenco (admin) ──────────────────────────────────────────────────
@@ -401,4 +333,66 @@ function action_user_delete(): void {
     }
     users_save($data);
     json_out(['ok' => true, 'deleted' => $before - count($data['users'])]);
+}
+
+// ─── Condivisioni: crea link a scadenza ──────────────────────────────────────
+function action_share_create(): void {
+    $u = require_login();
+    $abs = resolve_path($_POST['path'] ?? '', true);   // valida ed esiste, dentro storage
+    $ttl = (int) ($_POST['ttl'] ?? 0);
+    $allowed = [3600, 86400, 604800, 2592000];          // 1h, 24h, 7g, 30g
+    if (!in_array($ttl, $allowed, true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
+
+    $d = shares_load();
+    $token = gen_share_token();
+    $share = [
+        'token'      => $token,
+        'path'       => ltrim(rel_display($abs), '/'),
+        'type'       => is_dir($abs) ? 'dir' : 'file',
+        'name'       => basename($abs) ?: '/',
+        'created_at' => time(),
+        'expires_at' => time() + $ttl,
+        'created_by' => $u['username'],
+    ];
+    $d['shares'][] = $share;
+    shares_save($d);
+    json_out(['ok' => true, 'token' => $token, 'url' => share_url($token), 'expires_at' => $share['expires_at']]);
+}
+
+// ─── Condivisioni: elenco attive (proprie; l'admin le vede tutte) ────────────
+function action_share_list(): void {
+    $u = require_login();
+    $admin = is_admin();
+    $d = shares_prune();
+    $out = [];
+    foreach ($d['shares'] as $s) {
+        if (!$admin && ($s['created_by'] ?? '') !== $u['username']) continue;
+        $out[] = [
+            'token'      => $s['token'],
+            'path'       => $s['path'],
+            'name'       => $s['name'] ?? basename($s['path']),
+            'type'       => $s['type'] ?? 'file',
+            'expires_at' => $s['expires_at'],
+            'created_by' => $s['created_by'] ?? '',
+            'url'        => share_url($s['token']),
+        ];
+    }
+    usort($out, fn($a, $b) => $a['expires_at'] <=> $b['expires_at']);
+    json_out(['ok' => true, 'shares' => $out, 'now' => time(), 'is_admin' => $admin]);
+}
+
+// ─── Condivisioni: revoca ────────────────────────────────────────────────────
+function action_share_revoke(): void {
+    $u = require_login();
+    $token = $_POST['token'] ?? '';
+    $admin = is_admin();
+    $d = shares_load();
+    $before = count($d['shares']);
+    $d['shares'] = array_values(array_filter($d['shares'], function ($s) use ($token, $u, $admin) {
+        if (($s['token'] ?? '') !== $token) return true;                  // non è questo: tieni
+        return !($admin || ($s['created_by'] ?? '') === $u['username']);  // tuo o admin → rimuovi
+    }));
+    if (count($d['shares']) === $before) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
+    shares_save($d);
+    json_out(['ok' => true]);
 }

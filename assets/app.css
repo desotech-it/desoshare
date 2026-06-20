@@ -152,3 +152,19 @@ body.dragging .dropzone-hint { display: flex; }
   padding: 10px 16px; border-radius: 8px; font-size: 13px; z-index: 200; opacity: 0; transition: opacity .2s; }
 .toast.show { opacity: 1; }
 .toast.err { background: var(--danger); }
+
+/* ─── Pagina pubblica di condivisione ───────────────────────────────────── */
+.share-wrap { max-width: 760px; margin: 0 auto; padding: 0 16px 50px; }
+.share-exp { font-size: 13px; color: var(--muted); text-align: center; margin: 6px 0 14px; }
+.share-row { display: grid; grid-template-columns: 1fr 110px 40px; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.share-row:last-child { border-bottom: none; }
+.share-row .name { display: flex; align-items: center; gap: 9px; min-width: 0; text-decoration: none; color: var(--text); }
+.share-row .name .ti { font-size: 19px; flex: none; }
+.share-row .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-row a.name.clickable:hover .label { color: var(--primary); text-decoration: underline; }
+.share-row a.dl { color: var(--tertiary); text-align: right; }
+.share-row a.dl:hover { color: var(--primary); }
+.share-brand { text-align: center; color: var(--tertiary); font-size: 12px; margin-top: 22px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; }
+.share-brand img { height: 18px; }

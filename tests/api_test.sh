@@ -86,6 +86,28 @@ RCSRF=$(curl -s -b $RJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | hea
 has "sola-lettura può leggere" "$(curl -s -b $RJAR "$B/api.php?action=list&path=")" '"ok":true'
 has "sola-lettura NON può scrivere (403)" "$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path= --data-urlencode name=vietato "$B/api.php?action=mkdir")" 'permessi di lettura'
 
+echo "=== Condivisioni (link a scadenza) ==="
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode name=inside.txt --data-urlencode content=ciao "$B/api.php?action=newfile" >/dev/null
+SR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 "$B/api.php?action=share_create")
+has "share_create di un file" "$SR" '"ok":true'
+TOK=$(printf '%s' "$SR" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+[ -n "$TOK" ] && ok "token generato" || no "token assente"
+has "share_list contiene il token" "$(curl -s -b $JAR "$B/api.php?action=share_list")" "$TOK"
+curl -s "$B/share.php?t=$TOK&dl=1" -o "$SBX/pub.bin"   # accesso PUBBLICO senza cookie
+[ "$MF" = "$(md5of "$SBX/pub.bin")" ] && ok "download pubblico integro (md5)" || no "download pubblico integro (md5)"
+has "pagina pubblica del file" "$(curl -s "$B/share.php?t=$TOK")" 'Scarica'
+has "token inesistente → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=aaaabbbbccccdddd")" '404'
+has "durata non valida rifiutata" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=12345 "$B/api.php?action=share_create")" 'Durata non valida'
+SRF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 "$B/api.php?action=share_create")
+has "share_create di una cartella" "$SRF" '"ok":true'
+TOKF=$(printf '%s' "$SRF" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "pagina pubblica cartella elenca i file" "$(curl -s "$B/share.php?t=$TOKF")" 'inside.txt'
+has "traversal nel link bloccato (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TOKF&p=../../../../etc/passwd&dl=1")" '404'
+AD="$SBX/appdata" php -r '$f=getenv("AD")."/shares.json"; $d=is_file($f)?json_decode(file_get_contents($f),true):["shares"=>[]]; $d["shares"][]=["token"=>"dead00000000beef","path"=>"up.bin","type"=>"file","name"=>"up.bin","created_at"=>1,"expires_at"=>1,"created_by"=>"admin"]; file_put_contents($f,json_encode($d));' 2>/dev/null
+has "token scaduto → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=dead00000000beef&dl=1")" '404'
+has "revoca condivisione" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$TOK "$B/api.php?action=share_revoke")" '"ok":true'
+has "dopo revoca non accessibile (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TOK&dl=1")" '404'
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'
 

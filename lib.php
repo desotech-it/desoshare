@@ -132,3 +132,132 @@ function rrmdir(string $dir): void {
     @rmdir($dir);
 }
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
+// ─── Streaming file con supporto HTTP Range (riusato da api.php e share.php) ──
+function stream_file(string $path, string $name): void {
+    $size = filesize($path);
+    $fp = fopen($path, 'rb');
+    if ($fp === false) { http_response_code(500); echo 'Impossibile aprire il file'; exit; }
+
+    while (ob_get_level()) ob_end_clean();
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+
+    $start = 0; $end = $size - 1; $partial = false;
+    $range = $_SERVER['HTTP_RANGE'] ?? '';
+    if ($range !== '' && preg_match('/bytes=(\d*)-(\d*)/', $range, $m)) {
+        if ($m[1] === '' && $m[2] !== '') {
+            $start = max(0, $size - (int) $m[2]);
+        } else {
+            $start = (int) $m[1];
+            if ($m[2] !== '') $end = min((int) $m[2], $size - 1);
+        }
+        if ($start > $end || $start >= $size) {
+            http_response_code(416);
+            header("Content-Range: bytes */$size");
+            fclose($fp); exit;
+        }
+        $partial = true;
+    }
+    $length = $end - $start + 1;
+
+    header('Accept-Ranges: bytes');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
+    header('Content-Length: ' . $length);
+    header('Cache-Control: no-store');
+    if ($partial) {
+        http_response_code(206);
+        header("Content-Range: bytes $start-$end/$size");
+    }
+
+    fseek($fp, $start);
+    $buffer = 1024 * 256;
+    $remaining = $length;
+    while ($remaining > 0 && !feof($fp) && !connection_aborted()) {
+        $read = $remaining > $buffer ? $buffer : $remaining;
+        $data = fread($fp, $read);
+        if ($data === false) break;
+        echo $data;
+        flush();
+        $remaining -= strlen($data);
+    }
+    fclose($fp);
+    exit;
+}
+function zip_add_dir(ZipArchive $zip, string $dir, string $base): void {
+    $zip->addEmptyDir($base);
+    foreach (scandir($dir) as $n) {
+        if ($n === '.' || $n === '..') continue;
+        $p = $dir . '/' . $n;
+        if (is_dir($p)) zip_add_dir($zip, $p, $base . '/' . $n);
+        else $zip->addFile($p, $base . '/' . $n);
+    }
+}
+// Crea un archivio ZIP temporaneo dai percorsi assoluti dati; ritorna il path del tmp.
+function make_zip(array $absPaths): string {
+    if (!class_exists('ZipArchive')) { http_response_code(500); echo 'ZipArchive non disponibile'; exit; }
+    $tmp = tempnam(sys_get_temp_dir(), 'shr');
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) { http_response_code(500); echo 'Impossibile creare lo ZIP'; exit; }
+    foreach ($absPaths as $abs) {
+        $base = basename($abs);
+        if (is_dir($abs)) zip_add_dir($zip, $abs, $base);
+        else $zip->addFile($abs, $base);
+    }
+    $zip->close();
+    return $tmp;
+}
+
+// ─── Condivisioni con link a scadenza ────────────────────────────────────────
+function shares_file(): string { return DATA_DIR . '/shares.json'; }
+function shares_load(): array {
+    $f = shares_file();
+    $j = is_file($f) ? json_decode((string) file_get_contents($f), true) : null;
+    return (is_array($j) && isset($j['shares'])) ? $j : ['shares' => []];
+}
+function shares_save(array $d): void {
+    file_put_contents(shares_file(), json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    @chmod(shares_file(), 0600);
+}
+function gen_share_token(): string { return bin2hex(random_bytes(16)); }
+
+// Percorso assoluto (dentro storage) della radice di una condivisione.
+function share_base(array $s): string {
+    $root = storage_real();
+    $rel = ltrim(str_replace('\\', '/', $s['path'] ?? ''), '/');
+    return normalize_path($root . '/' . $rel);
+}
+// Rimuove le condivisioni scadute o il cui elemento non esiste più.
+function shares_prune(): array {
+    $d = shares_load();
+    $now = time();
+    $keep = array_values(array_filter($d['shares'], fn($s) => ($s['expires_at'] ?? 0) > $now && file_exists(share_base($s))));
+    if (count($keep) !== count($d['shares'])) { $d['shares'] = $keep; shares_save($d); }
+    return $d;
+}
+// Trova una condivisione valida (esistente e non scaduta) dal token.
+function share_find(string $token): ?array {
+    if (!preg_match('/^[a-f0-9]{16,64}$/', $token)) return null;
+    foreach (shares_load()['shares'] as $s) {
+        if (($s['token'] ?? '') === $token) {
+            return (($s['expires_at'] ?? 0) > time()) ? $s : null;
+        }
+    }
+    return null;
+}
+// Risolve un sotto-percorso dentro una condivisione, confinato alla sua radice.
+function share_resolve(array $s, string $p): ?string {
+    $base = share_base($s);
+    $p = ltrim(str_replace('\\', '/', $p), '/');
+    $full = normalize_path($base . '/' . $p);
+    if ($full !== $base && strncmp($full, $base . '/', strlen($base) + 1) !== 0) return null;
+    return file_exists($full) ? $full : null;
+}
+// URL pubblico assoluto della pagina di condivisione per un token.
+function share_url(string $token): string {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $dir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    return "$scheme://$host$dir/share.php?t=$token";
+}

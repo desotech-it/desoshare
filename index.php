@@ -118,6 +118,7 @@ function render_app(array $user): void {
             <span class="badge <?= $canWrite ? 'badge-w' : 'badge-r' ?>">
               <?= $canWrite ? 'lettura e scrittura' : 'sola lettura' ?></span>
           </span>
+          <button class="btn" id="btnShares"><i class="ti ti-share"></i> Condivisioni</button>
           <?php if ($isAdmin): ?>
           <button class="btn" id="btnUsers"><i class="ti ti-users-group"></i> Utenti</button>
           <?php endif; ?>

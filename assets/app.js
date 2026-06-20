@@ -7,6 +7,7 @@
   let cwd = '';            // percorso corrente (relativo alla radice)
   let items = [];          // elementi della cartella corrente
   const selected = new Set();
+  let shareTimer = null;   // intervallo del conto alla rovescia nel pannello condivisioni
 
   const $ = (s, r = document) => r.querySelector(s);
   const rowsEl = $('#rows'), emptyEl = $('#empty'), crumbsEl = $('#crumbs');
@@ -97,6 +98,7 @@
         <div class="size">${isDir ? '—' : esc(it.size_h)}</div>
         <div class="date">${esc(it.mtime)}</div>
         <div class="acts">
+          <i class="ti ti-share" title="Condividi"></i>
           <i class="ti ti-download" title="Scarica"></i>
           ${CAN_WRITE ? '<i class="ti ti-pencil" title="Rinomina"></i><i class="ti ti-trash" title="Elimina"></i>' : ''}
         </div>`;
@@ -111,6 +113,7 @@
       row.querySelector('.ti-download').onclick = () => {
         if (isDir) downloadZip([rel]); else window.location = 'api.php?action=download&path=' + encodeURIComponent(rel);
       };
+      row.querySelector('.ti-share').onclick = () => shareDialog(rel, it.name);
       if (CAN_WRITE) {
         row.querySelector('.ti-pencil').onclick = () => renameDialog(it.name, rel);
         row.querySelector('.ti-trash').onclick = () => deleteDialog([rel], it.name);
@@ -140,7 +143,7 @@
     modalBg.onclick = e => { if (e.target === modalBg) closeModal(); };
     const first = modalBg.querySelector('input,textarea,select'); if (first) first.focus();
   }
-  function closeModal() { modalBg.hidden = true; modalBg.innerHTML = ''; }
+  function closeModal() { if (shareTimer) { clearInterval(shareTimer); shareTimer = null; } modalBg.hidden = true; modalBg.innerHTML = ''; }
   window.closeModal = closeModal;
 
   function promptDialog(title, icon, label, placeholder, onok, okText = 'Crea') {
@@ -380,6 +383,70 @@
     };
   }
 
+  // ─── Condivisioni (link a scadenza) ────────────────────────────────────
+  function copyText(t) {
+    try { navigator.clipboard.writeText(t); }
+    catch (_) { const i = document.createElement('textarea'); i.value = t; document.body.appendChild(i); i.select(); try { document.execCommand('copy'); } catch (e) {} i.remove(); }
+  }
+  function fmtDuration(s) {
+    s = Math.floor(s);
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    if (d > 0) return d + 'g ' + h + 'h'; if (h > 0) return h + 'h ' + m + 'm'; if (m > 0) return m + 'm ' + x + 's'; return x + 's';
+  }
+  function shareDialog(rel, name) {
+    openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
+      <label>Durata del link</label>
+      <select id="sh_ttl">
+        <option value="3600">1 ora</option>
+        <option value="86400" selected>24 ore</option>
+        <option value="604800">7 giorni</option>
+        <option value="2592000">30 giorni</option>
+      </select>
+      <div id="sh_result" style="margin-top:12px"></div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button>
+        <button class="btn btn-primary" id="sh_create"><i class="ti ti-link"></i> Crea link</button></div></div>`);
+    $('#sh_create', modalBg).onclick = async () => {
+      const ttl = $('#sh_ttl', modalBg).value;
+      const r = await apiPost('share_create', { path: rel, ttl });
+      if (!r.ok) { toast(r.error || 'Errore', true); return; }
+      const when = new Date(r.expires_at * 1000).toLocaleString('it-IT');
+      $('#sh_result', modalBg).innerHTML = `<label>Link pubblico — scade il ${esc(when)}</label>
+        <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
+        <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
+      const inp = $('#sh_url', modalBg); inp.focus(); inp.select();
+      $('#sh_copy', modalBg).onclick = () => { copyText(r.url); toast('Link copiato'); };
+    };
+  }
+  async function sharesPanel() {
+    const r = await apiGet('share_list');
+    if (!r.ok) { toast(r.error || 'Errore', true); return; }
+    const body = r.shares.length ? `<table class="utable"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${
+      r.shares.map(s => `<tr data-exp="${s.expires_at}">
+        <td><i class="ti ${s.type === 'dir' ? 'ti-folder' : 'ti-file'}"></i> ${esc(s.name)}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ''}</td>
+        <td class="sh-rem" style="white-space:nowrap"></td>
+        <td class="uact" style="white-space:nowrap">
+          <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
+          <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join('')
+      }</tbody></table>` : '<p class="muted">Nessuna condivisione attiva.</p>';
+    openModal(`<div class="modal wide"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    modalBg.querySelectorAll('[data-url]').forEach(b => b.onclick = () => { copyText(b.dataset.url); toast('Link copiato'); });
+    modalBg.querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => {
+      if (!confirm('Revocare questa condivisione? Il link smetterà di funzionare.')) return;
+      const x = await apiPost('share_revoke', { token: b.dataset.revoke });
+      if (x.ok) { toast('Condivisione revocata'); sharesPanel(); } else toast(x.error || 'Errore', true);
+    });
+    if (shareTimer) clearInterval(shareTimer);
+    const tick = () => {
+      modalBg.querySelectorAll('tr[data-exp]').forEach(tr => {
+        const rem = tr.dataset.exp - Date.now() / 1000;
+        const cell = tr.querySelector('.sh-rem');
+        if (rem <= 0) tr.remove(); else if (cell) cell.textContent = 'tra ' + fmtDuration(rem);
+      });
+    };
+    tick(); shareTimer = setInterval(tick, 1000);
+  }
+
   // ─── Wiring toolbar ────────────────────────────────────────────────────
   if (CAN_WRITE) {
     $('#btnUpload').onclick = () => $('#fileInput').click();
@@ -391,6 +458,7 @@
     $('#btnDelSel') && ($('#btnDelSel').onclick = () => deleteDialog([...selected]));
   }
   $('#btnRefresh').onclick = () => load(cwd);
+  $('#btnShares') && ($('#btnShares').onclick = sharesPanel);
   $('#btnZipCurrent').onclick = () => downloadZip(selected.size ? [...selected] : [cwd || '']);
   $('#btnZipSel').onclick = () => downloadZip([...selected]);
   if (IS_ADMIN) $('#btnUsers').onclick = usersPanel;

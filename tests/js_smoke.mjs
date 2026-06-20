@@ -24,7 +24,7 @@ function pageHtml(canWrite, isAdmin) {
   const delSel = canWrite ? `<button class="btn btn-danger" id="btnDelSel">Elimina</button>` : '';
   return `<!doctype html><html><body>
     <div id="app" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}">
-      <header class="topbar"><div class="brand">Share</div><div>${adminBtn}<a id="logout">Esci</a></div></header>
+      <header class="topbar"><div class="brand">Share</div><div><button id="btnShares">Condivisioni</button>${adminBtn}<a id="logout">Esci</a></div></header>
       <div class="toolbar">${w}
         <button class="btn" id="btnZipCurrent">Scarica ZIP</button>
         <div class="spacer"></div>
@@ -84,7 +84,7 @@ async function run(label, canWrite, isAdmin) {
   else bad(`listing NON popolato (righe trovate: ${rows.length}, attese: 2)`);
 
   // i pulsanti chiave hanno un handler?
-  const must = ['btnRefresh', 'btnZipCurrent'].concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder'] : []);
+  const must = ['btnRefresh', 'btnShares', 'btnZipCurrent'].concat(canWrite ? ['btnUpload', 'btnUploadFolder', 'btnNewFolder'] : []);
   for (const id of must) {
     const el = win.document.getElementById(id);
     if (el && typeof el.onclick === 'function') ok(`#${id} ha un handler onclick`);

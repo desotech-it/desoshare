@@ -6,6 +6,21 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.3.0] - 2026-06-20
+
+### Aggiunto
+- **Condivisione con link a scadenza**: da ogni file o cartella si genera un link
+  pubblico (`share.php?t=…`) valido per una durata scelta (1 ora, 24 ore, 7 o 30
+  giorni). Chi ha il link accede in **sola lettura** senza login: download del
+  file, oppure navigazione della cartella con download dei singoli file e
+  "Scarica tutto (ZIP)". Accesso confinato all'elemento condiviso.
+- Pannello **"Condivisioni"** con l'elenco dei link attivi, **conto alla rovescia**
+  in tempo reale, copia del link e revoca. Alla scadenza la condivisione decade.
+
+### Modificato
+- Funzioni di streaming (Range) e creazione ZIP spostate in `lib.php` e condivise
+  tra l'app autenticata e la pagina pubblica.
+
 ## [0.2.0] - 2026-06-20
 
 ### Aggiunto
@@ -36,5 +51,6 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.3.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.3.0
 [0.2.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.2.0
 [0.1.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.1.0
