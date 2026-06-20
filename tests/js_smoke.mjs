@@ -251,6 +251,10 @@ async function runOidcSettings() {
   disco && typeof disco.onclick === 'function' ? ok('bottone Discovery cablato') : bad('Discovery non cablato');
   const grp = doc.getElementById('oidc_admin_group');
   grp && grp.value === 'desoshare-admins' ? ok('Gruppo admin precompilato') : bad('Gruppo admin errato');
+  // i campi OIDC sono disposti su griglia a 2 colonne
+  const grid = doc.querySelector('#oidc_box .grid2');
+  (grid && grid.querySelector('#oidc_token') && grid.querySelector('#oidc_redirect'))
+    ? ok('campi OIDC in griglia a 2 colonne') : bad('campi OIDC non in griglia');
 }
 
 console.log('=== JS smoke test (jsdom) ===');

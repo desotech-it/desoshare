@@ -74,6 +74,11 @@ has "callback con state errato -> errore SSO" "$CB" 'SSO'
 has "callback con state errato -> resta sul login" "$CB" 'action=login'
 CE=$(curl -s -b $JAR "$B/index.php?action=oidc_callback&error=access_denied")
 has "callback con error del provider -> messaggio SSO" "$CE" 'SSO'
+# Redirect MALFORMATO (doppio '?' di Authentik): l'app deve recuperare i parametri
+D1=$(curl -s "$B/index.php?action=oidc_callback?error=access_denied&state=x")
+has "doppio-? con error -> azione riconosciuta e gestita" "$D1" 'accesso negato'
+D2=$(curl -s "$B/index.php?action=oidc_callback?code=ABC&state=staterrato")
+has "doppio-? con code -> recuperato (fallisce su stato, non sul router)" "$D2" 'stato non valido'
 
 # Un utente SSO NON può autenticarsi con la password locale.
 AD="$SBX/appdata" php -r '$f=getenv("AD")."/users.json"; $d=json_decode(file_get_contents($f),true); $d["users"][]=["username"=>"ssouser","sso"=>true,"role"=>"user","permission"=>"read"]; file_put_contents($f,json_encode($d));'

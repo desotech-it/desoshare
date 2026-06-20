@@ -4,6 +4,17 @@ require_once __DIR__ . '/oidc.php';
 boot();
 $action = $_REQUEST['action'] ?? '';
 
+// Robustezza redirect OIDC: alcuni IdP (Authentik) rimandano con un secondo '?'
+// invece di '&' quando il redirect_uri contiene già una query (?action=oidc_callback),
+// producendo "action=oidc_callback?code=..." → 'action' diventa spazzatura e i
+// parametri (code/error) finiscono incollati. Qui li recuperiamo e normalizziamo.
+if (is_string($action) && strpos($action, 'oidc_callback') === 0 && strpos($action, '?') !== false) {
+    [$action, $glued] = explode('?', $action, 2);
+    parse_str($glued, $rescued);
+    $_GET = $rescued + $_GET;            // i valori recuperati (code/error) hanno precedenza
+    $_REQUEST = $rescued + $_REQUEST;
+}
+
 // ─── Primo avvio: crea il primo amministratore ───────────────────────────────
 if (!users_exist()) {
     $err = null;

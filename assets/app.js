@@ -452,8 +452,9 @@
   function oidcSection(o) {
     const on = !!o.enabled;
     const envNote = o.from_env ? ' <span class="muted" style="font-size:11px">(secret presente anche da ambiente)</span>' : '';
-    const f = (id, label, val, ph = '') =>
-      `<label style="margin-top:8px">${label}</label><input type="text" id="${id}" value="${esc(val || '')}" placeholder="${esc(ph)}" autocomplete="off">`;
+    // campo come "cella" della griglia a 2 colonne
+    const fld = (id, label, val, ph = '', type = 'text') =>
+      `<div class="fld"><label>${label}</label><input type="${type}" id="${id}" value="${type === 'password' ? '' : esc(val || '')}" placeholder="${esc(ph)}" autocomplete="${type === 'password' ? 'new-password' : 'off'}"></div>`;
     return `
       <h3 style="margin:18px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-shield-lock"></i> SSO / OpenID Connect</h3>
       <p class="muted" style="font-size:12px;margin:0 0 8px">Accesso "Accedi con desoauth" via OAuth2/OIDC. I valori qui hanno la precedenza su quelli in <code>.htaccess</code>/ambiente.</p>
@@ -465,19 +466,21 @@
           <button class="btn" id="oidc_disco" type="button" title="Compila gli endpoint dall'issuer"><i class="ti ti-download"></i> Discovery</button>
         </div>
         <span id="oidc_discomsg" class="muted" style="font-size:12px"></span>
-        ${f('oidc_client_id', 'Client ID', o.client_id, 'Pubj2…')}
-        <label style="margin-top:8px">Client Secret</label>
-        <input type="password" id="oidc_secret" value="" autocomplete="new-password" placeholder="${o.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
-        <p class="muted" style="font-size:12px;margin:4px 0 0">Vuoto = non modificare. Salvato cifrato sul server.</p>
-        ${f('oidc_authz', 'Authorization endpoint', o.authz)}
-        ${f('oidc_token', 'Token endpoint', o.token)}
-        ${f('oidc_userinfo', 'Userinfo endpoint', o.userinfo)}
-        ${f('oidc_jwks', 'JWKS URI', o.jwks)}
-        ${f('oidc_endsession', 'End-session endpoint', o.endsession)}
-        ${f('oidc_redirect', 'Redirect URI', o.redirect)}
-        ${f('oidc_scopes', 'Scopes', o.scopes, 'openid email profile')}
-        ${f('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare-admins')}
-        ${f('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare-readwrite')}
+        <div class="grid2" style="margin-top:8px">
+          ${fld('oidc_client_id', 'Client ID', o.client_id, 'Pubj2…')}
+          <div class="fld"><label>Client Secret</label>
+            <input type="password" id="oidc_secret" value="" autocomplete="new-password" placeholder="${o.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
+            <span class="muted" style="font-size:11px">Vuoto = non modificare (cifrato sul server)</span></div>
+          ${fld('oidc_authz', 'Authorization endpoint', o.authz)}
+          ${fld('oidc_token', 'Token endpoint', o.token)}
+          ${fld('oidc_userinfo', 'Userinfo endpoint', o.userinfo)}
+          ${fld('oidc_jwks', 'JWKS URI', o.jwks)}
+          ${fld('oidc_endsession', 'End-session endpoint', o.endsession)}
+          ${fld('oidc_redirect', 'Redirect URI', o.redirect)}
+          ${fld('oidc_scopes', 'Scopes', o.scopes, 'openid email profile')}
+          ${fld('oidc_admin_group', 'Gruppo admin', o.admin_group, 'desoshare-admins')}
+          ${fld('oidc_rw_group', 'Gruppo lettura-scrittura', o.rw_group, 'desoshare-readwrite')}
+        </div>
       </div>`;
   }
 

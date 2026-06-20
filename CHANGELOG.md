@@ -6,6 +6,21 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.14.0] - 2026-06-20
+
+### Corretto
+- **SSO: login che non si completava** per il doppio `?` nel `redirect_uri` con
+  query string (#6). Alcuni IdP (Authentik) rimandavano a
+  `index.php?action=oidc_callback?code=…`, rendendo `action` irriconoscibile e
+  incollando `code`/`error` al suo valore. Ora `index.php` riconosce e **recupera**
+  i parametri (li reinietta in `$_GET`, normalizza `action`), così il login SSO
+  funziona **senza modifiche su Authentik**.
+
+### Modificato
+- **Impostazioni SSO su due colonne** (#7): i campi OIDC sono ora in una griglia
+  responsiva a 2 colonne (1 colonna su schermi stretti) e il corpo del pannello
+  Impostazioni è **scrollabile**, per non avere più tutti i parametri impilati.
+
 ## [0.13.0] - 2026-06-20
 
 ### Modificato
@@ -274,6 +289,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.14.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.14.0
 [0.13.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.13.0
 [0.12.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.12.0
 [0.11.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.11.0
