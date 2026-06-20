@@ -13,15 +13,17 @@ $p = $_GET['p'] ?? '';
 // Download di un file
 if (isset($_GET['dl'])) {
     $target = ($type === 'file') ? share_base($share) : share_resolve($share, $p);
-    if ($target === null || !is_file($target)) { http_response_code(404); echo 'File non trovato'; exit; }
-    stream_file($target, basename($target));
+    if ($target === null || storage()->typeOf($target) !== 'file') { http_response_code(404); echo 'File non trovato'; exit; }
+    $url = storage()->downloadRedirect($target, basename($target));   // S3 → presigned diretto
+    if ($url !== null) { header('Location: ' . $url); exit; }
+    stream_file(STORAGE_DIR . '/' . $target, basename($target));
 }
 
 // ZIP della cartella (solo folder-share)
 if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
-    if ($target === null || !is_dir($target)) { http_response_code(404); echo 'Cartella non trovata'; exit; }
-    $tmp = make_zip([$target]);
+    if ($target === null || storage()->typeOf($target) !== 'dir') { http_response_code(404); echo 'Cartella non trovata'; exit; }
+    $tmp = zip_logical([$target]);
     $dl = (basename($target) ?: $share['name']) . '.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
@@ -33,13 +35,13 @@ if (isset($_GET['zip']) && $type === 'dir') {
 
 // Pagina HTML
 if ($type === 'file') {
-    $abs = share_base($share);
-    if (!is_file($abs)) { share_invalid_page(); exit; }
-    if (note_is_text(basename($abs))) share_editor_page($share, $abs);   // nota testuale → editor (live)
-    else share_file_page($share, $abs);                                  // binario → pagina download
+    $logical = share_base($share);
+    if (storage()->typeOf($logical) !== 'file') { share_invalid_page(); exit; }
+    if (note_is_text(basename($logical))) share_editor_page($share, $logical);   // nota testuale → editor (live)
+    else share_file_page($share, $logical);                                      // binario → pagina download
 } else {
     $dir = share_resolve($share, $p);
-    if ($dir === null || !is_dir($dir)) { share_invalid_page('Cartella non trovata'); exit; }
+    if ($dir === null || storage()->typeOf($dir) !== 'dir') { share_invalid_page('Cartella non trovata'); exit; }
     share_folder_page($share, $dir, $p);
 }
 
@@ -84,7 +86,7 @@ function share_file_page(array $s, string $abs): void {
        . '<img src="assets/desolabs-logo.png" class="auth-logo-img" alt="DesoLabs">'
        . '<div style="font-size:34px;color:var(--primary);margin:4px 0 8px"><i class="ti ti-file"></i></div>'
        . '<h1 style="font-size:17px;word-break:break-all">' . h(basename($abs)) . '</h1>'
-       . '<p class="muted">' . h(human_size((int) filesize($abs))) . '</p>'
+       . '<p class="muted">' . h(human_size((int) storage()->sizeOf($abs))) . '</p>'
        . share_expiry_html($s)
        . '<a class="btn btn-primary" style="justify-content:center;width:100%;margin-top:10px" href="' . h($dl) . '"><i class="ti ti-download"></i> Scarica</a>'
        . '</div></div>';
@@ -125,10 +127,8 @@ function share_folder_page(array $s, string $dir, string $p): void {
     share_head('Condivisione');
     $tok = urlencode($s['token']);
     $items = [];
-    foreach (scandir($dir) as $n) {
-        if ($n === '.' || $n === '..') continue;
-        $fp = $dir . '/' . $n;
-        $items[] = ['name' => $n, 'dir' => is_dir($fp), 'size' => is_dir($fp) ? 0 : (int) (@filesize($fp) ?: 0)];
+    foreach (storage()->listDir($dir) as $e) {
+        $items[] = ['name' => $e['name'], 'dir' => ($e['type'] === 'dir'), 'size' => (int) ($e['size'] ?? 0)];
     }
     usort($items, fn($a, $b) => $a['dir'] === $b['dir'] ? strcasecmp($a['name'], $b['name']) : ($a['dir'] ? -1 : 1));
 

@@ -19,6 +19,7 @@ switch ($action) {
 
     // Modifiche (POST + CSRF)
     case 'settings_save': csrf_check(); action_settings_save(); break;
+    case 's3_test':      csrf_check(); action_s3_test();      break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
@@ -39,26 +40,22 @@ switch ($action) {
 // ─── File: elenco ────────────────────────────────────────────────────────────
 function action_list(): void {
     require_login();
-    $dir = resolve_path($_GET['path'] ?? '', true);
-    if (!is_dir($dir)) json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
+    $dir = clean_logical($_GET['path'] ?? '');
+    if (storage()->typeOf($dir) !== 'dir') json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
     $items = [];
-    foreach (scandir($dir) as $name) {
-        if ($name === '.' || $name === '..') continue;
-        $p = $dir . '/' . $name;
-        $isDir = is_dir($p);
-        $size = $isDir ? 0 : (int) (@filesize($p) ?: 0);
+    foreach (storage()->listDir($dir) as $e) {
         $items[] = [
-            'name'   => $name,
-            'type'   => $isDir ? 'dir' : 'file',
-            'size'   => $size,
-            'size_h' => $isDir ? '' : human_size($size),
-            'mtime'  => date('d/m/Y', @filemtime($p) ?: time()),
+            'name'   => $e['name'],
+            'type'   => $e['type'],
+            'size'   => $e['size'],
+            'size_h' => $e['type'] === 'dir' ? '' : human_size((int) $e['size']),
+            'mtime'  => date('d/m/Y', (int) $e['mtime']),
         ];
     }
     usort($items, fn($a, $b) =>
         $a['type'] === $b['type'] ? strcasecmp($a['name'], $b['name']) : ($a['type'] === 'dir' ? -1 : 1));
     json_out([
-        'ok' => true, 'path' => rel_display($dir), 'items' => $items,
+        'ok' => true, 'path' => '/' . $dir, 'items' => $items,
         'can_write' => can_write(), 'is_admin' => is_admin(),
     ]);
 }
@@ -66,24 +63,24 @@ function action_list(): void {
 // ─── File: crea cartella ─────────────────────────────────────────────────────
 function action_mkdir(): void {
     require_write();
-    $dir = resolve_path($_POST['path'] ?? '', true);
+    $dir = clean_logical($_POST['path'] ?? '');
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
-    $target = $dir . '/' . $name;
-    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
-    if (!@mkdir($target, 0755)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
+    $target = logical_join($dir, $name);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (!storage()->makeDir($target)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
     json_out(['ok' => true]);
 }
 
 // ─── File: crea file ─────────────────────────────────────────────────────────
 function action_newfile(): void {
     require_write();
-    $dir = resolve_path($_POST['path'] ?? '', true);
+    $dir = clean_logical($_POST['path'] ?? '');
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
-    $target = $dir . '/' . $name;
-    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
-    if (file_put_contents($target, (string) ($_POST['content'] ?? '')) === false) {
+    $target = logical_join($dir, $name);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (!storage()->writeFile($target, (string) ($_POST['content'] ?? ''))) {
         json_out(['ok' => false, 'error' => 'Impossibile creare il file'], 500);
     }
     json_out(['ok' => true]);
@@ -92,7 +89,7 @@ function action_newfile(): void {
 // ─── File: upload (multiplo, tutti i tipi) ───────────────────────────────────
 function action_upload(): void {
     require_write();
-    $dir = resolve_path($_POST['path'] ?? '', true);
+    $dir = clean_logical($_POST['path'] ?? '');
     if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
     $f = $_FILES['files'];
     $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
@@ -101,9 +98,8 @@ function action_upload(): void {
         $n = basename((string) $names[$i]);
         if (!valid_name($n)) { $errors[] = "$n: nome non valido"; continue; }
         if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
-        $dest = $dir . '/' . $n;
-        if (!move_uploaded_file($tmp[$i], $dest)) { $errors[] = "$n: impossibile salvare"; continue; }
-        @chmod($dest, 0644);
+        if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
+        if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; continue; }
         $saved++;
     }
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
@@ -116,11 +112,10 @@ function action_delete(): void {
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
     $deleted = 0; $errors = [];
     foreach ($paths as $rel) {
-        $p = resolve_path((string) $rel);
-        if ($p === storage_real()) { $errors[] = 'la radice non è eliminabile'; continue; }
-        if (!file_exists($p)) { $errors[] = "$rel: non trovato"; continue; }
-        if (is_dir($p) && !is_link($p)) rrmdir($p); else @unlink($p);
-        $deleted++;
+        $p = clean_logical((string) $rel);
+        if ($p === '') { $errors[] = 'la radice non è eliminabile'; continue; }
+        if (storage()->typeOf($p) === false) { $errors[] = "$rel: non trovato"; continue; }
+        if (storage()->deletePath($p, true)) $deleted++; else $errors[] = "$rel: impossibile eliminare";
     }
     json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
 }
@@ -128,22 +123,27 @@ function action_delete(): void {
 // ─── File: rinomina ──────────────────────────────────────────────────────────
 function action_rename(): void {
     require_write();
-    $from = resolve_path($_POST['from'] ?? '', true);
+    $from = clean_logical($_POST['from'] ?? '');
     $newName = trim($_POST['to'] ?? '');
     if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
-    if ($from === storage_real()) json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
-    $target = dirname($from) . '/' . $newName;
-    if (file_exists($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
-    if (!@rename($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
+    if ($from === '') json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
+    if (storage()->typeOf($from) === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
+    $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
+    $target = logical_join($parent, $newName);
+    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento con questo nome'], 409);
+    if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
     json_out(['ok' => true]);
 }
 
 // ─── File: download singolo (con supporto HTTP Range / resume) ───────────────
 function action_download(): void {
     require_login();
-    $p = resolve_path($_GET['path'] ?? '', true);
-    if (!is_file($p)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
-    stream_file($p, basename($p));
+    $p = clean_logical($_GET['path'] ?? '');
+    if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
+    $name = basename($p);
+    $url = storage()->downloadRedirect($p, $name);   // S3 → presigned diretto
+    if ($url !== null) { header('Location: ' . $url); exit; }
+    stream_file(STORAGE_DIR . '/' . $p, $name);        // locale → stream con Range
 }
 
 // stream_file() è definita in lib.php (riusata anche dalla pagina pubblica share.php).
@@ -214,17 +214,11 @@ function action_upload_finish(): void {
     if (count($m['parts']) !== $expected || (int) filesize($part) !== $total) {
         json_out(['ok' => false, 'error' => 'Trasferimento incompleto', 'have' => count($m['parts']), 'expected' => $expected], 409);
     }
-    // cartella di destinazione (creata se manca → upload di cartelle)
-    $dir = resolve_path($_POST['path'] ?? '', false);
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
-        json_out(['ok' => false, 'error' => 'Impossibile creare la cartella di destinazione'], 500);
+    // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
+    $dest = logical_join(clean_logical($_POST['path'] ?? ''), $name);
+    if (!storage()->putFromLocal($part, $dest)) {
+        json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
-    $dest = $dir . '/' . $name;
-    if (!@rename($part, $dest)) {
-        if (!@copy($part, $dest)) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
-        @unlink($part);
-    }
-    @chmod($dest, 0644);
     @unlink(manifest_path($uid));
     upload_gc();
     json_out(['ok' => true]);
@@ -265,9 +259,9 @@ function action_zip(): void {
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
     if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
 
-    $absPaths = array_map(fn($rel) => resolve_path((string) $rel, true), $paths);
-    $tmp = make_zip($absPaths);   // make_zip()/zip_add_dir() sono in lib.php
-    $dlname = (count($paths) === 1) ? basename($absPaths[0]) . '.zip' : 'share-download.zip';
+    $logical = array_map(fn($rel) => clean_logical((string) $rel), $paths);
+    $tmp = zip_logical($logical);   // zip via storage (Local o S3)
+    $dlname = (count($logical) === 1) ? (basename($logical[0]) ?: 'cartella') . '.zip' : 'share-download.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . addslashes($dlname) . '"');
@@ -352,11 +346,20 @@ function action_user_delete(): void {
 function action_settings_get(): void {
     require_admin();
     $s = settings_load();
+    $s3 = is_array($s['s3'] ?? null) ? $s['s3'] : [];
     json_out([
         'ok' => true,
         'site_title'     => (string) ($s['site_title'] ?? APP_NAME),
         'note_poll_ms'   => note_poll_ms(),
         'note_max_bytes' => note_max_bytes(),
+        'storage' => [
+            'backend'      => (($s['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local',
+            'endpoint'     => (string) ($s3['endpoint'] ?? ''),
+            'region'       => (string) ($s3['region'] ?? ''),
+            'bucket'       => (string) ($s3['bucket'] ?? ''),
+            'access_key'   => (string) ($s3['key'] ?? ''),
+            'has_secret'   => ($s3['secret'] ?? '') !== '',   // mai esposto in chiaro
+        ],
         'defaults'       => ['site_title' => APP_NAME, 'note_poll_ms' => NOTE_POLL_MS, 'note_max_bytes' => NOTE_MAX_BYTES],
     ]);
 }
@@ -372,9 +375,51 @@ function action_settings_save(): void {
     if ($poll > 0) { if ($poll < 500 || $poll > 60000) json_out(['ok' => false, 'error' => 'Intervallo 500–60000 ms'], 400); $s['note_poll_ms'] = $poll; }
     $maxmb = (int) ($_POST['note_max_mb'] ?? 0);
     if ($maxmb > 0) { if ($maxmb < 1 || $maxmb > 64) json_out(['ok' => false, 'error' => 'Dimensione nota 1–64 MB'], 400); $s['note_max_bytes'] = $maxmb * 1024 * 1024; }
+
+    // ─ Storage: backend locale o S3-compatibile (Wasabi) ─
+    $backend = (($_POST['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local';
+    if ($backend === 's3') {
+        $cfg = s3_config_from_post($s['s3'] ?? []);
+        if ($cfg['endpoint'] === '' || $cfg['region'] === '' || $cfg['bucket'] === '' || $cfg['key'] === '' || $cfg['secret'] === '')
+            json_out(['ok' => false, 'error' => 'Configurazione S3 incompleta (endpoint, regione, bucket, access key e secret obbligatori)'], 400);
+        $s['storage_backend'] = 's3';
+        $s['s3'] = $cfg;
+    } else {
+        $s['storage_backend'] = 'local';
+    }
+
     settings_save($s);
-    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes());
+    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . $backend);
     json_out(['ok' => true]);
+}
+
+// Compone la config S3 dai campi POST, conservando il secret esistente se non reinserito.
+function s3_config_from_post(array $prev): array {
+    $secretIn = (string) ($_POST['s3_secret'] ?? '');
+    return [
+        'endpoint' => trim((string) ($_POST['s3_endpoint'] ?? '')),
+        'region'   => trim((string) ($_POST['s3_region'] ?? '')),
+        'bucket'   => trim((string) ($_POST['s3_bucket'] ?? '')),
+        'key'      => trim((string) ($_POST['s3_key'] ?? '')),
+        // se il campo secret è vuoto, mantieni quello già salvato (cifrato)
+        'secret'   => $secretIn !== '' ? secret_encrypt($secretIn) : (string) ($prev['secret'] ?? ''),
+    ];
+}
+
+// ─── Storage: prova di connessione S3 (HEAD bucket / list) ───────────────────
+function action_s3_test(): void {
+    require_admin();
+    $prev = (settings_load()['s3'] ?? []);
+    $cfg = s3_config_from_post(is_array($prev) ? $prev : []);
+    if ($cfg['endpoint'] === '' || $cfg['region'] === '' || $cfg['bucket'] === '' || $cfg['key'] === '' || $cfg['secret'] === '')
+        json_out(['ok' => false, 'error' => 'Compila endpoint, regione, bucket, access key e secret prima di provare'], 400);
+    $backend = new S3Backend([
+        'endpoint' => $cfg['endpoint'], 'region' => $cfg['region'], 'bucket' => $cfg['bucket'],
+        'key' => $cfg['key'], 'secret' => secret_decrypt($cfg['secret']),
+    ]);
+    $r = $backend->ping();
+    if ($r['ok']) json_out(['ok' => true, 'message' => 'Connessione riuscita: ' . $r['detail']]);
+    json_out(['ok' => false, 'error' => 'Connessione fallita: ' . $r['detail']], 502);
 }
 
 // ─── Amministrazione: registro attività ──────────────────────────────────────
@@ -386,23 +431,25 @@ function action_audit_list(): void {
 // ─── Condivisioni: crea link a scadenza ──────────────────────────────────────
 function action_share_create(): void {
     $u = require_login();
-    $abs = resolve_path($_POST['path'] ?? '', true);   // valida ed esiste, dentro storage
+    $p = clean_logical($_POST['path'] ?? '');           // percorso logico
+    $kind = storage()->typeOf($p);                      // 'file' | 'dir' | false
+    if ($kind === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $ttl = (int) ($_POST['ttl'] ?? 0);
     $allowed = [3600, 86400, 604800, 2592000];          // 1h, 24h, 7g, 30g
     if (!in_array($ttl, $allowed, true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
     $mode = (($_POST['mode'] ?? 'view') === 'edit') ? 'edit' : 'view';
     if ($mode === 'edit') {
-        if (is_dir($abs)) json_out(['ok' => false, 'error' => 'Le cartelle non sono modificabili via link'], 400);
-        if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
+        if ($kind === 'dir') json_out(['ok' => false, 'error' => 'Le cartelle non sono modificabili via link'], 400);
+        if (!note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
     }
 
     $d = shares_load();
     $token = gen_share_token();
     $share = [
         'token'      => $token,
-        'path'       => ltrim(rel_display($abs), '/'),
-        'type'       => is_dir($abs) ? 'dir' : 'file',
-        'name'       => basename($abs) ?: '/',
+        'path'       => $p,
+        'type'       => $kind,
+        'name'       => basename($p) ?: '/',
         'mode'       => $mode,
         'created_at' => time(),
         'expires_at' => time() + $ttl,
@@ -460,30 +507,29 @@ function note_context(bool $checkCsrf): array {
     if ($token !== '') {
         $share = share_find($token);
         if (!$share || (($share['type'] ?? '') !== 'file')) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
-        $abs = share_base($share);
-        if (!is_file($abs) || !note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Nota non disponibile'], 400);
-        return ['abs' => $abs, 'editable' => (($share['mode'] ?? 'view') === 'edit'), 'user' => 'ospite'];
+        $logical = share_base($share);
+        if (storage()->typeOf($logical) !== 'file' || !note_is_text(basename($logical))) json_out(['ok' => false, 'error' => 'Nota non disponibile'], 400);
+        return ['logical' => $logical, 'editable' => (($share['mode'] ?? 'view') === 'edit'), 'user' => 'ospite'];
     }
     $u = require_login();
     if ($checkCsrf) csrf_check();
-    $abs = resolve_path($_REQUEST['path'] ?? '', true);
-    return ['abs' => $abs, 'editable' => can_write(), 'user' => $u['username']];
+    return ['logical' => clean_logical($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username']];
 }
 
 // ─── Note: apertura nell'editor (sessione o link condiviso) ──────────────────
 function action_note_open(): void {
     $ctx = note_context(false);
-    $abs = $ctx['abs'];
-    if (!is_file($abs)) json_out(['ok' => false, 'error' => 'Non è un file'], 400);
-    if (!note_is_text(basename($abs))) json_out(['ok' => false, 'error' => 'Tipo di file non modificabile come testo'], 415);
-    $size = (int) filesize($abs);
+    $p = $ctx['logical'];
+    if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
+    if (!note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Tipo di file non modificabile come testo'], 415);
+    $size = (int) storage()->sizeOf($p);
     if ($size > note_max_bytes()) json_out(['ok' => false, 'error' => 'File troppo grande per l\'editor (' . human_size($size) . ')'], 413);
     note_gc();
-    $id = note_id(ltrim(rel_display($abs), '/'));
+    $id = note_id($p);
     $updates = note_relay_lines($id);
     json_out([
-        'ok' => true, 'id' => $id, 'name' => basename($abs), 'editable' => $ctx['editable'],
-        'text' => base64_encode((string) file_get_contents($abs)),
+        'ok' => true, 'id' => $id, 'name' => basename($p), 'editable' => $ctx['editable'],
+        'text' => base64_encode((string) storage()->readFile($p)),
         'updates' => $updates, 'offset' => count($updates), 'poll_ms' => note_poll_ms(), 'user' => $ctx['user'],
     ]);
 }
@@ -494,7 +540,7 @@ function action_note_sync(): void {
     $id = $_POST['id'] ?? '';
     if (!preg_match('/^[a-f0-9]{40}$/', $id)) json_out(['ok' => false, 'error' => 'Identificativo nota non valido'], 400);
     // Il client non può sincronizzare un id diverso dalla nota del suo contesto.
-    if ($id !== note_id(ltrim(rel_display($ctx['abs']), '/'))) json_out(['ok' => false, 'error' => 'Nota non corrispondente'], 403);
+    if ($id !== note_id($ctx['logical'])) json_out(['ok' => false, 'error' => 'Nota non corrispondente'], 403);
     $since = max(0, (int) ($_POST['since'] ?? 0));
     $editable = $ctx['editable'];
     $incoming = $_POST['updates'] ?? [];
@@ -522,14 +568,8 @@ function action_note_sync(): void {
 function action_note_save(): void {
     $ctx = note_context(true);
     if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
-    $abs = $ctx['abs'];
     $content = (string) ($_POST['content'] ?? '');
     if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
-    $tmp = $abs . '.tmp.' . bin2hex(random_bytes(4));
-    if (file_put_contents($tmp, $content) === false || !@rename($tmp, $abs)) {
-        @unlink($tmp);
-        json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
-    }
-    @chmod($abs, 0644);
+    if (!storage()->writeFile($ctx['logical'], $content)) json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
     json_out(['ok' => true]);
 }

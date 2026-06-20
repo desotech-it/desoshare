@@ -111,6 +111,18 @@ function rel_display(string $abs): string {
     $root = storage_real();
     return ($abs === $root) ? '/' : substr($abs, strlen($root));
 }
+// Percorso "logico" validato relativo alla radice (per l'astrazione storage): niente traversal.
+function clean_logical(string $rel): string {
+    $rel = ltrim(str_replace('\\', '/', $rel), '/');
+    $parts = [];
+    foreach (explode('/', $rel) as $seg) {
+        if ($seg === '' || $seg === '.') continue;
+        if ($seg === '..' || str_contains($seg, "\0")) json_out(['ok' => false, 'error' => 'Percorso non consentito'], 400);
+        $parts[] = $seg;
+    }
+    return implode('/', $parts);
+}
+function logical_join(string $dir, string $name): string { return $dir === '' ? $name : $dir . '/' . $name; }
 
 // ─── Utilità ─────────────────────────────────────────────────────────────────
 function human_size(int $b): string {
@@ -208,6 +220,29 @@ function make_zip(array $absPaths): string {
     $zip->close();
     return $tmp;
 }
+// Crea uno ZIP da percorsi LOGICI usando il backend storage (Local o S3). Ritorna il path del tmp.
+function zip_logical(array $logicalPaths): string {
+    if (!class_exists('ZipArchive')) { http_response_code(500); echo 'ZipArchive non disponibile'; exit; }
+    $tmp = tempnam(sys_get_temp_dir(), 'shr');
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) { http_response_code(500); echo 'Impossibile creare lo ZIP'; exit; }
+    $temps = [];
+    $add = function (string $logical, string $zipPath) use (&$add, $zip, &$temps) {
+        $t = storage()->typeOf($logical);
+        if ($t === 'dir') {
+            $items = storage()->listDir($logical);
+            if (!$items) { $zip->addEmptyDir($zipPath); return; }
+            foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
+        } elseif ($t === 'file') {
+            $tf = tempnam(sys_get_temp_dir(), 'shz');
+            if (storage()->fetchToLocal($logical, $tf)) { $zip->addFile($tf, $zipPath); $temps[] = $tf; }
+        }
+    };
+    foreach ($logicalPaths as $lp) $add($lp, basename($lp) ?: 'root');
+    $zip->close();
+    foreach ($temps as $tf) @unlink($tf);
+    return $tmp;
+}
 
 // ─── Condivisioni con link a scadenza ────────────────────────────────────────
 function shares_file(): string { return DATA_DIR . '/shares.json'; }
@@ -222,17 +257,15 @@ function shares_save(array $d): void {
 }
 function gen_share_token(): string { return bin2hex(random_bytes(16)); }
 
-// Percorso assoluto (dentro storage) della radice di una condivisione.
+// Percorso LOGICO (relativo alla radice dello storage) della condivisione.
 function share_base(array $s): string {
-    $root = storage_real();
-    $rel = ltrim(str_replace('\\', '/', $s['path'] ?? ''), '/');
-    return normalize_path($root . '/' . $rel);
+    return clean_logical($s['path'] ?? '');
 }
 // Rimuove le condivisioni scadute o il cui elemento non esiste più.
 function shares_prune(): array {
     $d = shares_load();
     $now = time();
-    $keep = array_values(array_filter($d['shares'], fn($s) => ($s['expires_at'] ?? 0) > $now && file_exists(share_base($s))));
+    $keep = array_values(array_filter($d['shares'], fn($s) => ($s['expires_at'] ?? 0) > $now && storage()->typeOf(share_base($s)) !== false));
     if (count($keep) !== count($d['shares'])) { $d['shares'] = $keep; shares_save($d); }
     return $d;
 }
@@ -246,13 +279,18 @@ function share_find(string $token): ?array {
     }
     return null;
 }
-// Risolve un sotto-percorso dentro una condivisione, confinato alla sua radice.
+// Risolve un sotto-percorso LOGICO dentro una condivisione, confinato alla sua radice.
 function share_resolve(array $s, string $p): ?string {
     $base = share_base($s);
-    $p = ltrim(str_replace('\\', '/', $p), '/');
-    $full = normalize_path($base . '/' . $p);
-    if ($full !== $base && strncmp($full, $base . '/', strlen($base) + 1) !== 0) return null;
-    return file_exists($full) ? $full : null;
+    $segs = [];
+    foreach (explode('/', str_replace('\\', '/', (string) $p)) as $seg) {
+        if ($seg === '' || $seg === '.') continue;
+        if ($seg === '..') return null;            // nessun traversal fuori dalla condivisione
+        $segs[] = $seg;
+    }
+    $sub = implode('/', $segs);
+    $full = $base === '' ? $sub : ($sub === '' ? $base : $base . '/' . $sub);
+    return storage()->typeOf($full) !== false ? $full : null;
 }
 // URL pubblico assoluto della pagina di condivisione per un token.
 function share_url(string $token): string {
@@ -353,3 +391,30 @@ function audit_tail(int $n = 100): array {
 function count_admins(array $data): int {
     return count(array_filter($data['users'], fn($u) => ($u['role'] ?? '') === 'admin'));
 }
+
+// ─── Segreto applicativo + cifratura credenziali (es. S3) ────────────────────
+function app_secret(): string {
+    $f = DATA_DIR . '/.secret';
+    if (is_file($f)) return (string) file_get_contents($f);
+    $s = bin2hex(random_bytes(32));
+    @file_put_contents($f, $s);
+    @chmod($f, 0600);
+    return $s;
+}
+function secret_encrypt(string $plain): string {
+    if ($plain === '') return '';
+    $key = hash('sha256', app_secret(), true);
+    $iv = random_bytes(16);
+    $ct = openssl_encrypt($plain, 'aes-256-cbc', $key, OPENSSL_RAW_DATA, $iv);
+    return $ct === false ? '' : base64_encode($iv . $ct);
+}
+function secret_decrypt(string $enc): string {
+    if ($enc === '') return '';
+    $raw = base64_decode($enc, true);
+    if ($raw === false || strlen($raw) < 17) return '';
+    $key = hash('sha256', app_secret(), true);
+    $p = openssl_decrypt(substr($raw, 16), 'aes-256-cbc', $key, OPENSSL_RAW_DATA, substr($raw, 0, 16));
+    return $p === false ? '' : $p;
+}
+
+require_once __DIR__ . '/storage.php';

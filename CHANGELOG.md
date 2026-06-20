@@ -6,6 +6,33 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.7.0] - 2026-06-20
+
+### Aggiunto
+- **Archiviazione esterna S3-compatibile (Wasabi)**, configurabile dall'area di
+  amministrazione e **senza database**. Dalla sezione *Impostazioni → Archiviazione
+  file* si sceglie il backend (**Locale** o **S3**) e si inseriscono endpoint,
+  regione, bucket, Access Key e Secret. Il secret è salvato **cifrato** (AES-256)
+  sul server e non viene mai restituito in chiaro.
+- **Prova di connessione** allo storage S3 (pulsante "Prova connessione") che
+  verifica credenziali e raggiungibilità del bucket prima del salvataggio.
+- **Astrazione dello storage** (`storage.php`): tutte le operazioni su file
+  (elenco, lettura/scrittura, upload, rinomina, eliminazione, ZIP, download,
+  note e condivisioni) passano da un'interfaccia comune con due implementazioni,
+  **Locale** e **S3**. Su S3: client AWS Signature V4 in PHP puro (niente
+  Composer), download diretti tramite URL **presigned**, rinomina come copy+delete,
+  eliminazione ricorsiva ed elenco con paginazione.
+
+### Modificato
+- Gli handler delle API e la pagina pubblica di condivisione lavorano ora su
+  **percorsi logici** indipendenti dal backend, così lo stesso codice funziona
+  identico in locale e su S3.
+
+### Test
+- Nuova suite end-to-end del backend S3 (`tests/s3_test.sh`) che esercita le API
+  reali contro un bucket Wasabi (upload/elenco/download presigned/rinomina/ZIP/
+  note/eliminazione) sotto un prefisso usa-e-getta. La suite locale resta a 69 test.
+
 ## [0.6.0] - 2026-06-20
 
 ### Aggiunto
@@ -103,6 +130,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.7.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.7.0
 [0.6.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.6.0
 [0.5.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.5.0
 [0.4.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.4.0

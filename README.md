@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.1.0** · stato: in sviluppo (0.x.x)
+Versione: **0.7.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -26,6 +26,14 @@ Versione: **0.1.0** · stato: in sviluppo (0.x.x)
   segmentato (più veloce con i download manager).
 - **Download ZIP**: comprime file e cartelle (anche selezioni multiple) in un
   unico archivio.
+- **Note collaborative** stile blocco note: i file di testo si aprono in un editor
+  e più utenti possono modificarli **in tempo reale** (sincronizzazione tipo
+  Etherpad, CRDT Yjs su relay PHP via polling, senza WebSocket né database).
+- **Condivisione con link a scadenza**: genera un link pubblico (sola lettura o,
+  per le note, modificabile) valido per una durata scelta, senza login.
+- **Archiviazione configurabile**: i file possono risiedere sul **server locale**
+  oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
+  dall'area di amministrazione, sempre **senza database**.
 
 ## Come funziona (architettura)
 
@@ -42,12 +50,22 @@ Versione: **0.1.0** · stato: in sviluppo (0.x.x)
   │   ├── api.php          operazioni: list, upload(chunk), download(range), zip, utenti…
   │   ├── lib.php          helper: sessioni, permessi, CSRF, percorsi sicuri
   │   ├── config.php       costanti e percorsi
-  │   ├── assets/          app.css, app.js (frontend, vanilla JS)
+  │   ├── storage.php      astrazione dello storage (backend Locale o S3/Wasabi)
+  │   ├── share.php        pagina pubblica dei link di condivisione
+  │   ├── assets/          app.css, app.js, editor delle note (frontend, vanilla JS)
   │   ├── .htaccess        protezioni
   │   └── .user.ini        limiti di upload PHP
-  ├── storage/            ← i file gestiti (NON accessibili dal web)
-  └── appdata/            ← users.json, blocchi temporanei di upload
+  ├── storage/            ← i file gestiti in locale (NON accessibili dal web)
+  └── appdata/            ← users.json, settings.json, shares.json, audit.log,
+                            blocchi temporanei di upload, segreto di cifratura
   ```
+
+- **Storage astratto**: un'interfaccia comune (`storage.php`) gestisce sia il
+  **backend locale** (cartella `storage/`) sia un **backend S3-compatibile**
+  (Wasabi e simili) con firma **AWS Signature V4** implementata in PHP puro,
+  download diretti tramite URL **presigned** e nessuna dipendenza esterna. La
+  scelta del backend e le credenziali (con secret **cifrato**) si configurano da
+  *Amministrazione → Impostazioni → Archiviazione file*.
 
 - **Frontend** senza framework (vanilla JS): chiama `api.php` in AJAX e gestisce
   upload a chunk, dialoghi, drag&drop e tabella file.
@@ -63,7 +81,8 @@ Versione: **0.1.0** · stato: in sviluppo (0.x.x)
 
 ## Requisiti
 
-- PHP 8.0+ con estensione `zip` (per il download ZIP).
+- PHP 8.0+ con estensione `zip` (per il download ZIP) e `curl` + `openssl`
+  (necessarie solo per lo storage S3/Wasabi).
 - Hosting con Apache o LiteSpeed (supporto `.htaccess` / `.user.ini`).
 
 ## Installazione
@@ -73,6 +92,11 @@ Versione: **0.1.0** · stato: in sviluppo (0.x.x)
    l'account amministratore.
 3. Da lì accedi e crea gli altri utenti dal pannello **Utenti**, assegnando i
    permessi (sola lettura o lettura e scrittura).
+4. (Facoltativo) Per usare uno **storage esterno S3/Wasabi**, vai in
+   *Amministrazione → Impostazioni → Archiviazione file*, seleziona **S3
+   compatibile**, inserisci endpoint, regione, bucket, Access Key e Secret, e usa
+   **Prova connessione** prima di salvare. Senza configurazione i file restano in
+   locale nella cartella `storage/`.
 
 Le cartelle `storage/` e `appdata/` vengono create automaticamente al primo
 accesso, accanto a `public_html`.

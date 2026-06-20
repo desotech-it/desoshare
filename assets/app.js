@@ -377,6 +377,8 @@
   async function renderSettingsSection(body) {
     const s = await apiGet('settings_get');
     if (!s.ok) { body.textContent = s.error || 'Errore'; return; }
+    const st = s.storage || { backend: 'local' };
+    const isS3 = st.backend === 's3';
     body.innerHTML = `
       <label>Titolo del sito</label>
       <input type="text" id="set_title" value="${esc(s.site_title)}" maxlength="40" placeholder="Share">
@@ -384,13 +386,58 @@
       <input type="text" id="set_poll" value="${s.note_poll_ms}">
       <label style="margin-top:10px">Dimensione massima di una nota (MB)</label>
       <input type="text" id="set_maxmb" value="${Math.round(s.note_max_bytes / 1048576)}">
+
+      <h3 style="margin:18px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-database"></i> Archiviazione file</h3>
+      <p class="muted" style="font-size:12px;margin:0 0 8px">Dove vengono salvati i file caricati. S3 usa uno storage esterno compatibile (es. Wasabi).</p>
+      <label>Backend</label>
+      <select id="set_backend">
+        <option value="local"${isS3 ? '' : ' selected'}>Locale (server)</option>
+        <option value="s3"${isS3 ? ' selected' : ''}>S3 compatibile (Wasabi)</option>
+      </select>
+      <div id="s3_box" style="margin-top:10px${isS3 ? '' : ';display:none'}">
+        <label>Endpoint</label>
+        <input type="text" id="s3_endpoint" value="${esc(st.endpoint || '')}" placeholder="s3.eu-south-1.wasabisys.com">
+        <label style="margin-top:8px">Regione</label>
+        <input type="text" id="s3_region" value="${esc(st.region || '')}" placeholder="eu-south-1">
+        <label style="margin-top:8px">Bucket</label>
+        <input type="text" id="s3_bucket" value="${esc(st.bucket || '')}" placeholder="desotech-desoshare">
+        <label style="margin-top:8px">Access Key ID</label>
+        <input type="text" id="s3_key" value="${esc(st.access_key || '')}" autocomplete="off">
+        <label style="margin-top:8px">Secret Access Key</label>
+        <input type="password" id="s3_secret" value="" autocomplete="new-password" placeholder="${st.has_secret ? '•••••••• (invariato)' : 'inserisci il secret'}">
+        <p class="muted" style="font-size:12px;margin:4px 0 0">Lascia vuoto il secret per non modificarlo. È salvato cifrato sul server.</p>
+        <div style="margin-top:8px"><button class="btn" id="s3_testbtn"><i class="ti ti-plug-connected"></i> Prova connessione</button> <span id="s3_testmsg" class="muted" style="font-size:12px"></span></div>
+      </div>
+
       <div style="margin-top:16px;text-align:right"><button class="btn btn-primary" id="set_save"><i class="ti ti-device-floppy"></i> Salva</button></div>`;
+
+    const backendSel = $('#set_backend', modalBg);
+    backendSel.onchange = () => { $('#s3_box', modalBg).style.display = backendSel.value === 's3' ? '' : 'none'; };
+
+    const s3fields = () => ({
+      storage_backend: backendSel.value,
+      s3_endpoint: $('#s3_endpoint', modalBg) ? $('#s3_endpoint', modalBg).value : '',
+      s3_region:   $('#s3_region', modalBg)   ? $('#s3_region', modalBg).value   : '',
+      s3_bucket:   $('#s3_bucket', modalBg)   ? $('#s3_bucket', modalBg).value   : '',
+      s3_key:      $('#s3_key', modalBg)      ? $('#s3_key', modalBg).value      : '',
+      s3_secret:   $('#s3_secret', modalBg)   ? $('#s3_secret', modalBg).value   : '',
+    });
+
+    const testBtn = $('#s3_testbtn', modalBg);
+    if (testBtn) testBtn.onclick = async () => {
+      const msg = $('#s3_testmsg', modalBg);
+      msg.textContent = 'verifica in corso…'; msg.style.color = '';
+      const r = await apiPost('s3_test', s3fields());
+      msg.textContent = r.ok ? (r.message || 'Connessione riuscita') : (r.error || 'Connessione fallita');
+      msg.style.color = r.ok ? 'var(--ok, #1a7f37)' : 'var(--danger, #c0392b)';
+    };
+
     $('#set_save', modalBg).onclick = async () => {
-      const r = await apiPost('settings_save', {
+      const r = await apiPost('settings_save', Object.assign({
         site_title: $('#set_title', modalBg).value,
         note_poll_ms: $('#set_poll', modalBg).value,
         note_max_mb: $('#set_maxmb', modalBg).value,
-      });
+      }, s3fields()));
       if (r.ok) toast('Impostazioni salvate'); else toast(r.error || 'Errore', true);
     };
   }
