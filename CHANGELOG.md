@@ -6,6 +6,16 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.17.0] - 2026-06-20
+
+### Modificato (interno, nessun cambiamento di comportamento)
+- **Modularizzazione FASE 0**: `lib.php` (583 righe, 77 funzioni) scisso in 11 moduli
+  coesi (`lib_util`, `lib_crypto`, `lib_settings`, `lib_users`, `lib_auth`,
+  `lib_paths`, `lib_quota`, `lib_download`, `lib_shares`, `lib_notes`, `lib_audit`).
+  `lib.php` diventa un orchestratore che fa solo i `require_once` nell'ordine
+  corretto; i consumer continuano a includere solo `lib.php`. Comportamento
+  invariato (85 API + 45 S3 + 38 OIDC + smoke JS verdi).
+
 ## [0.16.1] - 2026-06-20
 
 ### Corretto
@@ -375,6 +385,7 @@ Prima release.
 - Versionamento automatico degli asset (cache busting tramite `filemtime`) e
   gestore d'errore globale lato client.
 
+[0.17.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.17.0
 [0.16.1]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.1
 [0.16.0]: https://github.com/desotech-it/desoshare/releases/tag/v0.16.0
 [0.15.2]: https://github.com/desotech-it/desoshare/releases/tag/v0.15.2
