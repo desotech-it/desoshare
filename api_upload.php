@@ -10,7 +10,14 @@ function upload_uid(string $uid): string {
     if (!preg_match('/^[a-f0-9]{16,64}$/', $uid)) json_out(['ok' => false, 'error' => 'Identificativo upload non valido'], 400);
     return $uid;
 }
-function upload_part(string $uid): string { return upload_dir() . '/' . $uid . '.part'; }
+// Chiave di staging legata al PROPRIETARIO: due utenti col medesimo uid client
+// (stesso nome/size/mtime) NON condividono mai lo stesso .part/.json, e un uid
+// non è utilizzabile per toccare lo staging di un altro utente.
+function upload_skey(string $uid): string {
+    $owner = (string) ($_SESSION['username'] ?? '');
+    return substr(hash('sha256', $owner . '|' . $uid), 0, 40);
+}
+function upload_part(string $uid): string { return upload_dir() . '/' . upload_skey($uid) . '.part'; }
 
 // Stato dell'upload: quali blocchi sono già stati ricevuti (per riprendere).
 function action_upload_status(): void {
@@ -37,8 +44,20 @@ function action_upload_chunk(): void {
         json_out(['ok' => false, 'error' => 'Blocco non ricevuto'], 400);
     }
     // Pre-check quota al primo blocco usando la dimensione totale dichiarata.
-    // 413 (NON 5xx) così il client non ritenta e mostra subito l'errore.
+    // 413 (NON 5xx) così il client non ritenta e mostra subito l'errore (prima
+    // della validazione geometrica: "troppo grande" è l'errore più utile).
     if (!is_file(upload_part($uid))) quota_check($total, 0, 413);
+    // Validazione RIGOROSA della geometria del blocco (niente offset arbitrari):
+    $expectedCount = (int) ceil($total / $chunkSize);
+    if ($index >= $expectedCount)        json_out(['ok' => false, 'error' => 'Indice blocco fuori intervallo'], 400);
+    if ($offset !== $index * $chunkSize) json_out(['ok' => false, 'error' => 'Offset incoerente con indice e dimensione blocco'], 400);
+    $expectLen = (int) min($chunkSize, $total - $offset);
+    if ((int) ($_FILES['chunk']['size'] ?? -1) !== $expectLen) json_out(['ok' => false, 'error' => 'Dimensione del blocco incoerente'], 400);
+    // Coerenza con i blocchi già ricevuti per questo upload (stesso total/chunk_size).
+    $m0 = manifest_read($uid);
+    if ((int) $m0['size'] !== 0 && ((int) $m0['size'] !== $total || (int) $m0['chunk'] !== $chunkSize)) {
+        json_out(['ok' => false, 'error' => 'Metadati del trasferimento incoerenti con i blocchi precedenti'], 409);
+    }
     // scrive il blocco al suo offset; 'c+b' crea il file se assente e non lo tronca
     $part = upload_part($uid);
     $fh = fopen($part, 'c+b');
@@ -89,7 +108,7 @@ function action_upload_finish(): void {
 }
 
 // ─── Manifest dei blocchi ricevuti (resume con invii paralleli) ──────────────
-function manifest_path(string $uid): string { return upload_dir() . '/' . $uid . '.json'; }
+function manifest_path(string $uid): string { return upload_dir() . '/' . upload_skey($uid) . '.json'; }
 function manifest_read(string $uid): array {
     $f = manifest_path($uid);
     $d = is_file($f) ? json_decode((string) file_get_contents($f), true) : null;
@@ -98,6 +117,7 @@ function manifest_read(string $uid): array {
 }
 function manifest_mark(string $uid, int $index, int $total, int $chunkSize): int {
     $h = fopen(manifest_path($uid), 'c+');
+    if ($h === false) json_out(['ok' => false, 'error' => 'Impossibile aggiornare lo stato del trasferimento'], 500);
     flock($h, LOCK_EX);
     $m = json_decode(stream_get_contents($h) ?: '', true);
     if (!is_array($m)) $m = [];

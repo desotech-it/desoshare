@@ -7,8 +7,7 @@ function settings_load(): array {
     return is_array($j) ? $j : [];
 }
 function settings_save(array $d): void {
-    file_put_contents(settings_file(), json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
-    @chmod(settings_file(), 0600);
+    json_atomic_write(settings_file(), $d);   // write-temp+rename (no troncamenti)
 }
 function setting(string $key, $default = null) {
     $s = settings_load();

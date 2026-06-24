@@ -8,8 +8,7 @@ function shares_load(): array {
     return (is_array($j) && isset($j['shares'])) ? $j : ['shares' => []];
 }
 function shares_save(array $d): void {
-    file_put_contents(shares_file(), json_encode($d, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), LOCK_EX);
-    @chmod(shares_file(), 0600);
+    json_atomic_write(shares_file(), $d);   // write-temp+rename (no troncamenti)
 }
 function gen_share_token(): string { return bin2hex(random_bytes(16)); }
 
@@ -34,11 +33,25 @@ function share_base(array $s): string {
     return clean_logical($s['path'] ?? '');
 }
 // Rimuove le condivisioni scadute o il cui elemento non esiste più.
+// I controlli (typeOf, eventualmente su S3) avvengono FUORI dal lock; la rimozione
+// è poi atomica e mirata ai soli token individuati → non clobbera share aggiunte
+// in concorrenza, né tiene il lock durante chiamate di rete.
 function shares_prune(): array {
     $d = shares_load();
     $now = time();
-    $keep = array_values(array_filter($d['shares'], fn($s) => ($s['expires_at'] ?? 0) > $now && storage()->typeOf(share_base($s)) !== false));
-    if (count($keep) !== count($d['shares'])) { $d['shares'] = $keep; shares_save($d); }
+    $remove = [];
+    foreach ($d['shares'] as $s) {
+        if (($s['expires_at'] ?? 0) <= $now || storage()->typeOf(share_base($s)) === false) {
+            $remove[(string) ($s['token'] ?? '')] = true;
+        }
+    }
+    if ($remove) {
+        with_json_lock(shares_file(), function (array $d) use ($remove) {
+            $d['shares'] = array_values(array_filter($d['shares'] ?? [], fn($s) => !isset($remove[(string) ($s['token'] ?? '')])));
+            return $d;
+        });
+        $d['shares'] = array_values(array_filter($d['shares'], fn($s) => !isset($remove[(string) ($s['token'] ?? '')])));
+    }
     return $d;
 }
 // Trova una condivisione valida (esistente e non scaduta) dal suo identificatore,

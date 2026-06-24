@@ -7,12 +7,7 @@ function users_load(): array {
     return (is_array($j) && isset($j['users'])) ? $j : ['users' => []];
 }
 function users_save(array $data): void {
-    file_put_contents(
-        USERS_FILE,
-        json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-        LOCK_EX
-    );
-    @chmod(USERS_FILE, 0600);
+    json_atomic_write(USERS_FILE, $data);   // write-temp+rename (no troncamenti)
 }
 function users_exist(): bool { $d = users_load(); return !empty($d['users']); }
 function find_user(string $username): ?array {

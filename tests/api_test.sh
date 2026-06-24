@@ -243,6 +243,30 @@ has "user_delete riporta purged:true" "$DR" '"purged":true'
 has "share dell'utente eliminato → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '404'
 [ ! -d "$SBX/storage/eliminando" ] && ok "purge: home eliminata" || no "purge: home ancora presente"
 
+echo "=== Hardening P1 (upload: validazione metadati + owner-binding) ==="
+G1="$SBX/g_1000"; head -c 1000 /dev/zero > "$G1"
+G2="$SBX/g_500"; head -c 500 /dev/zero > "$G2"
+UIDX=aabbccddeeff0011
+has "chunk con offset incoerente → 400" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" -F uid=$UIDX -F index=1 -F offset=0 -F chunk_size=1000 -F total=2000 -F "chunk=@$G1" "$B/api.php?action=upload_chunk")" 'Offset incoerente'
+has "chunk di dimensione errata → 400" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" -F uid=$UIDX -F index=0 -F offset=0 -F chunk_size=1000 -F total=2000 -F "chunk=@$G2" "$B/api.php?action=upload_chunk")" 'Dimensione del blocco incoerente'
+# owner-binding: scrittore avvia un upload; admin con lo STESSO uid non vede lo staging
+curl -s -b $WJAR -H "X-CSRF: $WCSRF" -F uid=$UIDX -F index=0 -F offset=0 -F chunk_size=1000 -F total=2000 -F "chunk=@$G1" "$B/api.php?action=upload_chunk" >/dev/null
+has "scrittore vede il proprio blocco 0" "$(curl -s -b $WJAR "$B/api.php?action=upload_status&uid=$UIDX")" '"parts":[0]'
+has "admin con stesso uid NON vede lo staging altrui (owner-binding)" "$(curl -s -b $JAR "$B/api.php?action=upload_status&uid=$UIDX")" '"parts":[]'
+
+echo "=== Unit: persistenza JSON atomica (lib_util) ==="
+cat > "$SBX/punit.php" <<'PHP'
+<?php require getenv("APP")."/lib_util.php";
+$f = getenv("F"); @unlink($f);
+json_atomic_write($f, ["n"=>1]);
+for ($i=0; $i<50; $i++) with_json_lock($f, fn($c) => ["n"=>($c["n"]??0)+1]);
+$d = json_read($f);
+echo "n=".$d["n"].";tmp=".count(glob($f.".tmp.*")).";";
+PHP
+PRES=$(APP="$APP_DIR" F="$SBX/persist.json" php "$SBX/punit.php" 2>&1)
+has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
+has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'
 

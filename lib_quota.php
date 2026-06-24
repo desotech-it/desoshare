@@ -12,8 +12,7 @@ function usage_load(): array {
     return is_array($j) ? $j : [];
 }
 function usage_save(array $d): void {
-    file_put_contents(usage_file(), json_encode($d, JSON_UNESCAPED_SLASHES), LOCK_EX);
-    @chmod(usage_file(), 0600);
+    json_atomic_write(usage_file(), $d);
 }
 // Consumo (byte) di un utente: dalla cache se fresca, altrimenti ricalcolo dallo storage.
 function usage_get(string $username, bool $fresh = false): int {
@@ -27,21 +26,26 @@ function usage_get(string $username, bool $fresh = false): int {
     return $bytes;
 }
 function usage_set(string $username, int $bytes): void {
-    $c = usage_load();
-    $c[$username] = ['bytes' => max(0, $bytes), 'ts' => time()];
-    usage_save($c);
+    with_json_lock(usage_file(), function (array $c) use ($username, $bytes) {
+        $c[$username] = ['bytes' => max(0, $bytes), 'ts' => time()];
+        return $c;
+    });
 }
-// Aggiorna il consumo col delta noto (percorso caldo: niente LIST). Mantiene "fresco" il ts.
+// Aggiorna il consumo col delta noto (percorso caldo: niente LIST). Lock sull'INTERA
+// read-modify-write → bump concorrenti non si perdono (niente deriva della quota).
 function usage_bump(string $username, int $delta): void {
     if ($delta === 0) return;
-    $c = usage_load();
-    $cur = (int) ($c[$username]['bytes'] ?? 0);
-    $c[$username] = ['bytes' => max(0, $cur + $delta), 'ts' => time()];
-    usage_save($c);
+    with_json_lock(usage_file(), function (array $c) use ($username, $delta) {
+        $cur = (int) ($c[$username]['bytes'] ?? 0);
+        $c[$username] = ['bytes' => max(0, $cur + $delta), 'ts' => time()];
+        return $c;
+    });
 }
 function usage_invalidate(string $username): void {
-    $c = usage_load();
-    if (isset($c[$username])) { unset($c[$username]); usage_save($c); }
+    with_json_lock(usage_file(), function (array $c) use ($username) {
+        unset($c[$username]);
+        return $c;
+    });
 }
 // Verifica quota per un utente specifico: se sforerebbe, esce con errore HTTP $code.
 function quota_check_user(?string $username, int $addBytes, int $replaceBytes = 0, int $code = 507): void {

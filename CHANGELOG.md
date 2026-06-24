@@ -6,6 +6,29 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.22.0] - 2026-06-21
+
+### Robustezza e concorrenza (hardening P1, da audit)
+- **Persistenza JSON atomica e serializzata**: nuovi helper `json_atomic_write()`
+  (scrittura su temp + `rename()` atomico → niente file troncati/corrotti) e
+  `with_json_lock()` (lock esclusivo sull'INTERA read-modify-write → niente
+  *lost update* sotto concorrenza). Applicati a `users.json`, `settings.json`,
+  `shares.json`, `usage.json`. Le mutazioni più contese (consumo quota, creazione/
+  revoca share con unicità slug, prune, creazione/eliminazione utente) ora girano
+  in sezione critica. [lib_util.php e moduli correlati]
+- **Upload legato al proprietario + metadati validati**: la chiave di staging è
+  derivata server-side da `hash(username|uid)` → due utenti col medesimo uid client
+  non condividono più lo stesso file di staging (niente collisioni/contenuti
+  incrociati). Validazione rigorosa di indice, offset (`offset == index×chunk`),
+  dimensione del blocco e coerenza `total/chunk_size` fra i blocchi. [api_upload.php]
+- **ZIP da S3 in streaming**: gli oggetti vengono scaricati da S3 **direttamente su
+  file temporaneo** (`CURLOPT_FILE`) invece che interamente in memoria → niente
+  superamento di `memory_limit`/OOM sui file grandi. [storage.php]
+
+### Test
+- `api_test.sh`: **108** (+validazione geometria upload, owner-binding dello
+  staging, unit di persistenza atomica). `s3_test.sh` 45 (streaming reale su Wasabi).
+
 ## [0.21.0] - 2026-06-21
 
 ### Sicurezza (hardening P0, da audit esterno + verifica multi-agente)

@@ -95,7 +95,7 @@ function s3_signing_key(string $secret, string $date, string $region, string $se
 
 // Esegue una richiesta S3 firmata (SigV4, header auth, payload UNSIGNED su HTTPS).
 // $query = array assoc; $bodyFile = percorso file da inviare come body (PUT), oppure $body stringa.
-function s3_request(array $cfg, string $method, string $key, array $query = [], array $headers = [], ?string $body = null, ?string $bodyFile = null): array {
+function s3_request(array $cfg, string $method, string $key, array $query = [], array $headers = [], ?string $body = null, ?string $bodyFile = null, ?string $sinkFile = null): array {
     $host = $cfg['bucket'] . '.' . $cfg['endpoint'];
     $region = $cfg['region']; $service = 's3';
     $amzdate = gmdate('Ymd\THis\Z'); $datestamp = gmdate('Ymd');
@@ -126,23 +126,31 @@ function s3_request(array $cfg, string $method, string $key, array $query = [], 
     foreach ($headers as $k => $v) $curlHeaders[] = "$k: $v";
 
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_HTTPHEADER => $curlHeaders, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 300, CURLOPT_CONNECTTIMEOUT => 15]);
+    curl_setopt_array($ch, [CURLOPT_HTTPHEADER => $curlHeaders, CURLOPT_TIMEOUT => 300, CURLOPT_CONNECTTIMEOUT => 15]);
+    $sink = null;
     if ($method === 'HEAD') {
-        curl_setopt($ch, CURLOPT_NOBODY, true);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_NOBODY => true]);
     } elseif ($bodyFile !== null) {
         $fp = fopen($bodyFile, 'rb');
-        curl_setopt_array($ch, [CURLOPT_UPLOAD => true, CURLOPT_INFILE => $fp, CURLOPT_INFILESIZE => filesize($bodyFile), CURLOPT_CUSTOMREQUEST => 'PUT']);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_UPLOAD => true, CURLOPT_INFILE => $fp, CURLOPT_INFILESIZE => filesize($bodyFile), CURLOPT_CUSTOMREQUEST => 'PUT']);
     } elseif ($method === 'PUT' || $method === 'POST') {
-        curl_setopt_array($ch, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_POSTFIELDS => $body ?? '']);
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_CUSTOMREQUEST => $method, CURLOPT_POSTFIELDS => $body ?? '']);
+    } elseif ($sinkFile !== null) {
+        // GET in STREAMING verso file: la risposta va su disco, non in RAM
+        // (evita di superare memory_limit sui file grandi, es. ZIP server da S3).
+        $sink = fopen($sinkFile, 'wb');
+        if ($sink === false) return ['code' => 0, 'body' => '', 'error' => 'impossibile aprire il file di destinazione'];
+        curl_setopt_array($ch, [CURLOPT_CUSTOMREQUEST => 'GET', CURLOPT_FILE => $sink]);
     } else {
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);   // GET, DELETE
+        curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_CUSTOMREQUEST => $method]);   // GET, DELETE
     }
     $resp = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $cerr = $resp === false ? curl_error($ch) : '';
     // curl_close() è un no-op deprecato da PHP 8.0; lasciare che il GC chiuda l'handle.
     if (isset($fp) && is_resource($fp)) fclose($fp);
-    return ['code' => (int) $code, 'body' => (string) $resp, 'error' => $cerr];
+    if ($sink !== null && is_resource($sink)) fclose($sink);
+    return ['code' => (int) $code, 'body' => $sink !== null ? '' : (string) $resp, 'error' => $cerr];
 }
 
 // Costruisce un header Content-Disposition conforme alla RFC 6266:
@@ -335,8 +343,11 @@ class S3Backend implements StorageBackend {
         return s3_presigned_get($this->cfg, $this->key($path), $expires, $filename);
     }
     public function fetchToLocal(string $path, string $localPath): bool {
-        $data = $this->readFile($path);
-        return file_put_contents($localPath, $data) !== false;
+        // GET in streaming diretto su file: nessun buffer dell'intero oggetto in RAM.
+        $r = s3_request($this->cfg, 'GET', $this->key($path), [], [], null, null, $localPath);
+        if (($r['code'] ?? 0) === 200) return true;
+        @unlink($localPath);
+        return false;
     }
     // Verifica raggiungibilità/credenziali: ListObjectsV2 con max-keys=1.
     public function ping(): array {

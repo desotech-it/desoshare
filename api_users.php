@@ -67,34 +67,39 @@ function action_user_save(): void {
     if ($quotaMbIn !== -1 && ($quotaMbIn < 0 || $quotaMbIn > QUOTA_MAX_MB)) {
         json_out(['ok' => false, 'error' => 'Quota non valida (0 = illimitata, max ' . QUOTA_MAX_MB . ' MB)'], 400);
     }
-    $data = users_load();
-    $idx = -1;
-    foreach ($data['users'] as $i => $u) if ($u['username'] === $original) $idx = $i;
-    foreach ($data['users'] as $i => $u) if ($u['username'] === $username && $i !== $idx) {
-        json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
-    }
-    if ($idx >= 0) {
-        $wasAdmin = ($data['users'][$idx]['role'] ?? '') === 'admin';
-        $data['users'][$idx]['username']   = $username;
-        $data['users'][$idx]['role']       = $role;
-        $data['users'][$idx]['permission'] = $permission;
-        if ($password !== '') $data['users'][$idx]['password_hash'] = password_hash($password, PASSWORD_DEFAULT);
-        if ($quotaMbIn !== -1) $data['users'][$idx]['quota_bytes'] = $quotaMbIn * 1024 * 1024;
-        if ($wasAdmin && $role !== 'admin' && count_admins($data) < 1) {
-            json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
+    // Calcola l'hash FUORI dalla sezione critica (bcrypt è lento; non tenere il lock).
+    $pwHash = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : '';
+
+    // Tutta la read-modify-write su users.json in UN'unica sezione critica.
+    $err = null; $code = 400; $auditMsg = null;
+    with_json_lock(USERS_FILE, function (array $data) use (&$err, &$code, &$auditMsg, $original, $username, $role, $permission, $password, $pwHash, $quotaMbIn) {
+        $data['users'] = $data['users'] ?? [];
+        $idx = -1;
+        foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $original) $idx = $i;
+        foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username && $i !== $idx) { $err = 'Username già esistente'; $code = 409; return null; }
+        if ($idx >= 0) {
+            $wasAdmin = ($data['users'][$idx]['role'] ?? '') === 'admin';
+            $data['users'][$idx]['username']   = $username;
+            $data['users'][$idx]['role']       = $role;
+            $data['users'][$idx]['permission'] = $permission;
+            if ($pwHash !== '') $data['users'][$idx]['password_hash'] = $pwHash;
+            if ($quotaMbIn !== -1) $data['users'][$idx]['quota_bytes'] = $quotaMbIn * 1024 * 1024;
+            if ($wasAdmin && $role !== 'admin' && count_admins($data) < 1) { $err = 'Deve restare almeno un amministratore'; return null; }
+            $qNow = user_quota_of($data['users'][$idx]);
+            $auditMsg = ['user_update', $username . ' → ' . $role . '/' . $permission . ' quota=' . ($qNow ? human_size($qNow) : 'illimitata')];
+        } else {
+            if (strlen($password) < 6) { $err = 'Password obbligatoria (min 6 caratteri)'; return null; }
+            $quotaBytes = ($quotaMbIn !== -1) ? $quotaMbIn * 1024 * 1024 : (int) setting('default_quota_bytes', 0);
+            $data['users'][] = [
+                'username' => $username, 'password_hash' => $pwHash,
+                'role' => $role, 'permission' => $permission, 'quota_bytes' => $quotaBytes,
+            ];
+            $auditMsg = ['user_create', $username . ' (' . $role . '/' . $permission . ') quota=' . ($quotaBytes ? human_size($quotaBytes) : 'illimitata')];
         }
-        $qNow = user_quota_of($data['users'][$idx]);
-        audit('user_update', $username . ' → ' . $role . '/' . $permission . ' quota=' . ($qNow ? human_size($qNow) : 'illimitata'));
-    } else {
-        if (strlen($password) < 6) json_out(['ok' => false, 'error' => 'Password obbligatoria (min 6 caratteri)'], 400);
-        $quotaBytes = ($quotaMbIn !== -1) ? $quotaMbIn * 1024 * 1024 : (int) setting('default_quota_bytes', 0);
-        $data['users'][] = [
-            'username' => $username, 'password_hash' => password_hash($password, PASSWORD_DEFAULT),
-            'role' => $role, 'permission' => $permission, 'quota_bytes' => $quotaBytes,
-        ];
-        audit('user_create', $username . ' (' . $role . '/' . $permission . ') quota=' . ($quotaBytes ? human_size($quotaBytes) : 'illimitata'));
-    }
-    users_save($data);
+        return $data;
+    });
+    if ($err) json_out(['ok' => false, 'error' => $err], $code);
+    if ($auditMsg) audit($auditMsg[0], $auditMsg[1]);
     ensure_user_home($username);   // predispone la cartella (sandbox) dell'utente
     json_out(['ok' => true]);
 }
@@ -104,23 +109,32 @@ function action_user_delete(): void {
     $me = require_admin();
     $username = trim($_POST['username'] ?? '');
     if ($username === $me['username']) json_out(['ok' => false, 'error' => 'Non puoi eliminare te stesso'], 400);
-    $data = users_load();
-    $before = count($data['users']);
-    $data['users'] = array_values(array_filter($data['users'], fn($u) => $u['username'] !== $username));
-    if (!array_filter($data['users'], fn($u) => ($u['role'] ?? '') === 'admin')) {
-        json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
-    }
-    users_save($data);
+    $err = null; $deleted = 0;
+    with_json_lock(USERS_FILE, function (array $data) use ($username, &$err, &$deleted) {
+        $users = $data['users'] ?? [];
+        $before = count($users);
+        $users = array_values(array_filter($users, fn($u) => ($u['username'] ?? '') !== $username));
+        if (!array_filter($users, fn($u) => ($u['role'] ?? '') === 'admin')) { $err = 'Deve restare almeno un amministratore'; return null; }
+        $deleted = $before - count($users);
+        $data['users'] = $users;
+        return $data;
+    });
+    if ($err) json_out(['ok' => false, 'error' => $err], 400);
 
     // Cleanup a cascata. Chiude SEMPRE l'esposizione dei dati dell'utente rimosso:
     //  - revoca le sue condivisioni pubbliche (altrimenti i link restano serviti);
     //  - invalida la cache di quota.
     // La cancellazione dei FILE è distruttiva → solo su richiesta esplicita (purge=1).
-    $sd = shares_load();
-    $sbefore = count($sd['shares']);
-    $sd['shares'] = array_values(array_filter($sd['shares'], fn($s) => ($s['created_by'] ?? '') !== $username));
-    $revoked = $sbefore - count($sd['shares']);
-    if ($revoked > 0) shares_save($sd);
+    $revoked = 0;
+    with_json_lock(shares_file(), function (array $sd) use ($username, &$revoked) {
+        $shares = $sd['shares'] ?? [];
+        $before = count($shares);
+        $shares = array_values(array_filter($shares, fn($s) => ($s['created_by'] ?? '') !== $username));
+        $revoked = $before - count($shares);
+        if ($revoked === 0) return null;
+        $sd['shares'] = $shares;
+        return $sd;
+    });
     usage_invalidate($username);
 
     $purged = false;
@@ -129,6 +143,6 @@ function action_user_delete(): void {
     }
 
     audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));
-    json_out(['ok' => true, 'deleted' => $before - count($data['users']), 'revoked_shares' => $revoked, 'purged' => $purged]);
+    json_out(['ok' => true, 'deleted' => $deleted, 'revoked_shares' => $revoked, 'purged' => $purged]);
 }
 

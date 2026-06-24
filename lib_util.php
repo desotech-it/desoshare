@@ -31,3 +31,46 @@ function rrmdir(string $dir): void {
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
 
+// ─── Persistenza JSON: scrittura atomica + sezione critica con lock ──────────
+// Legge un file JSON come array ($default se assente o illeggibile).
+function json_read(string $file, array $default = []): array {
+    if (!is_file($file)) return $default;
+    $j = json_decode((string) file_get_contents($file), true);
+    return is_array($j) ? $j : $default;
+}
+// Scrittura ATOMICA: scrive su un file temporaneo nella STESSA cartella e poi
+// rename() (atomico su POSIX) → niente file troncato/corrotto se il processo
+// muore a metà scrittura. Sostituisce il vecchio file_put_contents diretto.
+function json_atomic_write(string $file, array $data): bool {
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if ($json === false) return false;
+    $tmp = $file . '.tmp.' . getmypid() . '.' . bin2hex(random_bytes(4));
+    if (file_put_contents($tmp, $json) === false) { @unlink($tmp); return false; }
+    @chmod($tmp, 0600);
+    if (!@rename($tmp, $file)) { @unlink($tmp); return false; }
+    return true;
+}
+// Esegue una read-modify-write SERIALIZZATA su $file: prende un lock esclusivo su
+// <file>.lock per l'INTERA sezione critica (load → modifica → save), così due
+// richieste concorrenti non si sovrascrivono a vicenda (niente lost update).
+// La callback riceve lo stato corrente e RESTITUISCE il nuovo stato da salvare
+// (oppure null per non scrivere). Per restituire un valore al chiamante usare
+// una variabile catturata per riferimento.
+function with_json_lock(string $file, callable $fn, array $default = []): void {
+    $lh = @fopen($file . '.lock', 'c');
+    if ($lh === false) {                       // niente lock disponibile: esegui comunque
+        $new = $fn(json_read($file, $default));
+        if (is_array($new)) json_atomic_write($file, $new);
+        return;
+    }
+    @flock($lh, LOCK_EX);
+    try {
+        $new = $fn(json_read($file, $default));
+        if (is_array($new)) json_atomic_write($file, $new);
+    } finally {
+        @flock($lh, LOCK_UN);
+        fclose($lh);
+    }
+}
+
+

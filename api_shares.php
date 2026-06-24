@@ -16,21 +16,7 @@ function action_share_create(): void {
         if (!note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
     }
 
-    $d = shares_load();
-
-    // Slug personalizzato opzionale: se indicato, deve essere unico tra le
-    // condivisioni ATTIVE (confronto sia con gli altri slug sia con i token).
     $slug = share_slugify((string) ($_POST['slug'] ?? ''));
-    if ($slug !== '') {
-        $now = time();
-        foreach ($d['shares'] as $s) {
-            if (($s['expires_at'] ?? 0) <= $now) continue;          // gli scaduti liberano lo slug
-            if (strtolower($s['slug'] ?? '') === $slug || strtolower($s['token'] ?? '') === $slug) {
-                json_out(['ok' => false, 'error' => 'Indirizzo già in uso, scegline un altro'], 409);
-            }
-        }
-    }
-
     $token = gen_share_token();
     $share = [
         'token'      => $token,
@@ -43,8 +29,25 @@ function action_share_create(): void {
         'expires_at' => time() + $ttl,
         'created_by' => $u['username'],
     ];
-    $d['shares'][] = $share;
-    shares_save($d);
+
+    // Verifica unicità dello slug e append in UN'unica sezione critica (atomica):
+    // niente TOCTOU tra il controllo e l'inserimento (slug duplicati / share perse).
+    $conflict = false;
+    with_json_lock(shares_file(), function (array $d) use (&$conflict, $slug, $share) {
+        $shares = $d['shares'] ?? [];
+        if ($slug !== '') {
+            $now = time();
+            foreach ($shares as $s) {
+                if (($s['expires_at'] ?? 0) <= $now) continue;      // gli scaduti liberano lo slug
+                if (strtolower($s['slug'] ?? '') === $slug || strtolower($s['token'] ?? '') === $slug) {
+                    $conflict = true; return null;                  // non scrivere
+                }
+            }
+        }
+        $shares[] = $share; $d['shares'] = $shares;
+        return $d;
+    });
+    if ($conflict) json_out(['ok' => false, 'error' => 'Indirizzo già in uso, scegline un altro'], 409);
     json_out(['ok' => true, 'token' => $token, 'slug' => $slug, 'url' => share_url($share), 'expires_at' => $share['expires_at']]);
 }
 
@@ -77,14 +80,20 @@ function action_share_revoke(): void {
     $u = require_login();
     $token = $_POST['token'] ?? '';
     $admin = is_admin();
-    $d = shares_load();
-    $before = count($d['shares']);
-    $d['shares'] = array_values(array_filter($d['shares'], function ($s) use ($token, $u, $admin) {
-        if (($s['token'] ?? '') !== $token) return true;                  // non è questo: tieni
-        return !($admin || ($s['created_by'] ?? '') === $u['username']);  // tuo o admin → rimuovi
-    }));
-    if (count($d['shares']) === $before) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
-    shares_save($d);
+    $removed = 0;
+    with_json_lock(shares_file(), function (array $d) use ($token, $u, $admin, &$removed) {
+        $shares = $d['shares'] ?? [];
+        $before = count($shares);
+        $shares = array_values(array_filter($shares, function ($s) use ($token, $u, $admin) {
+            if (($s['token'] ?? '') !== $token) return true;                  // non è questo: tieni
+            return !($admin || ($s['created_by'] ?? '') === $u['username']);  // tuo o admin → rimuovi
+        }));
+        $removed = $before - count($shares);
+        if ($removed === 0) return null;                                      // niente da fare
+        $d['shares'] = $shares;
+        return $d;
+    });
+    if ($removed === 0) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
     json_out(['ok' => true]);
 }
 
