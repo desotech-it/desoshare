@@ -5,7 +5,11 @@ function audit(string $action, string $detail = ''): void {
     $u = current_user();
     $who = $u['username'] ?? '-';
     $line = date('c') . "\t" . $who . "\t" . $action . "\t" . str_replace(["\n", "\t", "\r"], ' ', $detail) . "\n";
-    @file_put_contents(DATA_DIR . '/audit.log', $line, FILE_APPEND | LOCK_EX);
+    $f = DATA_DIR . '/audit.log';
+    // Rotazione: oltre ~2 MB il log viene ruotato (1 backup) → non cresce all'infinito
+    // e audit_tail() non si trova mai a caricare in RAM un file enorme.
+    if (is_file($f) && filesize($f) > 2 * 1024 * 1024) @rename($f, $f . '.1');
+    @file_put_contents($f, $line, FILE_APPEND | LOCK_EX);
 }
 function audit_tail(int $n = 100): array {
     $f = DATA_DIR . '/audit.log';

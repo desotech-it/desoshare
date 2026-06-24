@@ -37,7 +37,7 @@ export function fmtDuration(s) {
   if (d > 0) return d + 'g ' + h + 'h'; if (h > 0) return h + 'h ' + m + 'm'; if (m > 0) return m + 'm ' + x + 's'; return x + 's';
 }
 
-const BIN_EXT = new Set(['png','jpg','jpeg','gif','webp','bmp','ico','svgz','pdf','zip','rar','7z','gz','tgz','tar','bz2','mp3','wav','ogg','flac','mp4','mov','avi','mkv','webm','exe','dll','so','bin','dat','class','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','woff','woff2','ttf','otf','eot','psd','ai','eps']);
+const BIN_EXT = new Set(['png','jpg','jpeg','gif','webp','bmp','ico','svgz','pdf','zip','rar','7z','gz','tgz','tar','bz2','mp3','wav','ogg','flac','mp4','mov','avi','mkv','webm','exe','dll','so','a','o','bin','dat','class','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','woff','woff2','ttf','otf','eot','psd','ai','eps']);
 export function isTextFile(name) { return !BIN_EXT.has((name.split('.').pop() || '').toLowerCase()); }
 export const b64ToU8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
 

@@ -114,7 +114,7 @@
     if (m > 0) return m + "m " + x + "s";
     return x + "s";
   }
-  var BIN_EXT = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svgz", "pdf", "zip", "rar", "7z", "gz", "tgz", "tar", "bz2", "mp3", "wav", "ogg", "flac", "mp4", "mov", "avi", "mkv", "webm", "exe", "dll", "so", "bin", "dat", "class", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "woff", "woff2", "ttf", "otf", "eot", "psd", "ai", "eps"]);
+  var BIN_EXT = /* @__PURE__ */ new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svgz", "pdf", "zip", "rar", "7z", "gz", "tgz", "tar", "bz2", "mp3", "wav", "ogg", "flac", "mp4", "mov", "avi", "mkv", "webm", "exe", "dll", "so", "a", "o", "bin", "dat", "class", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "woff", "woff2", "ttf", "otf", "eot", "psd", "ai", "eps"]);
   function isTextFile(name) {
     return !BIN_EXT.has((name.split(".").pop() || "").toLowerCase());
   }

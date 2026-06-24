@@ -111,8 +111,10 @@ body {
 .size { text-align: right; color: var(--tertiary); }
 .date { color: var(--muted); }
 .acts { text-align: right; white-space: nowrap; }
-.acts .ti { font-size: 17px; color: var(--tertiary); cursor: pointer; margin-left: 12px; }
+.acts .ti { font-size: 17px; color: var(--muted); cursor: pointer; margin-left: 12px; }
 .acts .ti:hover { color: var(--text); }
+.row:hover .acts .ti { color: var(--text); }                 /* icone più evidenti al passaggio sulla riga */
+.acts .ti-trash { color: #c98a8a; }                          /* il cestino si distingue già a riposo */
 .acts .ti-trash:hover { color: var(--danger); }
 .empty { padding: 40px; text-align: center; color: var(--tertiary); }
 .empty .ti { font-size: 22px; vertical-align: -3px; margin-right: 6px; }

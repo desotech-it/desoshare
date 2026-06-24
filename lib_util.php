@@ -30,6 +30,18 @@ function rrmdir(string $dir): void {
 }
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
+// Header di sicurezza per le pagine HTML. `frame-ancestors 'self'` + X-Frame-Options
+// proteggono da clickjacking senza limitare gli script/style inline usati dall'app.
+function security_headers(): void {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header("Content-Security-Policy: frame-ancestors 'self'");
+    header('Referrer-Policy: no-referrer');   // non trapelare gli URL (anche presigned) nel Referer
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+        header('Strict-Transport-Security: max-age=31536000');
+    }
+}
+
 
 // ─── Persistenza JSON: scrittura atomica + sezione critica con lock ──────────
 // Legge un file JSON come array ($default se assente o illeggibile).

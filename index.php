@@ -63,19 +63,25 @@ if (!current_user()) {
     // (così non ci si può mai chiudere completamente fuori).
     $localLogin = local_auth_enabled() || !oidc_enabled();
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'login') {
-        $u = find_user(trim($_POST['username'] ?? ''));
-        if (!$localLogin) {
-            $err = 'Il login locale è disabilitato: accedi con "Accedi con desoauth".';
-        } elseif ($u && !empty($u['sso'])) {
-            $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
-        } elseif ($u && !empty($u['password_hash']) && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
-            session_regenerate_id(true);
-            $_SESSION['username'] = $u['username'];
-            ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
-            audit('login');
-            header('Location: index.php'); exit;
+        if (login_locked()) {
+            $err = 'Troppi tentativi falliti. Riprova tra qualche minuto.';
         } else {
-            $err = 'Credenziali non valide.';
+            $u = find_user(trim($_POST['username'] ?? ''));
+            if (!$localLogin) {
+                $err = 'Il login locale è disabilitato: accedi con "Accedi con desoauth".';
+            } elseif ($u && !empty($u['sso'])) {
+                $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
+            } elseif ($u && !empty($u['password_hash']) && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
+                login_reset();
+                session_regenerate_id(true);
+                $_SESSION['username'] = $u['username'];
+                ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
+                audit('login');
+                header('Location: index.php'); exit;
+            } else {
+                login_fail_record();
+                $err = 'Credenziali non valide.';
+            }
         }
     }
     render_login($err, $localLogin); exit;
@@ -87,8 +93,7 @@ render_app(current_user());
 
 // ═══════════════════════════════════════════════════════════════════════════
 function page_head(string $title): string {
-    // Non trapelare gli URL presigned (download diretto da S3) nel header Referer.
-    header('Referrer-Policy: no-referrer');
+    security_headers();   // nosniff + anti-clickjacking + Referrer-Policy + HSTS
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
     return '<!doctype html><html lang="it"><head><meta charset="utf-8">'
         . '<meta name="viewport" content="width=device-width, initial-scale=1">'

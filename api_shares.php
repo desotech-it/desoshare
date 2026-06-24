@@ -48,6 +48,7 @@ function action_share_create(): void {
         return $d;
     });
     if ($conflict) json_out(['ok' => false, 'error' => 'Indirizzo già in uso, scegline un altro'], 409);
+    audit('share_create', ($share['name'] ?? '') . ' (' . $mode . ', ' . ($slug !== '' ? '/d/' . $slug : 'token') . ', scade ' . date('c', $share['expires_at']) . ')');
     json_out(['ok' => true, 'token' => $token, 'slug' => $slug, 'url' => share_url($share), 'expires_at' => $share['expires_at']]);
 }
 
@@ -94,6 +95,7 @@ function action_share_revoke(): void {
         return $d;
     });
     if ($removed === 0) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
+    audit('share_revoke', 'token ' . substr((string) $token, 0, 8) . '…');
     json_out(['ok' => true]);
 }
 

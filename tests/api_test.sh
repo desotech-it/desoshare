@@ -254,6 +254,19 @@ curl -s -b $WJAR -H "X-CSRF: $WCSRF" -F uid=$UIDX -F index=0 -F offset=0 -F chun
 has "scrittore vede il proprio blocco 0" "$(curl -s -b $WJAR "$B/api.php?action=upload_status&uid=$UIDX")" '"parts":[0]'
 has "admin con stesso uid NON vede lo staging altrui (owner-binding)" "$(curl -s -b $JAR "$B/api.php?action=upload_status&uid=$UIDX")" '"parts":[]'
 
+echo "=== Hardening P2 (header sicurezza, audit share, rate-limit login) ==="
+HH=$(curl -s -D - -b $JAR -o /dev/null "$B/")
+has "header X-Content-Type-Options: nosniff" "$HH" "X-Content-Type-Options: nosniff"
+has "header X-Frame-Options: SAMEORIGIN" "$HH" "X-Frame-Options: SAMEORIGIN"
+has "header CSP frame-ancestors 'self'" "$HH" "frame-ancestors 'self'"
+AL=$(curl -s -b $JAR "$B/api.php?action=audit_list")
+has "audit registra share_create" "$AL" 'share_create'
+has "audit registra share_revoke" "$AL" 'share_revoke'
+# rate-limit: 8 tentativi falliti → il 9° è bloccato (per ULTIMO: blocca 127.0.0.1)
+RLJ="$SBX/rljar"
+for i in $(seq 1 8); do curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong -o /dev/null "$B/index.php"; done
+has "rate-limit login: bloccato dopo 8 tentativi" "$(curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong "$B/index.php")" 'Troppi tentativi'
+
 echo "=== Unit: persistenza JSON atomica (lib_util) ==="
 cat > "$SBX/punit.php" <<'PHP'
 <?php require getenv("APP")."/lib_util.php";

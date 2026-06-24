@@ -70,7 +70,7 @@ if ($type === 'file') {
 // ─── Rendering ───────────────────────────────────────────────────────────────
 function share_head(string $title): void {
     header('Cache-Control: no-store');
-    header('Referrer-Policy: no-referrer');   // non trapelare gli URL presigned nel Referer
+    security_headers();   // nosniff + anti-clickjacking + Referrer-Policy + HSTS
     $v = @filemtime(PUBLIC_DIR . '/assets/app.css');
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
     echo '<!doctype html><html lang="it"><head><meta charset="utf-8">'

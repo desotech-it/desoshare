@@ -6,6 +6,37 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.23.0] - 2026-06-21
+
+### Sicurezza e robustezza (hardening P2, da audit)
+- **Header di sicurezza** su tutte le pagine HTML: `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: SAMEORIGIN` + CSP `frame-ancestors 'self'` (anti-clickjacking,
+  login incluso), `Referrer-Policy: no-referrer`, HSTS su HTTPS. [lib_util.php]
+- **Identità SSO ancorata al claim `sub`**: uno stesso username con un `sub` diverso
+  è un'identità diversa → niente account takeover via collisione di
+  `preferred_username`. Provisioning ora in sezione critica. Il `sub` è **obbligatorio**
+  e preso dall'id_token **firmato** (non dall'userinfo, che è verificato per coerenza);
+  i record SSO legacy senza `sub` vengono ancorati trust-on-first-use e tracciati a
+  registro (`sso_sub_anchor`). [oidc.php]
+- **Rate-limiting del login locale**: dopo 8 tentativi falliti dallo stesso IP,
+  blocco temporaneo (5 min). [lib_auth.php, index.php]
+- **S3 più robusto**: retry sui codici transitori (0/429/5xx) per HEAD/GET/DELETE,
+  così un 503/timeout non viene scambiato per "non esiste" (evita
+  sovrascritture/perdite); `deletePath` verifica l'esito di ogni DELETE. [storage.php]
+- **Audit delle condivisioni**: `share_create` e `share_revoke` ora finiscono nel
+  registro attività. [api_shares.php]
+- **`audit.log` con rotazione** (cap ~2 MB, 1 backup) → niente crescita illimitata
+  né letture in RAM di file enormi. [lib_audit.php]
+- **Tetto al relay delle note** (anti-crescita illimitata del file effimero). [api_notes.php]
+
+### UX / qualità
+- Tasto **Elimina** più riconoscibile (cestino rosso desaturato a riposo, icone di
+  riga a contrasto maggiore e più evidenti al passaggio del mouse). [app.css]
+- Allineate le liste di estensioni binarie JS/PHP (`a`, `o`). [util.js]
+
+### Test
+- `api_test.sh`: **114** (+header di sicurezza, audit delle share, rate-limit login).
+
 ## [0.22.0] - 2026-06-21
 
 ### Robustezza e concorrenza (hardening P1, da audit)

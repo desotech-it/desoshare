@@ -153,6 +153,19 @@ function s3_request(array $cfg, string $method, string $key, array $query = [], 
     return ['code' => (int) $code, 'body' => $sink !== null ? '' : (string) $resp, 'error' => $cerr];
 }
 
+// Variante con retry per i metodi idempotenti (HEAD/GET/DELETE/list): ritenta sui
+// codici TRANSITORI (0 = rete, 429/500/502/503/504) con backoff. Serve a non
+// scambiare un 503/timeout temporaneo per un "non esiste" (che causerebbe
+// sovrascritture/perdite di dati) e a non lasciare oggetti orfani nelle delete.
+function s3_request_retry(array $cfg, string $method, string $key, array $query = [], array $headers = []): array {
+    $transient = [0, 429, 500, 502, 503, 504];
+    for ($attempt = 0; ; $attempt++) {
+        $r = s3_request($cfg, $method, $key, $query, $headers);
+        if (!in_array($r['code'], $transient, true) || $attempt >= 2) return $r;
+        usleep(200000 * ($attempt + 1));   // 0.2s, poi 0.4s
+    }
+}
+
 // Costruisce un header Content-Disposition conforme alla RFC 6266:
 //   attachment; filename="<fallback-ascii>"; filename*=UTF-8''<percent-encoded>
 // Il fallback ASCII garantisce i client legacy; filename* trasporta l'UTF-8 reale.
@@ -238,10 +251,10 @@ class S3Backend implements StorageBackend {
     public function typeOf(string $path) {
         if ($path === '') return 'dir';
         $key = $this->key($path);
-        $r = s3_request($this->cfg, 'HEAD', $key);
+        $r = s3_request_retry($this->cfg, 'HEAD', $key);
         if ($r['code'] === 200) return 'file';
         // cartella? esistono oggetti sotto 'key/'
-        $r2 = s3_request($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => rtrim($key, '/') . '/', 'max-keys' => '1']);
+        $r2 = s3_request_retry($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => rtrim($key, '/') . '/', 'max-keys' => '1']);
         if ($r2['code'] === 200 && strpos($r2['body'], '<Contents>') !== false) return 'dir';
         return false;
     }
@@ -265,21 +278,26 @@ class S3Backend implements StorageBackend {
     }
     public function deletePath(string $path, bool $recursive): bool {
         if ($this->typeOf($path) === 'dir') {
-            // elimina tutti gli oggetti col prefisso (marker compreso)
-            $prefix = rtrim($path, '/') . '/'; $token = null;
+            // elimina tutti gli oggetti col prefisso (marker compreso); verifica l'esito
+            // di OGNI delete → se qualcuna fallisce non riportiamo un falso successo.
+            $prefix = rtrim($path, '/') . '/'; $token = null; $allOk = true;
             do {
                 $q = ['list-type' => '2', 'prefix' => $prefix, 'max-keys' => '1000'];
                 if ($token) $q['continuation-token'] = $token;
-                $r = s3_request($this->cfg, 'GET', '', $q);
+                $r = s3_request_retry($this->cfg, 'GET', '', $q);
                 if ($r['code'] !== 200) return false;
                 $xml = @simplexml_load_string($r['body']); if (!$xml) return false;
-                foreach ($xml->Contents as $c) s3_request($this->cfg, 'DELETE', (string) $c->Key);
+                foreach ($xml->Contents as $c) {
+                    $dr = s3_request_retry($this->cfg, 'DELETE', (string) $c->Key);
+                    if ($dr['code'] < 200 || $dr['code'] >= 300) $allOk = false;
+                }
                 $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
             } while ($token);
-            s3_request($this->cfg, 'DELETE', $prefix);
-            return true;
+            $dr = s3_request_retry($this->cfg, 'DELETE', $prefix);
+            if ($dr['code'] < 200 || $dr['code'] >= 300) $allOk = false;
+            return $allOk;
         }
-        $r = s3_request($this->cfg, 'DELETE', $this->key($path));
+        $r = s3_request_retry($this->cfg, 'DELETE', $this->key($path));
         return $r['code'] >= 200 && $r['code'] < 300;
     }
     private function copyKey(string $from, string $to): bool {

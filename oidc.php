@@ -240,14 +240,22 @@ function oidc_callback(): void {
         if ($sig !== true) oidc_fail('impossibile verificare la firma del token.');
     }
 
-    // userinfo per claim aggiornati (in particolare i gruppi).
+    // 'sub' = identità STABILE e FIRMATA: presa dall'id_token VERIFICATO (non
+    // dall'userinfo, che non è firmato). È obbligatoria per OIDC ed è l'ancora
+    // anti-takeover: deve esistere PRIMA di fondere l'userinfo.
+    $sub = (string) ($claims['sub'] ?? '');
+    if ($sub === '') oidc_fail('id_token privo di sub.');
+
+    // userinfo per claim aggiornati (in particolare i gruppi). Il suo 'sub', se
+    // presente, DEVE coincidere con quello dell'id_token (requisito OIDC).
     $info = [];
     $ur = oidc_http_get_bearer($c['userinfo'], $accessToken);
     if ($ur['code'] === 200) { $j = json_decode($ur['body'], true); if (is_array($j)) $info = $j; }
+    if (isset($info['sub']) && !hash_equals($sub, (string) $info['sub'])) oidc_fail('userinfo non coerente con l\'id_token.');
     $claims = array_merge($claims, $info);
+    $claims['sub'] = $sub;   // l'ancora resta quella firmata, non sovrascrivibile dall'userinfo
 
-    // Identità.
-    $sub = (string) ($claims['sub'] ?? '');
+    // Identità (lo username è derivato; l'ancora è $sub, non lo username).
     $email = (string) ($claims['email'] ?? '');
     $name = (string) ($claims['name'] ?? ($claims['preferred_username'] ?? ''));
     $username = (string) ($claims['preferred_username'] ?? '');
@@ -262,39 +270,60 @@ function oidc_callback(): void {
     $perms = oidc_perms_from_groups($groups, $c);
 
     // Provisioning / aggiornamento in users.json (utente SSO, senza password locale).
-    $data = users_load();
-    $idx = -1;
-    foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username) { $idx = $i; break; }
-    if ($idx >= 0) {
-        if (empty($data['users'][$idx]['sso']) && !empty($data['users'][$idx]['password_hash'])) {
-            // collisione con un utente LOCALE esistente: non dirottare l'account.
-            oidc_fail('esiste già un utente locale "' . $username . '". Contatta l\'amministratore.');
+    // Sezione critica (atomica) + identità ANCORATA al claim 'sub': uno stesso
+    // username con un 'sub' diverso è un'identità diversa → niente account takeover.
+    $event = null; $err = null; $backfill = false;
+    with_json_lock(USERS_FILE, function (array $data) use (&$event, &$err, &$backfill, $username, $sub, $email, $name, $perms) {
+        $data['users'] = $data['users'] ?? [];
+        $idx = -1;
+        foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username) { $idx = $i; break; }
+        if ($idx >= 0) {
+            $ex = $data['users'][$idx];
+            if (empty($ex['sso']) && !empty($ex['password_hash'])) {
+                $err = 'esiste già un utente locale "' . $username . '". Contatta l\'amministratore.'; return null;
+            }
+            if (!empty($ex['sub'])) {
+                // Identità GIÀ ancorata: il 'sub' presentato deve coincidere.
+                if (!hash_equals((string) $ex['sub'], $sub)) {
+                    $err = 'conflitto di identità SSO per "' . $username . '". Contatta l\'amministratore.'; return null;
+                }
+            } else {
+                // Record SSO LEGACY senza ancora (provisionato prima del sub-anchoring):
+                // trust-on-first-use → lo ancoriamo ora a questo 'sub' (firmato), tracciandolo.
+                // Residuo: in scenari MULTI-IdP con username collidenti questo andrebbe
+                // reso fail-closed; per un singolo IdP (username univoco) è sicuro.
+                $backfill = true;
+            }
+            $data['users'][$idx]['sso']        = true;
+            $data['users'][$idx]['sub']        = $sub;   // sempre valorizzato (mai più sub vuoto)
+            $data['users'][$idx]['role']       = $perms['role'];
+            $data['users'][$idx]['permission'] = $perms['permission'];
+            if ($email !== '') $data['users'][$idx]['email'] = $email;
+            if ($name !== '')  $data['users'][$idx]['name'] = $name;
+            unset($data['users'][$idx]['password_hash']);   // un utente SSO non ha password locale
+            $event = 'login_sso';
+        } else {
+            $data['users'][] = [
+                'username'    => $username,
+                'sso'         => true,
+                'sub'         => $sub,
+                'email'       => $email,
+                'name'        => $name,
+                'role'        => $perms['role'],
+                'permission'  => $perms['permission'],
+                'quota_bytes' => (int) setting('default_quota_bytes', 0),
+            ];
+            $event = 'provision_sso';
         }
-        $data['users'][$idx]['sso']        = true;
-        $data['users'][$idx]['role']       = $perms['role'];
-        $data['users'][$idx]['permission'] = $perms['permission'];
-        if ($email !== '') $data['users'][$idx]['email'] = $email;
-        if ($name !== '')  $data['users'][$idx]['name'] = $name;
-        unset($data['users'][$idx]['password_hash']);   // un utente SSO non ha password locale
-        $event = 'login_sso';
-    } else {
-        $data['users'][] = [
-            'username'    => $username,
-            'sso'         => true,
-            'email'       => $email,
-            'name'        => $name,
-            'role'        => $perms['role'],
-            'permission'  => $perms['permission'],
-            'quota_bytes' => (int) setting('default_quota_bytes', 0),
-        ];
-        $event = 'provision_sso';
-    }
-    users_save($data);
+        return $data;
+    });
+    if ($err) oidc_fail($err);
 
     session_regenerate_id(true);
     $_SESSION['username'] = $username;
     $_SESSION['oidc_id_token'] = $idToken;   // per il logout (id_token_hint)
     ensure_user_home($username);
+    if ($backfill) audit('sso_sub_anchor', $username . ' ancorato a sub=' . substr($sub, 0, 12) . '…');
     audit($event, $username . ' (' . $perms['role'] . '/' . $perms['permission'] . ')');
     header('Location: index.php');
     exit;

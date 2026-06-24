@@ -50,7 +50,9 @@ function action_note_sync(): void {
     flock($h, LOCK_EX);
     $content = stream_get_contents($h);
     $lines = $content === '' ? [] : explode("\n", rtrim($content, "\n"));
-    if ($editable && is_array($incoming)) {
+    // Oltre il tetto NON si accumulano più update (il relay è effimero e viene
+    // azzerato a ogni salvataggio): impedisce la crescita illimitata del file.
+    if ($editable && is_array($incoming) && strlen($content) < NOTE_RELAY_MAX_BYTES) {
         foreach ($incoming as $b64) {
             if (is_string($b64) && $b64 !== '' && base64_decode($b64, true) !== false) $lines[] = $b64;
         }
