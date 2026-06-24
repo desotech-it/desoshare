@@ -3,10 +3,12 @@ Options -Indexes
 DirectoryIndex index.php
 
 # Blocca l'accesso diretto a file sensibili
-<FilesMatch "\.(json|md|log)$">
+<FilesMatch "\.(json|md|log|txt)$">
   Require all denied
 </FilesMatch>
-<FilesMatch "^(config|lib)\.php$">
+# I moduli interni sono include, non endpoint: solo index.php, api.php e share.php
+# vanno raggiunti via HTTP. Blocca config, lib*, api_*, storage, oidc.
+<FilesMatch "^(config|lib|lib_[a-z]+|api_[a-z]+|storage|oidc)\.php$">
   Require all denied
 </FilesMatch>
 

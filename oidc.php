@@ -232,10 +232,12 @@ function oidc_callback(): void {
     if ($nonce === '' || !hash_equals($nonce, (string) ($claims['nonce'] ?? ''))) oidc_fail('nonce non valido.');
     unset($_SESSION['oidc_nonce']);
 
-    // Verifica firma RS256 (best-effort): blocca solo se la firma è ESPLICITAMENTE errata.
+    // Verifica firma RS256 FAIL-CLOSED: il login passa SOLO se la firma è valida.
+    // Qualsiasi esito diverso (firma errata, JWKS irraggiungibile, alg non RS256,
+    // chiave non ricostruibile → null) blocca l'accesso.
     if (OIDC_VERIFY_SIGNATURE) {
         $sig = oidc_verify_signature($jwt, $c['jwks']);
-        if ($sig === false) oidc_fail('firma del token non valida.');
+        if ($sig !== true) oidc_fail('impossibile verificare la firma del token.');
     }
 
     // userinfo per claim aggiornati (in particolare i gruppi).

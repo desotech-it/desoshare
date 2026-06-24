@@ -53,8 +53,10 @@ async function renderUsersSection(body, usageRefresh) {
     <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th>Spazio</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   $('#u_new', modalBg).onclick = () => userForm();
   modalBg.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
-    if (!confirm(`Eliminare l'utente "${b.dataset.del}"?`)) return;
-    const r = await apiPost('user_delete', { username: b.dataset.del });
+    const name = b.dataset.del;
+    if (!confirm(`Eliminare l'utente "${name}"?\nLe sue condivisioni pubbliche verranno revocate.`)) return;
+    const purge = confirm(`Eliminare anche TUTTI i file di "${name}" dallo storage?\n\nOK = elimina anche i file (irreversibile)\nAnnulla = conserva i file`);
+    const r = await apiPost('user_delete', { username: name, purge: purge ? '1' : '0' });
     if (r.ok) { toast('Utente eliminato'); adminPanel('users'); } else toast(r.error || 'Errore', true);
   });
   modalBg.querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => renderUsersSection(body, b.dataset.refresh));

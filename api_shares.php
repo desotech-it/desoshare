@@ -11,6 +11,7 @@ function action_share_create(): void {
     if (!in_array($ttl, $allowed, true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
     $mode = (($_POST['mode'] ?? 'view') === 'edit') ? 'edit' : 'view';
     if ($mode === 'edit') {
+        if (!can_write()) json_out(['ok' => false, 'error' => 'Serve il permesso di scrittura per creare un link modificabile'], 403);
         if ($kind === 'dir') json_out(['ok' => false, 'error' => 'Le cartelle non sono modificabili via link'], 400);
         if (!note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
     }

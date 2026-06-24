@@ -220,6 +220,29 @@ has "non-admin NON vede le impostazioni (403)" "$(curl -s -b $RJAR "$B/api.php?a
 has "non-admin NON vede il registro (403)" "$(curl -s -b $RJAR "$B/api.php?action=audit_list")" 'amministratori'
 has "non si può declassare l'ultimo admin" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=admin --data-urlencode original=admin --data-urlencode role=user --data-urlencode permission=write "$B/api.php?action=user_save")" 'almeno un amministratore'
 
+echo "=== Hardening P0 (sicurezza) ==="
+# Edit-share richiede permesso write: semino un file di testo nella home del lettore
+mkdir -p "$SBX/storage/lettore"; printf 'ciao' > "$SBX/storage/lettore/nota.txt"
+has "read-only: view-share consentita" "$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path=nota.txt --data-urlencode ttl=86400 --data-urlencode mode=view "$B/api.php?action=share_create")" '"ok":true'
+has "read-only: edit-share VIETATA (403)" "$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path=nota.txt --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" 'permesso di scrittura'
+has "write user: edit-share consentita" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" --data-urlencode path=segreto.txt --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" '"ok":true'
+
+# Eliminazione utente a cascata: revoca le share e (purge) elimina i file
+TDJAR="$SBX/tdjar"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=eliminando --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php?action=user_save" >/dev/null
+curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=eliminando --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+TDCSRF=$(curl -s -b $TDJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" --data-urlencode path= --data-urlencode name=mio.txt --data-urlencode content=dati "$B/api.php?action=newfile" >/dev/null
+TDS=$(curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" --data-urlencode path=mio.txt --data-urlencode ttl=86400 "$B/api.php?action=share_create")
+TDTOK=$(printf '%s' "$TDS" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "share dell'utente accessibile PRIMA" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '200'
+[ -d "$SBX/storage/eliminando" ] && ok "home dell'utente presente prima" || no "home utente assente prima"
+DR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=eliminando --data-urlencode purge=1 "$B/api.php?action=user_delete")
+has "user_delete revoca 1 share" "$DR" '"revoked_shares":1'
+has "user_delete riporta purged:true" "$DR" '"purged":true'
+has "share dell'utente eliminato → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '404'
+[ ! -d "$SBX/storage/eliminando" ] && ok "purge: home eliminata" || no "purge: home ancora presente"
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'
 

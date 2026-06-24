@@ -639,8 +639,14 @@
     <table class="utable"><thead><tr><th>Utente</th><th>Ruolo</th><th>Permessi</th><th>Spazio</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
     $("#u_new", modalBg).onclick = () => userForm();
     modalBg.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
-      if (!confirm(`Eliminare l'utente "${b.dataset.del}"?`)) return;
-      const r = await apiPost("user_delete", { username: b.dataset.del });
+      const name = b.dataset.del;
+      if (!confirm(`Eliminare l'utente "${name}"?
+Le sue condivisioni pubbliche verranno revocate.`)) return;
+      const purge = confirm(`Eliminare anche TUTTI i file di "${name}" dallo storage?
+
+OK = elimina anche i file (irreversibile)
+Annulla = conserva i file`);
+      const r = await apiPost("user_delete", { username: name, purge: purge ? "1" : "0" });
       if (r.ok) {
         toast("Utente eliminato");
         adminPanel("users");

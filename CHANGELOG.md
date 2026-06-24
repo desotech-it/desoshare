@@ -6,6 +6,31 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.21.0] - 2026-06-21
+
+### Sicurezza (hardening P0, da audit esterno + verifica multi-agente)
+- **OIDC fail-closed**: il login SSO ora passa solo se la firma dell'id_token è
+  *valida*. Qualsiasi altro esito — JWKS irraggiungibile, `alg` non RS256, chiave
+  non ricostruibile — **blocca** l'accesso (prima proseguiva: fail-open). [oidc.php]
+- **Link "modificabile" solo con permesso di scrittura**: un utente in sola lettura
+  non può più creare share in modalità `edit` (che concederebbero scrittura via
+  link pubblico). Le share in sola lettura restano consentite. [api_shares.php]
+- **Eliminazione utente a cascata**: rimuovendo un utente vengono ora **revocate le
+  sue condivisioni** (i link pubblici smettono di esporre i dati) e **invalidata la
+  cache di quota**; opzione `purge` per eliminare anche i suoi file. [api_users.php]
+- **Download condiviso S3 a TTL breve e legato alla scadenza**: l'URL presigned del
+  download singolo dura `min(120s, tempo residuo del link)` invece di 5 min fissi,
+  così una URL già emessa non sopravvive a lungo alla revoca/scadenza. [share.php]
+- **`.htaccess`**: negato l'accesso HTTP diretto ai moduli interni
+  (`lib_*.php`, `api_*.php`, `storage.php`) e ai file `.txt`. La superficie era
+  stata allargata dallo split modulare; restano raggiungibili solo `index.php`,
+  `api.php`, `share.php`.
+
+### Test
+- `api_test.sh`: **102** (+9: edit-share negata ai read-only, consentita ai writer;
+  eliminazione utente revoca le share e fa purge).
+- `oidc_test.sh`: **38** (+2: JWKS irraggiungibile / alg errato → verify `null`).
+
 ## [0.20.2] - 2026-06-21
 
 ### Rimosso

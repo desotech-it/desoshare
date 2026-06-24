@@ -39,6 +39,11 @@ $pem = oidc_jwk_to_pem($b64u($d['rsa']['n']), $b64u($d['rsa']['e']));
 t($pem !== null && openssl_pkey_get_public($pem) !== false, 'jwk(n,e) -> PEM valido');
 openssl_sign('signing.input', $sig, $res, OPENSSL_ALGO_SHA256);
 t(openssl_verify('signing.input', $sig, $pem, OPENSSL_ALGO_SHA256) === 1, 'firma RS256 verificata col PEM ricostruito');
+// Fail-closed: se la verifica non è possibile, verify ritorna null (NON true).
+// Il callback ora blocca su qualsiasi esito diverso da true ($sig !== true).
+$jwtFake = ['header'=>['alg'=>'RS256','kid'=>'k1'], 'signing_input'=>'x', 'signature'=>'y'];
+t(oidc_verify_signature($jwtFake, 'http://127.0.0.1:1/jwks') === null, 'JWKS irraggiungibile -> verify=null (fail-closed)');
+t(oidc_verify_signature(['header'=>['alg'=>'HS256'],'signing_input'=>'x','signature'=>'y'], 'http://127.0.0.1:1/x') === null, 'alg non RS256 -> verify=null (bloccato)');
 exit($fail ? 1 : 0);
 PHP
 UOUT=$(PUB="$PUB" OIDC_CLIENT_SECRET=x php "$SBX/unit.php" 2>&1); URC=$?

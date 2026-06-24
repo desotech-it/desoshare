@@ -111,7 +111,24 @@ function action_user_delete(): void {
         json_out(['ok' => false, 'error' => 'Deve restare almeno un amministratore'], 400);
     }
     users_save($data);
-    audit('user_delete', $username);
-    json_out(['ok' => true, 'deleted' => $before - count($data['users'])]);
+
+    // Cleanup a cascata. Chiude SEMPRE l'esposizione dei dati dell'utente rimosso:
+    //  - revoca le sue condivisioni pubbliche (altrimenti i link restano serviti);
+    //  - invalida la cache di quota.
+    // La cancellazione dei FILE è distruttiva → solo su richiesta esplicita (purge=1).
+    $sd = shares_load();
+    $sbefore = count($sd['shares']);
+    $sd['shares'] = array_values(array_filter($sd['shares'], fn($s) => ($s['created_by'] ?? '') !== $username));
+    $revoked = $sbefore - count($sd['shares']);
+    if ($revoked > 0) shares_save($sd);
+    usage_invalidate($username);
+
+    $purged = false;
+    if (!empty($_POST['purge']) && $username !== '') {
+        $purged = storage()->deletePath(user_prefix($username), true);
+    }
+
+    audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));
+    json_out(['ok' => true, 'deleted' => $before - count($data['users']), 'revoked_shares' => $revoked, 'purged' => $purged]);
 }
 

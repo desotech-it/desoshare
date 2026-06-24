@@ -14,8 +14,14 @@ $p = $_GET['p'] ?? '';
 if (isset($_GET['dl'])) {
     $target = ($type === 'file') ? share_base($share) : share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'file') { http_response_code(404); echo 'File non trovato'; exit; }
-    $url = storage()->downloadRedirect($target, basename($target));   // S3 → presigned diretto
-    if ($url !== null) { header('Location: ' . $url); exit; }
+    if (storage_is_s3()) {
+        // Presigned a TTL breve e MAI oltre la scadenza del link: una URL già
+        // emessa non sopravvive alla revoca/scadenza più di SHARE_DL_PRESIGN_TTL.
+        $remaining = max(15, (int) $share['expires_at'] - time());
+        $ttl = min(SHARE_DL_PRESIGN_TTL, $remaining);
+        header('Location: ' . storage()->presignGet($target, $ttl, basename($target)));
+        exit;
+    }
     stream_file(STORAGE_DIR . '/' . $target, basename($target));
 }
 
