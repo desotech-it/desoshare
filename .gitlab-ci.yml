@@ -22,7 +22,10 @@ stages: [test, deploy]
   image: php:8.2-cli   # stessa major/minor del server Hostinger
   stage: test
   before_script:
-    - apt-get update -qq && apt-get install -yqq --no-install-recommends curl openssl ca-certificates > /dev/null
+    # libzip-dev + ext-zip: il server ha zip abilitato (PHP 8.5); l'immagine cli no.
+    # Serve a action=zip (ZipArchive) — senza, api_test.sh fallisce su "firma PK".
+    - apt-get update -qq && apt-get install -yqq --no-install-recommends curl openssl ca-certificates libzip-dev > /dev/null
+    - docker-php-ext-install zip > /dev/null 2>&1
 
 lint:
   <<: *php
