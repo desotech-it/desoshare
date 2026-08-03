@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.12.0** · stato: in sviluppo (0.x.x)
+Versione: **0.23.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -66,18 +66,28 @@ Versione: **0.12.0** · stato: in sviluppo (0.x.x)
   domains/<dominio>/
   ├── public_html/        ← l'applicazione (servita dal web)
   │   ├── index.php        front controller: setup, login, app, admin
-  │   ├── api.php          operazioni: list, upload(chunk), download(range), zip, utenti…
-  │   ├── lib.php          helper: sessioni, permessi, CSRF, percorsi sicuri
-  │   ├── config.php       costanti e percorsi
+  │   ├── api.php          dispatcher sottile → moduli api_*.php (CSRF, routing)
+  │   ├── api_*.php        operazioni per area: files, upload(chunk), zip, users,
+  │   │                    settings, shares, notes
+  │   ├── lib.php          orchestratore: require_once dei moduli lib_*.php
+  │   ├── lib_*.php        helper coesi: util (sessioni/CSRF/header sicurezza/JSON
+  │   │                    atomico), auth, crypto, paths, quota, download, users,
+  │   │                    settings, shares, notes, audit
+  │   ├── oidc.php         login SSO OpenID Connect (Authorization Code + PKCE)
+  │   ├── config.php       costanti e percorsi (APP_VERSION)
   │   ├── storage.php      astrazione dello storage (backend Locale o S3/Wasabi)
   │   ├── share.php        pagina pubblica dei link di condivisione
   │   ├── assets/          app.css, app.js (bundle), editor note (frontend, vanilla JS)
-  │   ├── .htaccess        protezioni
+  │   ├── .htaccess        protezioni (nega accesso HTTP diretto a lib_*/api_*/…)
   │   └── .user.ini        limiti di upload PHP
   ├── storage/            ← i file gestiti in locale (NON accessibili dal web)
   └── appdata/            ← users.json, settings.json, shares.json, audit.log,
                             blocchi temporanei di upload, segreto di cifratura
   ```
+
+  I file `api.php`/`lib.php` erano in origine monolitici e sono stati **scissi in
+  moduli** (`api_*.php`, `lib_*.php`) senza cambiare comportamento; `index.php`
+  include solo `lib.php` e ogni richiesta passa dal dispatcher `api.php`.
 
 - **Storage astratto**: un'interfaccia comune (`storage.php`) gestisce sia il
   **backend locale** (cartella `storage/`) sia un **backend S3-compatibile**
@@ -115,6 +125,25 @@ la produzione non richiede una build.
 - File utenti e file gestiti **fuori dal web root**; i download passano sempre
   da PHP con controllo di autenticazione.
 - Sessioni con cookie `HttpOnly` e `SameSite=Lax`.
+- **Header di sicurezza** su tutte le pagine HTML (login incluso):
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN` + CSP
+  `frame-ancestors 'self'` (anti-clickjacking), `Referrer-Policy: no-referrer`
+  e **HSTS** su HTTPS.
+- **Rate-limiting del login locale**: dopo 8 tentativi falliti dallo stesso IP,
+  blocco temporaneo (5 min).
+- **SSO fail-closed e identità ancorata al `sub`**: l'accesso OIDC passa solo se la
+  firma dell'`id_token` è valida (JWKS irraggiungibile / `alg` non RS256 →
+  bloccato); l'identità è legata al claim firmato `sub`, non a
+  `preferred_username`, per prevenire account takeover per collisione di username.
+  Lo scambio del token usa **PKCE** (S256).
+- **`.htaccess`**: negato l'accesso HTTP diretto ai moduli interni (`lib_*.php`,
+  `api_*.php`, `storage.php`) e ai `.txt`; restano raggiungibili solo `index.php`,
+  `api.php`, `share.php`, `oidc.php`.
+- **Persistenza JSON atomica e serializzata**: scritture su temp + `rename()`
+  atomico e lock esclusivo sull'intera read-modify-write (niente file troncati né
+  *lost update* sotto concorrenza).
+- **`audit.log` con rotazione** (cap ~2 MB, 1 backup); le condivisioni
+  (`share_create`/`share_revoke`) sono tracciate a registro.
 
 ## Requisiti
 
@@ -195,7 +224,12 @@ Suite di regressione in [`tests/`](tests/):
 
 - `tests/api_test.sh` — verifica end-to-end delle API (CRUD, upload a chunk
   singolo/parallelo/ripresa, cartelle, download con Range, ZIP, e i controlli di
-  sicurezza) su un'istanza isolata avviata con `php -S`.
+  sicurezza: header, rate-limit login, share) su un'istanza isolata avviata con
+  `php -S`.
+- `tests/oidc_test.sh` — copre il flusso SSO/OpenID Connect (verifica firma
+  `id_token`, fail-closed su JWKS/`alg`, PKCE).
+- `tests/s3_test.sh` — esercita il backend S3/Wasabi reale (chiavi, streaming ZIP,
+  `sizeOf` esatto, home root).
 - `tests/js_smoke.mjs` — esegue il frontend in un DOM simulato (jsdom) per
   intercettare errori di runtime al caricamento.
 
