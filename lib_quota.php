@@ -21,15 +21,17 @@ function usage_get(string $username, bool $fresh = false): int {
     if (!$fresh && is_array($e) && isset($e['bytes'], $e['ts']) && (time() - (int) $e['ts']) < USAGE_TTL) {
         return (int) $e['bytes'];
     }
-    $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir)
-    usage_set($username, $bytes);
-    return $bytes;
-}
-function usage_set(string $username, int $bytes): void {
-    with_json_lock(usage_file(), function (array $c) use ($username, $bytes) {
+    $t0 = time();
+    $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir), fuori lock
+    // Scrittura CONDIZIONALE: se durante il LIST un usage_bump concorrente (fine
+    // upload, delete) ha aggiornato la voce, il totale calcolato qui è già stantio
+    // e sovrascriverlo cancellerebbe quel delta → si tiene la voce più recente.
+    with_json_lock(usage_file(), function (array $c) use ($username, $bytes, $t0) {
+        if ((int) ($c[$username]['ts'] ?? -1) >= $t0) return null;   // bump più recente: non scrivere
         $c[$username] = ['bytes' => max(0, $bytes), 'ts' => time()];
         return $c;
     });
+    return $bytes;
 }
 // Aggiorna il consumo col delta noto (percorso caldo: niente LIST). Lock sull'INTERA
 // read-modify-write → bump concorrenti non si perdono (niente deriva della quota).
