@@ -81,6 +81,17 @@ function action_upload_finish(): void {
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     if ($total < 0 || $chunkSize <= 0) json_out(['ok' => false, 'error' => 'Parametri non validi'], 400);
 
+    // File da 0 byte: nessun blocco può esistere (upload_chunk rifiuta total<=0),
+    // quindi niente .part da pretendere — si crea direttamente il file vuoto.
+    if ($total === 0) {
+        $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
+        $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
+        if (!storage()->writeFile($dest, '')) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
+        usage_bump((string) $_SESSION['username'], -$repl);
+        @unlink(manifest_path($uid));
+        json_out(['ok' => true]);
+    }
+
     $part = upload_part($uid);
     if (!is_file($part)) json_out(['ok' => false, 'error' => 'Upload non trovato'], 404);
     $m = manifest_read($uid);
