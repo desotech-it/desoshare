@@ -389,7 +389,7 @@
     };
     slugEl.oninput = updHint;
     updHint();
-    $("#sh_create", modalBg).onclick = async () => {
+    $("#sh_create", modalBg).onclick = guardSubmit($("#sh_create", modalBg), async () => {
       const ttl = $("#sh_ttl", modalBg).value;
       const mode = canEdit ? $("#sh_mode", modalBg).value : "view";
       const r = await apiPost("share_create", { path: rel, ttl, mode, slug: slugEl.value });
@@ -409,7 +409,7 @@
         copyText(r.url);
         toast("Link copiato");
       };
-    };
+    });
   }
   async function sharesPanel() {
     const r = await apiGet("share_list");

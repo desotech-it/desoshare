@@ -2,7 +2,7 @@
 import { S, modalBg, $ } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, isTextFile, copyText, fmtDuration, slugify } from './util.js';
-import { openModal } from './modal.js';
+import { openModal, guardSubmit } from './modal.js';
 
 export function shareDialog(rel, name) {
   const canEdit = isTextFile(name);
@@ -37,7 +37,8 @@ export function shareDialog(rel, name) {
     hintEl.textContent = sl ? '→ ' + base + '/d/' + sl : 'Vuoto = link casuale non indovinabile.';
   };
   slugEl.oninput = updHint; updHint();
-  $('#sh_create', modalBg).onclick = async () => {
+  // guardSubmit: un doppio click creerebbe due condivisioni (o un 409 spurio con slug)
+  $('#sh_create', modalBg).onclick = guardSubmit($('#sh_create', modalBg), async () => {
     const ttl = $('#sh_ttl', modalBg).value;
     const mode = canEdit ? $('#sh_mode', modalBg).value : 'view';
     const r = await apiPost('share_create', { path: rel, ttl, mode, slug: slugEl.value });
@@ -48,7 +49,7 @@ export function shareDialog(rel, name) {
       <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
     const inp = $('#sh_url', modalBg); inp.focus(); inp.select();
     $('#sh_copy', modalBg).onclick = () => { copyText(r.url); toast('Link copiato'); };
-  };
+  });
 }
 export async function sharesPanel() {
   const r = await apiGet('share_list');
