@@ -52,7 +52,10 @@
     if (statusEl) statusEl.textContent = info.editable ? 'connesso' : 'sola lettura';
     let stopped = false, saveTimer = null, dirty = false;
     const saveNow = async () => { if (!dirty || !info.editable) return; dirty = false; try { await save(ytext.toString()); } catch (_) {} };
-    ytext.observe(() => { if (info.editable) { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
+    // Solo le modifiche LOCALI marcano dirty: gli update arrivati dal relay
+    // (origin 'remote') non devono far salvare ogni client che ha la nota aperta
+    // (N salvataggi ridondanti per modifica + reset continui del relay).
+    ytext.observe((ev, tr) => { if (info.editable && tr.origin !== 'remote') { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
     const renderPresence = () => {
       if (!presEl) return;
       const names = new Set();
