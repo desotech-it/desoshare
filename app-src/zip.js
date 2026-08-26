@@ -4,10 +4,16 @@ import { toast } from './util.js';
 
 export function downloadZip(paths) {
   if (!paths.length) { toast('Niente da scaricare', true); return; }
-  const q = new URLSearchParams();
-  q.set('action', 'zip');
-  paths.forEach(p => q.append('paths[]', p));
-  window.location = 'api.php?' + q.toString();
+  // Form POST auto-inviato (non window.location): con selezioni ampie l'elenco
+  // paths[] in GET supererebbe la request line del server (414/400).
+  const form = document.createElement('form');
+  form.method = 'POST'; form.action = 'api.php?action=zip'; form.style.display = 'none';
+  for (const p of paths) {
+    const i = document.createElement('input');
+    i.type = 'hidden'; i.name = 'paths[]'; i.value = p;
+    form.appendChild(i);
+  }
+  document.body.appendChild(form); form.submit(); form.remove();
 }
 
 // Carica JSZip in locale (vendorizzato, lazy: un solo <script> al primo uso).
@@ -51,10 +57,9 @@ export async function startZip(paths) {
   if (!paths.length) { toast('Niente da scaricare', true); return; }
   let manifest = null;
   try {
-    const q = new URLSearchParams();
-    q.set('action', 'zip_manifest');
-    paths.forEach(p => q.append('paths[]', p));
-    const r = await fetch('api.php?' + q.toString());
+    const fd = new FormData();
+    paths.forEach(p => fd.append('paths[]', p));   // POST: nessun limite di lunghezza URL
+    const r = await fetch('api.php?action=zip_manifest', { method: 'POST', body: fd });
     manifest = await r.json();
   } catch (_) { manifest = null; }
   if (!manifest || !manifest.ok || manifest.mode !== 'client' || !Array.isArray(manifest.files)) {

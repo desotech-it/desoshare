@@ -3,7 +3,9 @@
 // ─── File: download ZIP (compressione) ───────────────────────────────────────
 function action_zip(): void {
     require_login();
-    $paths = $_GET['paths'] ?? [];
+    // Anche via POST: con selezioni ampie l'elenco paths[] in GET supera la
+    // request line del server (414); il client usa un form POST auto-inviato.
+    $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);
     if (is_string($paths)) $paths = [$paths];
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
     if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
@@ -29,7 +31,7 @@ function action_zip(): void {
 // o oltre i limiti ritorna mode:'server' (il client userà il server-zip esistente).
 function action_zip_manifest(): void {
     require_login();
-    $paths = $_GET['paths'] ?? [];
+    $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);   // anche via POST (selezioni ampie)
     if (is_string($paths)) $paths = [$paths];
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
     if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);

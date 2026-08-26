@@ -78,6 +78,9 @@ has "header Accept-Ranges" "$RH" "Accept-Ranges: bytes"
 echo "=== Download ZIP ==="
 curl -s -b $JAR "$B/api.php?action=zip&paths[]=docs&paths[]=up.bin" -o "$SBX/z.zip"
 has "zip valido (firma PK)" "$(head -c2 "$SBX/z.zip")" "PK"
+# paths[] anche via POST (selezioni ampie: il GET supererebbe la request line)
+curl -s -b $JAR --data-urlencode "paths[]=docs" --data-urlencode "paths[]=up.bin" "$B/api.php?action=zip" -o "$SBX/zp.zip"
+has "zip via POST valido (firma PK)" "$(head -c2 "$SBX/zp.zip")" "PK"
 # Backend LOCALE: zip_manifest deve ritornare mode:'server' (il client userà il server-zip).
 ZM=$(curl -s -b $JAR "$B/api.php?action=zip_manifest&paths[]=docs&paths[]=up.bin")
 has "zip_manifest locale → mode:server" "$ZM" '"mode":"server"'

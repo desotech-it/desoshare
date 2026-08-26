@@ -148,10 +148,20 @@
       toast("Niente da scaricare", true);
       return;
     }
-    const q = new URLSearchParams();
-    q.set("action", "zip");
-    paths.forEach((p) => q.append("paths[]", p));
-    window.location = "api.php?" + q.toString();
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = "api.php?action=zip";
+    form.style.display = "none";
+    for (const p of paths) {
+      const i = document.createElement("input");
+      i.type = "hidden";
+      i.name = "paths[]";
+      i.value = p;
+      form.appendChild(i);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
   }
   var _jszipLoading = null;
   function loadJSZip() {
@@ -195,10 +205,9 @@
     }
     let manifest = null;
     try {
-      const q = new URLSearchParams();
-      q.set("action", "zip_manifest");
-      paths.forEach((p) => q.append("paths[]", p));
-      const r = await fetch("api.php?" + q.toString());
+      const fd = new FormData();
+      paths.forEach((p) => fd.append("paths[]", p));
+      const r = await fetch("api.php?action=zip_manifest", { method: "POST", body: fd });
       manifest = await r.json();
     } catch (_) {
       manifest = null;
