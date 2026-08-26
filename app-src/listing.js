@@ -7,8 +7,11 @@ import { openEditor } from './editor.js';
 import { shareDialog } from './shares.js';
 import { renameDialog, deleteDialog } from './dialogs.js';
 
+let loadSeq = 0;   // guard di sequenza: una risposta partita prima ma arrivata dopo non deve vincere
 export async function load(path = '') {
+  const my = ++loadSeq;
   const res = await apiGet('list', { path });
+  if (my !== loadSeq) return;   // nel frattempo è partita una navigazione più recente
   if (!res.ok) { toast(res.error || 'Errore', true); return; }
   S.cwd = res.path === '/' ? '' : res.path.replace(/^\//, '');
   S.items = res.items;

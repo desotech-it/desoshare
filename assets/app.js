@@ -530,8 +530,11 @@
   }
 
   // listing.js
+  var loadSeq = 0;
   async function load(path = "") {
+    const my = ++loadSeq;
     const res = await apiGet("list", { path });
+    if (my !== loadSeq) return;
     if (!res.ok) {
       toast(res.error || "Errore", true);
       return;
