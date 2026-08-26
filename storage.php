@@ -322,20 +322,26 @@ class S3Backend implements StorageBackend {
             do {
                 $q = ['list-type' => '2', 'prefix' => $pf, 'max-keys' => '1000'];
                 if ($token) $q['continuation-token'] = $token;
-                $r = s3_request($this->cfg, 'GET', '', $q);
+                $r = s3_request_retry($this->cfg, 'GET', '', $q);
                 if ($r['code'] !== 200) return false;
                 $xml = @simplexml_load_string($r['body']); if (!$xml) return false;
                 foreach ($xml->Contents as $c) {
                     $k = (string) $c->Key; $nk = $pt . substr($k, strlen($pf));
-                    if ($this->copyKey($k, $nk)) s3_request($this->cfg, 'DELETE', $k); else $ok = false;
+                    // Come in deletePath: DELETE con retry e esito VERIFICATO, altrimenti
+                    // un fallimento lascerebbe oggetti orfani sul vecchio prefisso
+                    // riportando comunque successo.
+                    if ($this->copyKey($k, $nk)) {
+                        $dr = s3_request_retry($this->cfg, 'DELETE', $k);
+                        if ($dr['code'] < 200 || $dr['code'] >= 300) $ok = false;
+                    } else { $ok = false; }
                 }
                 $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
             } while ($token);
             return $ok;
         }
         if (!$this->copyKey($this->key($from), $this->key($to))) return false;
-        s3_request($this->cfg, 'DELETE', $this->key($from));
-        return true;
+        $dr = s3_request_retry($this->cfg, 'DELETE', $this->key($from));
+        return $dr['code'] >= 200 && $dr['code'] < 300;
     }
     public function sizeOf(string $path): int {
         // Dimensione SOLO della chiave esatta: la <Key> restituita deve combaciare,
