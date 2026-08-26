@@ -19,9 +19,11 @@ if (is_string($action) && strpos($action, 'oidc_callback') === 0 && strpos($acti
 if (!users_exist()) {
     $err = null;
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'setup') {
-        $u = trim($_POST['username'] ?? '');
-        $p = (string) ($_POST['password'] ?? '');
-        if (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $u) || strlen($p) < 6) {
+        $u = $_POST['username'] ?? ''; $u = is_string($u) ? trim($u) : '';   // niente TypeError con username[]=
+        $p = $_POST['password'] ?? ''; $p = is_string($p) ? $p : '';
+        if (!login_form_csrf_ok()) {
+            $err = 'Sessione scaduta o token di sicurezza non valido: riprova.';
+        } elseif (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $u) || strlen($p) < 6) {
             $err = 'Username 3-32 caratteri (lettere, numeri, . _ -) e password di almeno 6 caratteri.';
         } else {
             users_save(['users' => [[
@@ -63,15 +65,19 @@ if (!current_user()) {
     // (così non ci si può mai chiudere completamente fuori).
     $localLogin = local_auth_enabled() || !oidc_enabled();
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'login') {
-        if (login_locked()) {
+        if (!login_form_csrf_ok()) {
+            $err = 'Sessione scaduta o token di sicurezza non valido: riprova.';
+        } elseif (login_locked()) {
             $err = 'Troppi tentativi falliti. Riprova tra qualche minuto.';
         } else {
-            $u = find_user(trim($_POST['username'] ?? ''));
+            $uname = $_POST['username'] ?? '';                                   // niente TypeError con username[]=
+            $u = find_user(is_string($uname) ? trim($uname) : '');
+            $pw = $_POST['password'] ?? ''; $pw = is_string($pw) ? $pw : '';
             if (!$localLogin) {
                 $err = 'Il login locale è disabilitato: accedi con "Accedi con desoauth".';
             } elseif ($u && !empty($u['sso'])) {
                 $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
-            } elseif ($u && !empty($u['password_hash']) && password_verify((string) ($_POST['password'] ?? ''), $u['password_hash'])) {
+            } elseif ($u && !empty($u['password_hash']) && password_verify($pw, $u['password_hash'])) {
                 login_reset();
                 session_regenerate_id(true);
                 $_SESSION['username'] = $u['username'];
@@ -92,6 +98,16 @@ render_app(current_user());
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CSRF dei form PRE-login (login locale e setup): il token viene emesso nella
+// pagina del form e deve combaciare. Un token di sessione VUOTO non è mai
+// valido: una sessione appena creata da un POST cross-site non ha mai visto
+// il form, quindi non può autenticare (login CSRF / session fixation).
+function login_form_csrf_ok(): bool {
+    $sess = (string) ($_SESSION['csrf'] ?? '');
+    $tok = $_POST['csrf'] ?? '';
+    return $sess !== '' && is_string($tok) && hash_equals($sess, $tok);
+}
+
 function page_head(string $title): string {
     security_headers();   // nosniff + anti-clickjacking + Referrer-Policy + HSTS
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
@@ -110,6 +126,7 @@ function render_setup(?string $err): void {
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=setup">
+        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(app_title()) ?></h1>
         <p class="muted">Primo avvio — crea l'account amministratore</p>
@@ -132,6 +149,7 @@ function render_login(?string $err, bool $localLogin = true): void {
     ?>
     <div class="auth-wrap">
       <form class="auth-card" method="post" action="index.php?action=login">
+        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
         <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
         <h1><?= h(app_title()) ?></h1>
         <p class="muted"><?= $localLogin && !$sso ? "Inserisci le credenziali per accedere" : "Scegli come accedere" ?></p>

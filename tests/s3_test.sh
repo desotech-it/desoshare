@@ -16,6 +16,8 @@ BUCKET="${S3_BUCKET:-desotech-desoshare}"
 PORT="${PORT:-8391}"
 
 [ -f "$CRED" ] || { echo "credentials.csv non trovato: $CRED"; exit 2; }
+# CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
+precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
 AK="$(awk -F',' 'NR==2{print $2}' "$CRED" | tr -d ' \r')"
 SK="$(awk -F',' 'NR==2{print $3}' "$CRED" | tr -d ' \r')"
@@ -42,7 +44,7 @@ sleep 1
 DIR="selftest-$(date +%s)-$$"
 
 echo "=== Setup & auth ==="
-code=$(curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null -w '%{http_code}' "$B/index.php")
+code=$(curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null -w '%{http_code}' --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php")
 has "setup crea admin (302)" "$code" "302"
 CSRF=$(curl -s -b $JAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 [ -n "$CSRF" ] && ok "token CSRF presente" || no "token CSRF assente"
@@ -132,7 +134,7 @@ echo "=== HOME ROOT + utente NON-admin col PUNTO (regressione doppio-slash) ==="
 # Crea un utente con username che contiene un punto (come gli SSO tipo n.decandia)
 post --data-urlencode action=user_save --data-urlencode username=tester.dot --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php" >/dev/null
 TDJAR="$SBX/tdjar"
-curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=tester.dot --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=tester.dot --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $TDJAR)" "$B/index.php"
 TDCSRF=$(curl -s -b $TDJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 tdpost(){ curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" "$@"; }
 # crea file NELLA HOME ROOT (path='') — è qui che viveva il bug del doppio slash

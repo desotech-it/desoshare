@@ -16,6 +16,8 @@ PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); echo "  ✓ $1"; }
 no(){ FAIL=$((FAIL+1)); echo "  ✗ $1 — ${2:-}"; }
 has(){ case "$2" in *"$3"*) ok "$1";; *) no "$1" "ricevuto: ${2:0:160}";; esac; }
+# CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
+precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
 
 echo "=== Unit: helper OIDC (crypto + mappa gruppi) ==="
@@ -58,7 +60,7 @@ trap cleanup EXIT
 sleep 1
 
 # crea admin (così esistono utenti) e poi sloggati
-curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php"
 curl -s -b $JAR -c $JAR "$B/index.php?action=logout" -o /dev/null
 
 LP=$(curl -s -b $JAR "$B/")
@@ -95,12 +97,12 @@ has "doppio-? con code -> recuperato (fallisce su stato, non sul router)" "$D2" 
 
 # Un utente SSO NON può autenticarsi con la password locale.
 AD="$SBX/appdata" php -r '$f=getenv("AD")."/users.json"; $d=json_decode(file_get_contents($f),true); $d["users"][]=["username"=>"ssouser","sso"=>true,"role"=>"user","permission"=>"read"]; file_put_contents($f,json_encode($d));'
-RLOG=$(curl -s -c $JAR2 -b $JAR2 --data-urlencode action=login --data-urlencode username=ssouser --data-urlencode password=qualsiasi "$B/index.php")
+RLOG=$(curl -s -c $JAR2 -b $JAR2 --data-urlencode action=login --data-urlencode username=ssouser --data-urlencode password=qualsiasi --data-urlencode "csrf=$(precsrf $JAR2)" "$B/index.php")
 has "utente SSO non accede con password locale" "$RLOG" 'SSO desoauth'
 
 echo "=== SSO via Impostazioni (config dinamica, precedenza su env) ==="
 ALOG="$SBX/alog"
-curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $ALOG)" "$B/index.php"
 ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 apost(){ curl -s -b $ALOG -H "X-CSRF: $ACSRF" "$@"; }
 # Prova SSO con i DEFAULT (provider reale auth.deso.tech) + secret d'ambiente errato ("testsecret").
@@ -144,7 +146,7 @@ has "login: bottone SSO presente" "$LPL" 'Accedi con desoauth'
 case "$LPL" in *'name="password"'*) no "login locale disabilitato: il campo password NON deve comparire";; *) ok "login locale disabilitato: nessun campo password";; esac
 # un POST di login locale viene rifiutato finché è disabilitato
 RJ="$SBX/rj_lock"
-RLK=$(curl -s -c $RJ -b $RJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 "$B/index.php")
+RLK=$(curl -s -c $RJ -b $RJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 --data-urlencode "csrf=$(precsrf $RJ)" "$B/index.php")
 has "login locale disabilitato: POST rifiutato" "$RLK" 'login locale è disabilitato'
 # riattiva il login locale usando la sessione admin ANCORA attiva (no lockout per le sessioni in corso)
 RA=$(apost --data-urlencode action=settings_save --data-urlencode local_auth_enabled=1 "$B/api.php")
@@ -155,7 +157,7 @@ LOC2=$(curl -s -b $ALOG -c $ALOG -o /dev/null -D - "$B/index.php?action=oidc_log
 has "redirect usa client_id delle impostazioni" "$LOC2" 'client_id=TESTCLIENT123'
 has "redirect usa authorize delle impostazioni" "$LOC2" 'idp.example/auth'
 # disabilita da impostazioni: il toggle OFF vince anche sul secret d'ambiente
-curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $ALOG)" "$B/index.php"
 ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 curl -s -b $ALOG -H "X-CSRF: $ACSRF" --data-urlencode action=settings_save --data-urlencode oidc_present=1 --data-urlencode oidc_enabled=0 "$B/api.php" -o /dev/null
 curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
@@ -165,7 +167,7 @@ case "$LPD" in *"Accedi con desoauth"*) no "toggle OFF: bottone ancora presente"
 # Con OIDC DISABILITATO (niente env) il bottone non compare.
 kill $SRV 2>/dev/null; sleep 0.3
 php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv2.log" 2>&1 & SRV=$!; sleep 1
-curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin2 --data-urlencode password=secret123 -o /dev/null "$B/index.php" 2>/dev/null
+curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin2 --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php" 2>/dev/null
 curl -s -b $JAR -c $JAR "$B/index.php?action=logout" -o /dev/null
 LP2=$(curl -s "$B/")
 case "$LP2" in *"Accedi con desoauth"*) no "OIDC off: bottone NON presente";; *) ok "OIDC off: bottone non mostrato";; esac

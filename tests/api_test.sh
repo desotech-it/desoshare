@@ -19,6 +19,8 @@ has(){ case "$2" in *"$3"*) ok "$1";; *) no "$1" "ricevuto: ${2:0:140}";; esac; 
 hasnt(){ case "$2" in *"$3"*) no "$1" "non atteso: ${2:0:140}";; *) ok "$1";; esac; }
 md5of(){ openssl dgst -md5 "$1" | sed 's/.*= //;s/.* //'; }
 
+# CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
+precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
 php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 &
 SRV=$!
@@ -27,7 +29,7 @@ trap cleanup EXIT
 sleep 1
 
 echo "=== Setup & auth ==="
-code=$(curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null -w '%{http_code}' "$B/index.php")
+code=$(curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null -w '%{http_code}' --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php")
 has "setup crea admin (302)" "$code" "302"
 CSRF=$(curl -s -b $JAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 [ -n "$CSRF" ] && ok "token CSRF presente" || no "token CSRF assente"
@@ -87,7 +89,7 @@ has "CSRF mancante → 419" "$(curl -s -o /dev/null -w '%{http_code}' -b $JAR --
 has "path traversal bloccato" "$(curl -s -b $JAR "$B/api.php?action=list&path=../../../../etc")" 'non consentito'
 # utente sola lettura
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=lettore --data-urlencode password=secret123 --data-urlencode permission=read --data-urlencode role=user "$B/api.php?action=user_save" >/dev/null
-curl -s -c $RJAR -b $RJAR --data-urlencode action=login --data-urlencode username=lettore --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $RJAR -b $RJAR --data-urlencode action=login --data-urlencode username=lettore --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $RJAR)" "$B/index.php"
 RCSRF=$(curl -s -b $RJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 has "sola-lettura può leggere" "$(curl -s -b $RJAR "$B/api.php?action=list&path=")" '"ok":true'
 has "sola-lettura NON può scrivere (403)" "$(curl -s -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path= --data-urlencode name=vietato "$B/api.php?action=mkdir")" 'permessi di lettura'
@@ -100,7 +102,7 @@ hasnt "lettore NON vede 'note.txt' di admin" "$LL" '"name":"note.txt"'
 # utente con scrittura: crea un file e admin NON lo vede (e viceversa)
 WJAR="$SBX/wjar"
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=scrittore --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php?action=user_save" >/dev/null
-curl -s -c $WJAR -b $WJAR --data-urlencode action=login --data-urlencode username=scrittore --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $WJAR -b $WJAR --data-urlencode action=login --data-urlencode username=scrittore --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $WJAR)" "$B/index.php"
 WCSRF=$(curl -s -b $WJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 has "scrittore crea 'segreto.txt' nella sua home" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" --data-urlencode path= --data-urlencode name=segreto.txt --data-urlencode content=top "$B/api.php?action=newfile")" '"ok":true'
 has "scrittore vede il proprio 'segreto.txt'" "$(curl -s -b $WJAR "$B/api.php?action=list&path=")" '"name":"segreto.txt"'
@@ -110,7 +112,7 @@ has "scrittore NON può scaricare un file di admin (400, non esiste nella sua sa
 echo "=== Quota per-utente ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=quotato --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user --data-urlencode quota_mb=1 "$B/api.php?action=user_save" >/dev/null
 QJAR="$SBX/qjar"
-curl -s -c $QJAR -b $QJAR --data-urlencode action=login --data-urlencode username=quotato --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $QJAR -b $QJAR --data-urlencode action=login --data-urlencode username=quotato --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $QJAR)" "$B/index.php"
 QCSRF=$(curl -s -b $QJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 has "quotato crea file piccolo (entro quota)" "$(curl -s -b $QJAR -H "X-CSRF: $QCSRF" --data-urlencode path= --data-urlencode name=piccolo.txt --data-urlencode content=ciao "$B/api.php?action=newfile")" '"ok":true'
 UU=$(curl -s -b $JAR "$B/api.php?action=usage_list&refresh=quotato")
@@ -230,7 +232,7 @@ has "write user: edit-share consentita" "$(curl -s -b $WJAR -H "X-CSRF: $WCSRF" 
 # Eliminazione utente a cascata: revoca le share e (purge) elimina i file
 TDJAR="$SBX/tdjar"
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=eliminando --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php?action=user_save" >/dev/null
-curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=eliminando --data-urlencode password=secret123 -o /dev/null "$B/index.php"
+curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=eliminando --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $TDJAR)" "$B/index.php"
 TDCSRF=$(curl -s -b $TDJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" --data-urlencode path= --data-urlencode name=mio.txt --data-urlencode content=dati "$B/api.php?action=newfile" >/dev/null
 TDS=$(curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" --data-urlencode path=mio.txt --data-urlencode ttl=86400 "$B/api.php?action=share_create")
@@ -264,8 +266,8 @@ has "audit registra share_create" "$AL" 'share_create'
 has "audit registra share_revoke" "$AL" 'share_revoke'
 # rate-limit: 8 tentativi falliti → il 9° è bloccato (per ULTIMO: blocca 127.0.0.1)
 RLJ="$SBX/rljar"
-for i in $(seq 1 8); do curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong -o /dev/null "$B/index.php"; done
-has "rate-limit login: bloccato dopo 8 tentativi" "$(curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong "$B/index.php")" 'Troppi tentativi'
+for i in $(seq 1 8); do curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong -o /dev/null --data-urlencode "csrf=$(precsrf $RLJ)" "$B/index.php"; done
+has "rate-limit login: bloccato dopo 8 tentativi" "$(curl -s -c $RLJ -b $RLJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=wrong --data-urlencode "csrf=$(precsrf $RLJ)" "$B/index.php")" 'Troppi tentativi'
 
 echo "=== Unit: persistenza JSON atomica (lib_util) ==="
 cat > "$SBX/punit.php" <<'PHP'
