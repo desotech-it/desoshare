@@ -82,7 +82,7 @@ function s3_uri_encode(string $s, bool $encodeSlash = true): string {
         } elseif ($c === '/') {
             $out .= $encodeSlash ? '%2F' : '/';
         } else {
-            $out .= '%' . strtoupper(dechex(ord($c)));
+            $out .= sprintf('%%%02X', ord($c));   // SEMPRE due cifre hex (0x09 → %09, non %9)
         }
     }
     return $out;
