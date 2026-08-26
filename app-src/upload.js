@@ -64,6 +64,14 @@ async function uploadOne(r, base) {
   const f = r.it.file;
   const dir = [base, r.it.rel].filter(Boolean).join('/');
   const uid = await fileUid(dir, f);
+  // File vuoto: nessun chunk da inviare (il server li rifiuta con total=0);
+  // si va diretti alla finalizzazione, che crea il file vuoto.
+  if (f.size === 0) {
+    const fin = await apiPost('upload_finish', { uid, path: dir, name: f.name, total: 0, chunk_size: CHUNK });
+    if (!fin.ok) throw new Error(fin.error || 'finalizzazione fallita');
+    setProg(r, 0, 0);
+    return;
+  }
   let chunkSize = CHUNK; const doneSet = new Set();
   try {
     const st = await fetch('api.php?action=upload_status&uid=' + uid).then(x => x.json());

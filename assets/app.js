@@ -975,6 +975,12 @@ Annulla = conserva i file`);
     const f = r.it.file;
     const dir = [base, r.it.rel].filter(Boolean).join("/");
     const uid = await fileUid(dir, f);
+    if (f.size === 0) {
+      const fin2 = await apiPost("upload_finish", { uid, path: dir, name: f.name, total: 0, chunk_size: CHUNK });
+      if (!fin2.ok) throw new Error(fin2.error || "finalizzazione fallita");
+      setProg(r, 0, 0);
+      return;
+    }
     let chunkSize = CHUNK;
     const doneSet = /* @__PURE__ */ new Set();
     try {
