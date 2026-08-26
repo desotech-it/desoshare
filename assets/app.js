@@ -287,7 +287,9 @@
       <span id="ed_pres" class="muted" style="font-size:12px"></span>
       <button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
     const host = $("#ed_host", modalBg), statusEl = $("#ed_status", modalBg), presEl = $("#ed_pres", modalBg);
+    const gone = () => !document.body.contains(host);
     const info = await apiGet("note_open", { path: rel });
+    if (gone()) return;
     if (!info.ok) {
       statusEl.textContent = "";
       host.innerHTML = '<div style="padding:14px">' + esc(info.error || "Errore") + "</div>";
@@ -299,6 +301,7 @@
     } catch (e) {
       E = null;
     }
+    if (gone()) return;
     if (E) {
       S.editorCleanup = window.NoteEditor.mount({
         host,
