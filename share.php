@@ -88,12 +88,16 @@ function share_head(string $title): void {
 }
 function share_expiry_html(array $s): string {
     $exp = (int) $s['expires_at'];
-    return '<p class="share-exp" data-exp="' . $exp . '"><i class="ti ti-clock"></i> '
+    // data-rem = secondi RESIDUI calcolati dal server: il countdown client non deve
+    // dipendere dall'orologio del visitatore (un clock avanti causava reload infiniti).
+    return '<p class="share-exp" data-rem="' . max(0, $exp - time()) . '"><i class="ti ti-clock"></i> '
          . 'Disponibile fino al ' . h(date('d/m/Y H:i', $exp)) . ' · <span class="share-rem"></span></p>';
 }
 function share_footer(): void {
-    echo '<script>(function(){function f(s){s=Math.floor(s);var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return d>0?d+"g "+h+"h":h>0?h+"h "+m+"m":m>0?m+"m "+x+"s":x+"s";}'
-       . 'function t(){document.querySelectorAll(".share-exp").forEach(function(e){var r=e.dataset.exp-Date.now()/1000;var s=e.querySelector(".share-rem");if(r<=0){location.reload();}else if(s){s.textContent="scade tra "+f(r);}});}t();setInterval(t,1000);})();</script>'
+    echo '<script>(function(){var RL=false;function f(s){s=Math.floor(s);var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60),x=s%60;return d>0?d+"g "+h+"h":h>0?h+"h "+m+"m":m>0?m+"m "+x+"s":x+"s";}'
+       // Deadline ancorata al tempo residuo del SERVER (data-rem) al caricamento: il
+       // clock skew del client si elide; al più UN reload (flag) a scadenza raggiunta.
+       . 'function t(){document.querySelectorAll(".share-exp").forEach(function(e){if(!e.dataset.dl)e.dataset.dl=Date.now()/1000+ +e.dataset.rem;var r=e.dataset.dl-Date.now()/1000;var s=e.querySelector(".share-rem");if(r<=0){if(!RL){RL=true;location.reload();}}else if(s){s.textContent="scade tra "+f(r);}});}t();setInterval(t,1000);})();</script>'
        . '<p class="share-brand"><img src="assets/desolabs-icon.png" alt=""> ' . h(APP_NAME) . '</p>'
        . '</body></html>';
 }
