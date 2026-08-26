@@ -152,7 +152,10 @@ function s3_request(array $cfg, string $method, string $key, array $query = [], 
     // curl_close() è un no-op deprecato da PHP 8.0; lasciare che il GC chiuda l'handle.
     if (isset($fp) && is_resource($fp)) fclose($fp);
     if ($sink !== null && is_resource($sink)) fclose($sink);
-    return ['code' => (int) $code, 'body' => $sink !== null ? '' : (string) $resp, 'error' => $cerr];
+    // Se curl_exec è fallito il trasferimento NON è completo anche quando gli header
+    // erano già arrivati (CURLINFO_HTTP_CODE=200 con body troncato, es. timeout o
+    // reset a metà download): code=0 così i chiamanti/retry lo trattano da errore.
+    return ['code' => $cerr !== '' ? 0 : (int) $code, 'body' => $sink !== null ? '' : (string) $resp, 'error' => $cerr];
 }
 
 // Variante con retry per i metodi idempotenti (HEAD/GET/DELETE/list): ritenta sui
