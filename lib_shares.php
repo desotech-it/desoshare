@@ -59,12 +59,14 @@ function shares_prune(): array {
 function share_find(string $id): ?array {
     if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/', $id)) return null;
     $idl = strtolower($id);
+    $now = time();
     foreach (shares_load()['shares'] as $s) {
+        // Le voci scadute vengono saltate (non rimosse qui): uno slug riusato su
+        // una nuova share NON deve essere oscurato da una vecchia voce scaduta.
+        if (($s['expires_at'] ?? 0) <= $now) continue;
         $tok = strtolower($s['token'] ?? '');
         $slug = strtolower($s['slug'] ?? '');
-        if ($tok === $idl || ($slug !== '' && $slug === $idl)) {
-            return (($s['expires_at'] ?? 0) > time()) ? $s : null;
-        }
+        if ($tok === $idl || ($slug !== '' && $slug === $idl)) return $s;
     }
     return null;
 }
