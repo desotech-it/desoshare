@@ -1,10 +1,10 @@
 import * as Y from 'yjs';
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, highlightSpecialChars } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching } from '@codemirror/language';
-import { yCollab } from 'y-codemirror.next';
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import { Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness';
 
 function basicExtensions(editable) {
@@ -13,8 +13,10 @@ function basicExtensions(editable) {
     indentOnInput(), bracketMatching(), highlightActiveLine(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     markdown(), EditorView.lineWrapping,
-    keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-    history(),
+    // Undo/redo di Yjs (yCollab installa già un Y.UndoManager che traccia solo le
+    // origini locali): la history nativa di CodeMirror registrerebbe anche le
+    // transazioni della sync plugin, e Ctrl+Z annullerebbe il testo degli ALTRI.
+    keymap.of([...defaultKeymap, ...yUndoManagerKeymap, indentWithTab]),
   ];
   if (!editable) ext.push(EditorView.editable.of(false));
   return ext;
