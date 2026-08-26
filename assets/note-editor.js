@@ -12,8 +12,14 @@
     window.__edLoad = new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = url;
-      s.onload = () => window.DesoEditor ? resolve(window.DesoEditor) : reject(new Error('bundle non valido'));
-      s.onerror = () => reject(new Error('caricamento editor fallito'));
+      // In caso di errore la cache va AZZERATA (e lo <script> rimosso): altrimenti
+      // la promise rifiutata resterebbe memorizzata e ogni apertura successiva
+      // ripiegherebbe sull'editor semplice anche a rete ripristinata.
+      s.onload = () => {
+        if (window.DesoEditor) resolve(window.DesoEditor);
+        else { window.__edLoad = null; s.remove(); reject(new Error('bundle non valido')); }
+      };
+      s.onerror = () => { window.__edLoad = null; s.remove(); reject(new Error('caricamento editor fallito')); };
       document.head.appendChild(s);
     });
     return window.__edLoad;
