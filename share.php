@@ -73,7 +73,12 @@ function share_head(string $title): void {
     security_headers();   // nosniff + anti-clickjacking + Referrer-Policy + HSTS
     $v = @filemtime(PUBLIC_DIR . '/assets/app.css');
     $icons = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css';
+    // I link "belli" /d/<slug> sono rewrite INTERNI: il browser resta su /d/… e
+    // risolverebbe ogni URL relativo (asset, share.php, api.php) sotto /d/ → 404.
+    // Il tag <base> ancora tutti gli URL relativi alla radice reale dell'app.
+    $base = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/') . '/';
     echo '<!doctype html><html lang="it"><head><meta charset="utf-8">'
+       . '<base href="' . h($base) . '">'
        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
        . '<title>' . h($title) . ' · ' . h(APP_NAME) . '</title>'
        . '<link rel="icon" href="favicon.ico">'
