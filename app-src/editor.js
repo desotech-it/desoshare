@@ -46,5 +46,7 @@ export function editorFallback(rel, info, host, statusEl) {
   host.appendChild(ta);
   let t = null, dirty = false;
   if (info.editable) ta.oninput = () => { dirty = true; clearTimeout(t); t = setTimeout(async () => { if (!dirty) return; dirty = false; const r = await apiPost('note_save', { path: rel, content: ta.value }); statusEl.textContent = r.ok ? 'salvato' : 'errore salvataggio'; }, 1500); };
-  S.editorCleanup = () => { clearTimeout(t); };
+  // Alla chiusura salva le modifiche in sospeso (come fa mount() con saveNow):
+  // il debounce da 1,5s non deve scartare le ultime digitazioni.
+  S.editorCleanup = () => { clearTimeout(t); if (dirty) { dirty = false; apiPost('note_save', { path: rel, content: ta.value }); } };
 }

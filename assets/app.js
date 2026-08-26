@@ -337,6 +337,10 @@
     };
     S.editorCleanup = () => {
       clearTimeout(t);
+      if (dirty) {
+        dirty = false;
+        apiPost("note_save", { path: rel, content: ta.value });
+      }
     };
   }
 
