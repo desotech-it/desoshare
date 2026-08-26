@@ -68,7 +68,12 @@
       catch (_) { if (send.length) pending.unshift.apply(pending, send); return; }
       if (r && r.ok) {
         (r.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
-        offset = r.offset;
+        // Il relay viene AZZERATO a ogni note_save: se l'offset del server è
+        // regredito sotto il nostro, le righe 0..count-1 sono nuove e non ci sono
+        // mai state consegnate (since oltre il conteggio → slice vuota). Si riparte
+        // da 0: al prossimo tick arriverà tutto (applicare update Yjs già noti è
+        // idempotente).
+        offset = (r.offset < offset && !(r.updates || []).length) ? 0 : r.offset;
         (r.aware || []).forEach(a => { try { applyAwarenessUpdate(awareness, b64ToU8(a.b64), 'remote'); } catch (_) {} });
         renderPresence();
       } else if (send.length) { pending.unshift.apply(pending, send); }
