@@ -27,8 +27,16 @@ export function fmtBytes(b) { if (b < 1024) return b + ' B'; const u = ['KB', 'M
 export function fmtTime(iso) { try { return new Date(iso).toLocaleString('it-IT'); } catch (_) { return iso; } }
 
 export function copyText(t) {
-  try { navigator.clipboard.writeText(t); }
-  catch (_) { const i = document.createElement('textarea'); i.value = t; document.body.appendChild(i); i.select(); try { document.execCommand('copy'); } catch (e) {} i.remove(); }
+  const fallback = () => {
+    const i = document.createElement('textarea'); i.value = t; document.body.appendChild(i); i.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    i.remove();
+  };
+  // writeText può RIFIUTARE la promise (permesso negato, documento non a fuoco):
+  // senza .catch la rejection finiva al handler globale (toast d'errore) e il
+  // fallback execCommand non veniva mai eseguito.
+  try { return Promise.resolve(navigator.clipboard.writeText(t)).catch(fallback); }
+  catch (_) { fallback(); return Promise.resolve(); }
 }
 
 export function fmtDuration(s) {

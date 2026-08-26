@@ -92,9 +92,7 @@
     }
   }
   function copyText(t) {
-    try {
-      navigator.clipboard.writeText(t);
-    } catch (_) {
+    const fallback = () => {
       const i = document.createElement("textarea");
       i.value = t;
       document.body.appendChild(i);
@@ -104,6 +102,12 @@
       } catch (e) {
       }
       i.remove();
+    };
+    try {
+      return Promise.resolve(navigator.clipboard.writeText(t)).catch(fallback);
+    } catch (_) {
+      fallback();
+      return Promise.resolve();
     }
   }
   function fmtDuration(s) {
