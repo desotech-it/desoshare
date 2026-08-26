@@ -41,20 +41,28 @@ export function uploadItems(items) {
     return { it, bar: row.querySelector('.progress > div'), stat: row.querySelector('.up-stat'), done: false };
   });
   const closeBtn = $('#up_close', modalBg);
+  // Destinazione catturata UNA volta all'avvio del batch: durante gli upload
+  // l'utente può navigare altrove (S.cwd cambia) e i file successivi finirebbero
+  // nella cartella sbagliata. Inoltre Escape/click sul fondo non devono chiudere
+  // il modale a batch in corso (S.uploading è controllato da closeModal).
+  const base = S.cwd;
+  S.uploading = true;
   (async () => {
-    for (const r of rows) {
-      try { await uploadOne(r); r.done = true; r.stat.textContent = 'completato'; r.stat.style.color = 'var(--ok)'; }
-      catch (e) { r.stat.textContent = 'errore: ' + (e.message || e); r.stat.style.color = 'var(--danger)'; }
-    }
+    try {
+      for (const r of rows) {
+        try { await uploadOne(r, base); r.done = true; r.stat.textContent = 'completato'; r.stat.style.color = 'var(--ok)'; }
+        catch (e) { r.stat.textContent = 'errore: ' + (e.message || e); r.stat.style.color = 'var(--danger)'; }
+      }
+    } finally { S.uploading = false; }
     closeBtn.disabled = false;
     closeBtn.onclick = () => { closeModal(); load(S.cwd); };
     load(S.cwd);
   })();
 }
 
-async function uploadOne(r) {
+async function uploadOne(r, base) {
   const f = r.it.file;
-  const dir = [S.cwd, r.it.rel].filter(Boolean).join('/');
+  const dir = [base, r.it.rel].filter(Boolean).join('/');
   const uid = await fileUid(dir, f);
   let chunkSize = CHUNK; const doneSet = new Set();
   try {

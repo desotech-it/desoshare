@@ -226,6 +226,7 @@
     if (first) first.focus();
   }
   function closeModal() {
+    if (S.uploading) return;
     if (S.shareTimer) {
       clearInterval(S.shareTimer);
       S.shareTimer = null;
@@ -944,17 +945,23 @@ Annulla = conserva i file`);
       return { it, bar: row.querySelector(".progress > div"), stat: row.querySelector(".up-stat"), done: false };
     });
     const closeBtn = $("#up_close", modalBg);
+    const base = S.cwd;
+    S.uploading = true;
     (async () => {
-      for (const r of rows) {
-        try {
-          await uploadOne(r);
-          r.done = true;
-          r.stat.textContent = "completato";
-          r.stat.style.color = "var(--ok)";
-        } catch (e) {
-          r.stat.textContent = "errore: " + (e.message || e);
-          r.stat.style.color = "var(--danger)";
+      try {
+        for (const r of rows) {
+          try {
+            await uploadOne(r, base);
+            r.done = true;
+            r.stat.textContent = "completato";
+            r.stat.style.color = "var(--ok)";
+          } catch (e) {
+            r.stat.textContent = "errore: " + (e.message || e);
+            r.stat.style.color = "var(--danger)";
+          }
         }
+      } finally {
+        S.uploading = false;
       }
       closeBtn.disabled = false;
       closeBtn.onclick = () => {
@@ -964,9 +971,9 @@ Annulla = conserva i file`);
       load(S.cwd);
     })();
   }
-  async function uploadOne(r) {
+  async function uploadOne(r, base) {
     const f = r.it.file;
-    const dir = [S.cwd, r.it.rel].filter(Boolean).join("/");
+    const dir = [base, r.it.rel].filter(Boolean).join("/");
     const uid = await fileUid(dir, f);
     let chunkSize = CHUNK;
     const doneSet = /* @__PURE__ */ new Set();

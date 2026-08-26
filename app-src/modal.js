@@ -9,6 +9,7 @@ export function openModal(html) {
   const first = modalBg.querySelector('input,textarea,select'); if (first) first.focus();
 }
 export function closeModal() {
+  if (S.uploading) return;   // batch di upload in corso: il modale resta aperto (Escape/backdrop inclusi)
   if (S.shareTimer) { clearInterval(S.shareTimer); S.shareTimer = null; }
   if (S.editorCleanup) { try { S.editorCleanup(); } catch (_) {} S.editorCleanup = null; }
   modalBg.hidden = true; modalBg.innerHTML = '';
