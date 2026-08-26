@@ -102,7 +102,7 @@ function zip_logical(array $logicalPaths): string {
             $zip->addFile($tf, $zipPath); $temps[] = $tf;
         }
     };
-    foreach ($logicalPaths as $lp) $add($lp, basename($lp) ?: 'root');
+    foreach ($logicalPaths as $lp) { $b = basename($lp); $add($lp, $b === '' ? 'root' : $b); }   // confronto esplicito: "0" è un nome valido
     $zip->close();
     foreach ($temps as $tf) @unlink($tf);
     return $tmp;
@@ -125,7 +125,7 @@ function zip_manifest_files(array $logicalPaths): array {
             $out[] = ['name' => $zipPath, 'logical' => $logical, 'size' => (int) storage()->sizeOf($logical)];
         }
     };
-    foreach ($logicalPaths as $lp) $add($lp, basename($lp) ?: 'root');
+    foreach ($logicalPaths as $lp) { $b = basename($lp); $add($lp, $b === '' ? 'root' : $b); }   // confronto esplicito: "0" è un nome valido
     return $out;
 }
 
