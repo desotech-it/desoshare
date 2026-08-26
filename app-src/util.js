@@ -51,10 +51,16 @@ export const b64ToU8 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
 
 export function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-// Normalizza un titolo in uno slug per l'URL (coerente con share_slugify() lato PHP):
-// minuscole, accenti rimossi, solo [a-z0-9-], niente trattini doppi/agli estremi, max 64.
+// Normalizza un titolo in uno slug per l'URL. REPLICA ESATTA di share_slugify()
+// lato PHP (stessa tabella di traslitterazione, poi solo [a-z0-9-]): l'anteprima
+// \u00ab\u2192 /d/slug\u00bb deve coincidere con lo slug che share_create generer\u00e0 davvero.
+const SLUG_MAP = {
+  '\u00e0': 'a', '\u00e1': 'a', '\u00e2': 'a', '\u00e4': 'a', '\u00e3': 'a', '\u00e8': 'e', '\u00e9': 'e', '\u00ea': 'e', '\u00eb': 'e',
+  '\u00ec': 'i', '\u00ed': 'i', '\u00ee': 'i', '\u00ef': 'i', '\u00f2': 'o', '\u00f3': 'o', '\u00f4': 'o', '\u00f6': 'o', '\u00f5': 'o',
+  '\u00f9': 'u', '\u00fa': 'u', '\u00fb': 'u', '\u00fc': 'u', '\u00e7': 'c', '\u00f1': 'n', '\u00df': 'ss',
+};
 export function slugify(s) {
   return String(s).trim().toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00e0\u00e1\u00e2\u00e4\u00e3\u00e8\u00e9\u00ea\u00eb\u00ec\u00ed\u00ee\u00ef\u00f2\u00f3\u00f4\u00f6\u00f5\u00f9\u00fa\u00fb\u00fc\u00e7\u00f1\u00df]/g, c => SLUG_MAP[c])
     .replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 }
