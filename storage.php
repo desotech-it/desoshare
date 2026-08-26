@@ -49,7 +49,7 @@ class LocalBackend implements StorageBackend {
     public function makeDir(string $path): bool { return @mkdir($this->abs($path), 0755, true); }
     public function deletePath(string $path, bool $recursive): bool {
         $a = $this->abs($path);
-        if (is_dir($a) && !is_link($a)) { if (!$recursive && count(scandir($a)) > 2) return false; rrmdir($a); return true; }
+        if (is_dir($a) && !is_link($a)) { if (!$recursive && count(scandir($a)) > 2) return false; rrmdir($a); return !is_dir($a); }   // esito reale, niente falsi successi
         return @unlink($a);
     }
     public function renamePath(string $from, string $to): bool {
