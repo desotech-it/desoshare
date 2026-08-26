@@ -3,11 +3,26 @@
 // ─── Segreto applicativo + cifratura credenziali (es. S3) ────────────────────
 function app_secret(): string {
     $f = DATA_DIR . '/.secret';
-    if (is_file($f)) return (string) file_get_contents($f);
-    $s = bin2hex(random_bytes(32));
-    @file_put_contents($f, $s);
-    @chmod($f, 0600);
-    return $s;
+    $s = is_file($f) ? (string) file_get_contents($f) : '';
+    if ($s !== '') return $s;
+    // Prima generazione: sotto lock (niente doppioni concorrenti) e con scrittura
+    // atomica VERIFICATA. Un segreto effimero mai persistito renderebbe
+    // indecifrabile per sempre tutto ciò che cifra (secret S3, client secret OIDC).
+    $lh = @fopen($f . '.lock', 'c');
+    if ($lh !== false) @flock($lh, LOCK_EX);
+    try {
+        $s = is_file($f) ? (string) file_get_contents($f) : '';   // ricontrolla sotto lock
+        if ($s !== '') return $s;
+        $tmp = $f . '.tmp.' . getmypid() . '.' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, bin2hex(random_bytes(32))) === false || !@chmod($tmp, 0600) || !@rename($tmp, $f)) {
+            @unlink($tmp);
+        }
+        $s = is_file($f) ? (string) file_get_contents($f) : '';   // fonte di verità: il FILE
+        if ($s === '') { http_response_code(500); exit('Impossibile inizializzare il segreto applicativo: verificare i permessi di appdata.'); }
+        return $s;
+    } finally {
+        if ($lh !== false) { @flock($lh, LOCK_UN); fclose($lh); }
+    }
 }
 function secret_encrypt(string $plain): string {
     if ($plain === '') return '';
