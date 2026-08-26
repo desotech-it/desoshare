@@ -49,7 +49,7 @@ if (isset($_GET['zip']) && $type === 'dir') {
     $dl = (basename($target) ?: $share['name']) . '.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . addslashes($dl) . '"');
+    header('Content-Disposition: ' . content_disposition($dl));   // RFC 6266, come stream_file
     header('Content-Length: ' . filesize($tmp));
     header('Cache-Control: no-store');
     readfile($tmp); @unlink($tmp); exit;

@@ -14,7 +14,7 @@ function action_zip(): void {
     $dlname = (count($logical) === 1) ? ($b === '' ? 'cartella' : $b) . '.zip' : 'share-download.zip';
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . addslashes($dlname) . '"');
+    header('Content-Disposition: ' . content_disposition($dlname));   // RFC 6266: niente header rotti da CR/LF o apostrofi, UTF-8 via filename*
     header('Content-Length: ' . filesize($tmp));
     header('Cache-Control: no-store');
     readfile($tmp);
