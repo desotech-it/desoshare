@@ -41,7 +41,11 @@ function shares_prune(): array {
     $now = time();
     $remove = [];
     foreach ($d['shares'] as $s) {
-        if (($s['expires_at'] ?? 0) <= $now || storage()->typeOf(share_base($s)) === false) {
+        if (($s['expires_at'] ?? 0) <= $now) { $remove[(string) ($s['token'] ?? '')] = true; continue; }
+        // Rimozione per elemento mancante SOLO se il backend ha potuto verificarlo con
+        // certezza: un errore S3 (credenziali, rete, 5xx) non deve cancellare le share.
+        $chk = storage()->existsCheck(share_base($s));
+        if ($chk['sure'] && $chk['type'] === false) {
             $remove[(string) ($s['token'] ?? '')] = true;
         }
     }

@@ -6,6 +6,7 @@
 interface StorageBackend {
     public function listDir(string $dir): array;            // [['name','type'=>'file'|'dir','size','mtime'], ...]
     public function typeOf(string $path);                   // 'file' | 'dir' | false
+    public function existsCheck(string $path): array;       // ['type'=>'file'|'dir'|false, 'sure'=>bool]: 'sure' false se il backend non ha potuto verificare (es. errore S3)
     public function readFile(string $path): string;
     public function writeFile(string $path, string $data): bool;
     public function putFromLocal(string $localPath, string $path): bool;
@@ -32,6 +33,7 @@ class LocalBackend implements StorageBackend {
         return $out;
     }
     public function typeOf(string $path) { $a = $this->abs($path); return is_dir($a) ? 'dir' : (is_file($a) ? 'file' : false); }
+    public function existsCheck(string $path): array { return ['type' => $this->typeOf($path), 'sure' => true]; }   // il filesystem locale è sempre conclusivo
     public function readFile(string $path): string { return (string) file_get_contents($this->abs($path)); }
     public function writeFile(string $path, string $data): bool {
         $a = $this->abs($path); $tmp = $a . '.tmp.' . bin2hex(random_bytes(4));
@@ -248,15 +250,21 @@ class S3Backend implements StorageBackend {
         } while ($token);
         return array_values($byName);
     }
-    public function typeOf(string $path) {
-        if ($path === '') return 'dir';
+    public function typeOf(string $path) { return $this->existsCheck($path)['type']; }
+    public function existsCheck(string $path): array {
+        if ($path === '') return ['type' => 'dir', 'sure' => true];
         $key = $this->key($path);
         $r = s3_request_retry($this->cfg, 'HEAD', $key);
-        if ($r['code'] === 200) return 'file';
+        if ($r['code'] === 200) return ['type' => 'file', 'sure' => true];
         // cartella? esistono oggetti sotto 'key/'
         $r2 = s3_request_retry($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => rtrim($key, '/') . '/', 'max-keys' => '1']);
-        if ($r2['code'] === 200 && strpos($r2['body'], '<Contents>') !== false) return 'dir';
-        return false;
+        if ($r2['code'] === 200 && strpos($r2['body'], '<Contents>') !== false) return ['type' => 'dir', 'sure' => true];
+        // "Non esiste" è CONCLUSIVO solo con un 404 certo sul HEAD e un list 200 senza
+        // risultati. Un 403 (credenziali revocate/clock skew), un 5xx oltre i retry o un
+        // errore di rete NON dimostrano che l'oggetto manca: sure=false, e chi deve
+        // decidere azioni distruttive (es. shares_prune) non deve agire.
+        $sure = $r['code'] === 404 && $r2['code'] === 200;
+        return ['type' => false, 'sure' => $sure];
     }
     public function readFile(string $path): string {
         $r = s3_request($this->cfg, 'GET', $this->key($path));
