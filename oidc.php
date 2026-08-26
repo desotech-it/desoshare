@@ -179,7 +179,9 @@ function oidc_login(): void {
 // Errore → torna alla pagina di login con messaggio (render_login è in index.php).
 function oidc_fail(string $msg): void {
     unset($_SESSION['oidc_state'], $_SESSION['oidc_nonce'], $_SESSION['oidc_pkce']);
-    render_login('SSO: ' . $msg);
+    // Stessa logica di index.php: form locale solo se abilitato (o se l'SSO è
+    // spento), altrimenti l'errore SSO mostrerebbe un login locale inutilizzabile.
+    render_login('SSO: ' . $msg, local_auth_enabled() || !oidc_enabled());
     exit;
 }
 
