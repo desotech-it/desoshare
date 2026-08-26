@@ -82,7 +82,15 @@ function zip_logical(array $logicalPaths): string {
     $zip = new ZipArchive();
     if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) { http_response_code(500); echo 'Impossibile creare lo ZIP'; exit; }
     $temps = [];
-    $add = function (string $logical, string $zipPath) use (&$add, $zip, &$temps) {
+    // Un fetch fallito NON può essere ignorato: l'archivio risulterebbe valido ma
+    // INCOMPLETO e verrebbe servito con 200 senza che l'utente possa accorgersene.
+    $fail = function (string $logical) use ($zip, &$temps, $tmp) {
+        $zip->close();
+        foreach ($temps as $tf) @unlink($tf);
+        @unlink($tmp);
+        http_response_code(500); echo 'Errore nel recupero di "' . h(basename($logical)) . '" dallo storage: ZIP annullato'; exit;
+    };
+    $add = function (string $logical, string $zipPath) use (&$add, $zip, &$temps, $fail) {
         $t = storage()->typeOf($logical);
         if ($t === 'dir') {
             $items = storage()->listDir($logical);
@@ -90,7 +98,8 @@ function zip_logical(array $logicalPaths): string {
             foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
         } elseif ($t === 'file') {
             $tf = tempnam(sys_get_temp_dir(), 'shz');
-            if (storage()->fetchToLocal($logical, $tf)) { $zip->addFile($tf, $zipPath); $temps[] = $tf; }
+            if (!storage()->fetchToLocal($logical, $tf)) { @unlink($tf); $fail($logical); }
+            $zip->addFile($tf, $zipPath); $temps[] = $tf;
         }
     };
     foreach ($logicalPaths as $lp) $add($lp, basename($lp) ?: 'root');

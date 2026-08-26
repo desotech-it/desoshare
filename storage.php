@@ -379,8 +379,15 @@ class S3Backend implements StorageBackend {
     }
     public function fetchToLocal(string $path, string $localPath): bool {
         // GET in streaming diretto su file: nessun buffer dell'intero oggetto in RAM.
-        $r = s3_request($this->cfg, 'GET', $this->key($path), [], [], null, null, $localPath);
-        if (($r['code'] ?? 0) === 200) return true;
+        // Con retry sui codici transitori (il sink 'wb' tronca a ogni tentativo):
+        // un 503/timeout momentaneo non deve far fallire lo ZIP di una cartella.
+        $transient = [0, 429, 500, 502, 503, 504];
+        for ($attempt = 0; ; $attempt++) {
+            $r = s3_request($this->cfg, 'GET', $this->key($path), [], [], null, null, $localPath);
+            if (($r['code'] ?? 0) === 200) return true;
+            if (!in_array((int) ($r['code'] ?? 0), $transient, true) || $attempt >= 2) break;
+            usleep(200000 * ($attempt + 1));   // 0.2s, poi 0.4s (come s3_request_retry)
+        }
         @unlink($localPath);
         return false;
     }
