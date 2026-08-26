@@ -53,7 +53,7 @@ function action_usage_list(): void {
 
 // ─── Utenti: crea/modifica (admin) ───────────────────────────────────────────
 function action_user_save(): void {
-    require_admin();
+    $me = require_admin();
     $username = trim($_POST['username'] ?? '');
     $original = trim($_POST['original'] ?? '');
     $password = (string) ($_POST['password'] ?? '');
@@ -69,6 +69,26 @@ function action_user_save(): void {
     }
     // Calcola l'hash FUORI dalla sezione critica (bcrypt è lento; non tenere il lock).
     $pwHash = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : '';
+
+    // ─── Rinomina: la chiave logica dell'utente cambia → va MIGRATO tutto ciò che
+    // vi è indicizzato (home nello storage, condivisioni, cache di quota), altrimenti
+    // file e share restano orfani sotto il vecchio nome. La migrazione dello storage
+    // (potenzialmente lenta su S3) avviene PRIMA e FUORI dal lock su users.json.
+    $isRename = false;
+    if ($original !== '' && $original !== $username) {
+        $existing = array_column(users_load()['users'] ?? [], null, 'username');
+        if (isset($existing[$original])) {                       // altrimenti è una create: gestita sotto
+            if (isset($existing[$username])) json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
+            $oldPfx = user_prefix($original); $newPfx = user_prefix($username);
+            if (storage()->typeOf($newPfx) !== false) {
+                json_out(['ok' => false, 'error' => 'Nello storage esiste già una cartella col nuovo nome: risolvere prima il conflitto'], 409);
+            }
+            if (storage()->typeOf($oldPfx) === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
+                json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
+            }
+            $isRename = true;
+        }
+    }
 
     // Tutta la read-modify-write su users.json in UN'unica sezione critica.
     $err = null; $code = 400; $auditMsg = null;
@@ -98,7 +118,36 @@ function action_user_save(): void {
         }
         return $data;
     });
-    if ($err) json_out(['ok' => false, 'error' => $err], $code);
+    if ($err) {
+        // Storage già migrato ma users.json non aggiornato (es. conflitto creato nel
+        // frattempo): riporta indietro la home, best-effort, per non orfanare i file.
+        if ($isRename && storage()->typeOf(user_prefix($username)) === 'dir') {
+            storage()->renamePath(user_prefix($username), user_prefix($original));
+        }
+        json_out(['ok' => false, 'error' => $err], $code);
+    }
+    if ($isRename) {
+        // Condivisioni: riscrive proprietario e percorso (prefisso home) sul nuovo nome.
+        with_json_lock(shares_file(), function (array $sd) use ($original, $username) {
+            $oldPfx = user_prefix($original); $newPfx = user_prefix($username);
+            foreach ($sd['shares'] ?? [] as &$s) {
+                if (($s['created_by'] ?? '') === $original) $s['created_by'] = $username;
+                $p = (string) ($s['path'] ?? '');
+                if ($p === $oldPfx) $s['path'] = $newPfx;
+                elseif (str_starts_with($p, $oldPfx . '/')) $s['path'] = $newPfx . substr($p, strlen($oldPfx));
+            }
+            unset($s);
+            return $sd;
+        });
+        // Cache di quota: sposta la voce sul nuovo nome (il consumo non è cambiato).
+        with_json_lock(usage_file(), function (array $c) use ($original, $username) {
+            if (isset($c[$original])) { $c[$username] = $c[$original]; unset($c[$original]); return $c; }
+            return null;
+        });
+        // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome.
+        if (($me['username'] ?? '') === $original) $_SESSION['username'] = $username;
+        audit('user_rename', $original . ' → ' . $username);
+    }
     if ($auditMsg) audit($auditMsg[0], $auditMsg[1]);
     ensure_user_home($username);   // predispone la cartella (sandbox) dell'utente
     json_out(['ok' => true]);
