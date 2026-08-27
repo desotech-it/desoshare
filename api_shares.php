@@ -23,7 +23,7 @@ function action_share_create(): void {
         'slug'       => $slug,            // '' se non personalizzato
         'path'       => $p,
         'type'       => $kind,
-        'name'       => basename($p) ?: '/',
+        'name'       => ($b = basename($p)) === '' ? '/' : $b,   // "0" è un nome valido (falsy per ?:)
         'mode'       => $mode,
         'created_at' => time(),
         'expires_at' => time() + $ttl,

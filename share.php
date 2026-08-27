@@ -36,7 +36,7 @@ if (isset($_GET['zipmanifest']) && $type === 'dir') {
     if ($target === null || storage()->typeOf($target) !== 'dir') {
         echo json_encode(['ok' => false, 'error' => 'Cartella non trovata']); exit;
     }
-    $zipname = (basename($target) ?: $share['name']) . '.zip';
+    $zipname = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
     $remaining = max(60, (int) $share['expires_at'] - time());        // mai sotto i 60s
     $ttl = min(ZIP_PRESIGN_TTL, $remaining);                          // ≤ scadenza del token
     echo json_encode(zip_manifest_build([$target], $zipname, $ttl));
@@ -48,7 +48,7 @@ if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'dir') { http_response_code(404); echo 'Cartella non trovata'; exit; }
     $tmp = zip_logical([$target]);
-    $dl = (basename($target) ?: $share['name']) . '.zip';
+    $dl = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
     while (ob_get_level()) ob_end_clean();
     header('Content-Type: application/zip');
     header('Content-Disposition: ' . content_disposition($dl));   // RFC 6266, come stream_file
