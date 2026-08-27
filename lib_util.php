@@ -4,7 +4,9 @@
 function json_out($data, int $code = 200): void {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    // INVALID_UTF8_SUBSTITUTE: un nome file con byte non-UTF-8 (upload da FS
+    // esotici) non deve produrre json_encode()=false → body vuoto e client rotto.
+    echo json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
