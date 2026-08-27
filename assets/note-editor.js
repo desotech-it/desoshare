@@ -121,6 +121,11 @@
         // epoca. Il doc locale continua (stessa lineage): nessuna ricostruzione.
         gen = r.gen;
         if (send.length) pending.unshift.apply(pending, send);
+      } else if (r.relay_full && send.length) {
+        // Relay pieno: gli update NON sono stati accodati. Si trattengono e si
+        // forza un salvataggio, che compatta il relay allo snapshot (nuova epoca).
+        pending.unshift.apply(pending, send);
+        if (editable) { dirty = true; clearTimeout(saveTimer); await saveNow(); }
       }
       (r.updates || []).forEach(u => Y.applyUpdate(cur.doc, b64ToU8(u), 'remote'));
       offset = r.offset;

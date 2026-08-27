@@ -69,13 +69,20 @@ function action_note_sync(): void {
     $content = stream_get_contents($h);
     $lines = $content === '' ? [] : explode("\n", rtrim($content, "\n"));
     // Oltre il tetto NON si accumulano più update (il relay viene compattato a
-    // ogni salvataggio): impedisce la crescita illimitata del file.
-    if ($editable && !$genChanged && is_array($incoming) && strlen($content) < NOTE_RELAY_MAX_BYTES) {
-        foreach ($incoming as $b64) {
-            if (is_string($b64) && $b64 !== '' && base64_decode($b64, true) !== false) $lines[] = $b64;
+    // ogni salvataggio): impedisce la crescita illimitata del file. Ma il drop va
+    // SEGNALATO (relay_full): il client trattiene gli update e forza un salvataggio
+    // che compatta il relay, invece di perderli credendoli consegnati.
+    $relayFull = false;
+    if ($editable && !$genChanged && is_array($incoming) && $incoming) {
+        if (strlen($content) < NOTE_RELAY_MAX_BYTES) {
+            foreach ($incoming as $b64) {
+                if (is_string($b64) && $b64 !== '' && base64_decode($b64, true) !== false) $lines[] = $b64;
+            }
+            rewind($h); ftruncate($h, 0);
+            fwrite($h, $lines ? implode("\n", $lines) . "\n" : '');
+        } else {
+            $relayFull = true;
         }
-        rewind($h); ftruncate($h, 0);
-        fwrite($h, $lines ? implode("\n", $lines) . "\n" : '');
     }
     fflush($h); flock($h, LOCK_UN); fclose($h);
 
@@ -85,7 +92,7 @@ function action_note_sync(): void {
     if ($genChanged && !$lines) json_out(['ok' => true, 'resync' => true, 'gen' => $gen]);
 
     $aware = note_aware_exchange($id, (string) ($_POST['client'] ?? ''), (string) ($_POST['aware'] ?? ''), $ctx['user']);
-    json_out(['ok' => true, 'updates' => array_slice($lines, $since), 'offset' => count($lines), 'gen' => $gen, 'aware' => $aware]);
+    json_out(['ok' => true, 'updates' => array_slice($lines, $since), 'offset' => count($lines), 'gen' => $gen, 'relay_full' => $relayFull, 'aware' => $aware]);
 }
 
 // ─── Note: materializza il testo sul file vero ───────────────────────────────
