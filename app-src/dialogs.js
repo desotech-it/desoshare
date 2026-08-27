@@ -35,11 +35,16 @@ export function deleteDialog(paths, label) {
     <div class="modal-actions" style="justify-content:center">
       <button class="btn" onclick="closeModal()">Annulla</button>
       <button class="btn btn-danger" id="d_ok"><i class="ti ti-trash"></i> Elimina</button></div></div>`);
-  $('#d_ok', modalBg).onclick = async () => {
+  // guardSubmit (doppio click = seconda delete su path già rimossi → errori spuri)
+  // e res.errors mostrato: un'eliminazione parzialmente fallita non è un successo.
+  $('#d_ok', modalBg).onclick = guardSubmit($('#d_ok', modalBg), async () => {
     const res = await apiPost('delete', { paths });
-    if (res.ok) { closeModal(); toast(`Eliminati: ${res.deleted}`); load(S.cwd); }
-    else toast(res.error || 'Errore', true);
-  };
+    if (res.ok) {
+      closeModal(); load(S.cwd);
+      if (res.errors && res.errors.length) toast(`Eliminati: ${res.deleted} · non eliminati: ${res.errors.length} (${res.errors[0]})`, true);
+      else toast(`Eliminati: ${res.deleted}`);
+    } else toast(res.error || 'Errore', true);
+  });
 }
 
 export function newNoteDialog() {
