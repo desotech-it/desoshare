@@ -72,16 +72,21 @@ function json_atomic_write(string $file, array $data): bool {
 // (oppure null per non scrivere). Per restituire un valore al chiamante usare
 // una variabile catturata per riferimento.
 function with_json_lock(string $file, callable $fn, array $default = []): void {
+    // Un fallimento di persistenza (disco pieno, permessi) NON può passare in
+    // silenzio: il chiamante crederebbe salvato uno stato che non esiste.
+    $persist = function (?array $new) use ($file): void {
+        if (is_array($new) && !json_atomic_write($file, $new)) {
+            json_out(['ok' => false, 'error' => 'Scrittura dei dati non riuscita (spazio disco o permessi): operazione annullata'], 500);
+        }
+    };
     $lh = @fopen($file . '.lock', 'c');
     if ($lh === false) {                       // niente lock disponibile: esegui comunque
-        $new = $fn(json_read($file, $default));
-        if (is_array($new)) json_atomic_write($file, $new);
+        $persist($fn(json_read($file, $default)));
         return;
     }
     @flock($lh, LOCK_EX);
     try {
-        $new = $fn(json_read($file, $default));
-        if (is_array($new)) json_atomic_write($file, $new);
+        $persist($fn(json_read($file, $default)));
     } finally {
         @flock($lh, LOCK_UN);
         fclose($lh);
