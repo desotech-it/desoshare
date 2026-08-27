@@ -274,8 +274,8 @@ function oidc_callback(): void {
     // Provisioning / aggiornamento in users.json (utente SSO, senza password locale).
     // Sezione critica (atomica) + identità ANCORATA al claim 'sub': uno stesso
     // username con un 'sub' diverso è un'identità diversa → niente account takeover.
-    $event = null; $err = null; $backfill = false;
-    with_json_lock(USERS_FILE, function (array $data) use (&$event, &$err, &$backfill, $username, $sub, $email, $name, $perms) {
+    $event = null; $err = null; $backfill = false; $keptAdmin = false;
+    with_json_lock(USERS_FILE, function (array $data) use (&$event, &$err, &$backfill, &$keptAdmin, $username, $sub, $email, $name, $perms) {
         $data['users'] = $data['users'] ?? [];
         $idx = -1;
         foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username) { $idx = $i; break; }
@@ -296,9 +296,16 @@ function oidc_callback(): void {
                 // reso fail-closed; per un singolo IdP (username univoco) è sicuro.
                 $backfill = true;
             }
+            // Salvaguardia ULTIMO ADMIN (come user_save): un claim groups mancante
+            // o una svista sull'IdP non devono lasciare l'istanza senza alcun
+            // amministratore locale (lockout della gestione utenti/impostazioni).
+            $newRole = $perms['role'];
+            if (($ex['role'] ?? '') === 'admin' && $newRole !== 'admin' && count_admins($data) <= 1) {
+                $newRole = 'admin'; $keptAdmin = true;
+            }
             $data['users'][$idx]['sso']        = true;
             $data['users'][$idx]['sub']        = $sub;   // sempre valorizzato (mai più sub vuoto)
-            $data['users'][$idx]['role']       = $perms['role'];
+            $data['users'][$idx]['role']       = $newRole;
             $data['users'][$idx]['permission'] = $perms['permission'];
             if ($email !== '') $data['users'][$idx]['email'] = $email;
             if ($name !== '')  $data['users'][$idx]['name'] = $name;
@@ -326,6 +333,7 @@ function oidc_callback(): void {
     $_SESSION['oidc_id_token'] = $idToken;   // per il logout (id_token_hint)
     ensure_user_home($username);
     if ($backfill) audit('sso_sub_anchor', $username . ' ancorato a sub=' . substr($sub, 0, 12) . '…');
+    if ($keptAdmin) audit('sso_admin_kept', $username . ' resterebbe unico admin: ruolo admin mantenuto nonostante i gruppi IdP');
     audit($event, $username . ' (' . $perms['role'] . '/' . $perms['permission'] . ')');
     header('Location: index.php');
     exit;
