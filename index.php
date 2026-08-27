@@ -49,7 +49,13 @@ if (!users_exist()) {
 }
 
 // ─── Logout ──────────────────────────────────────────────────────────────────
+// Richiede il token CSRF nel link: un semplice <img src> o link cross-site non
+// deve poter forzare il logout della vittima (fastidio + perdita di lavoro).
 if ($action === 'logout') {
+    $tok = $_REQUEST['csrf'] ?? '';
+    if (current_user() && (!is_string($tok) || !hash_equals((string) ($_SESSION['csrf'] ?? ''), $tok))) {
+        header('Location: index.php'); exit;   // token mancante/errato: nessun logout
+    }
     $wasSso = !empty(current_user()['sso']);
     $idHint = (string) ($_SESSION['oidc_id_token'] ?? '');
     $ssoEnabled = oidc_enabled();
@@ -227,7 +233,7 @@ function render_app(array $user): void {
           <?php if ($isAdmin): ?>
           <button class="btn" id="btnAdmin"><i class="ti ti-settings"></i> Amministrazione</button>
           <?php endif; ?>
-          <a class="btn" href="index.php?action=logout"><i class="ti ti-logout"></i> Esci</a>
+          <a class="btn" href="index.php?action=logout&amp;csrf=<?= h(urlencode(csrf_token())) ?>"><i class="ti ti-logout"></i> Esci</a>
         </div>
       </header>
 

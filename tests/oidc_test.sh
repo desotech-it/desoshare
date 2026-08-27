@@ -18,6 +18,8 @@ no(){ FAIL=$((FAIL+1)); echo "  ✗ $1 — ${2:-}"; }
 has(){ case "$2" in *"$3"*) ok "$1";; *) no "$1" "ricevuto: ${2:0:160}";; esac; }
 # CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
 precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
+# logout: dal fix CSRF serve il token della sessione (data-csrf della pagina app)
+dologout(){ local c=$(curl -s -b "$1" "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1); curl -s -b "$1" -c "$1" "$B/index.php?action=logout&csrf=$c" -o /dev/null; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
 
 echo "=== Unit: helper OIDC (crypto + mappa gruppi) ==="
@@ -61,7 +63,7 @@ sleep 1
 
 # crea admin (così esistono utenti) e poi sloggati
 curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php"
-curl -s -b $JAR -c $JAR "$B/index.php?action=logout" -o /dev/null
+dologout $JAR
 
 LP=$(curl -s -b $JAR "$B/")
 has "login mostra il bottone desoauth" "$LP" 'Accedi con desoauth'
@@ -152,7 +154,7 @@ has "login locale disabilitato: POST rifiutato" "$RLK" 'login locale è disabili
 RA=$(apost --data-urlencode action=settings_save --data-urlencode local_auth_enabled=1 "$B/api.php")
 has "riabilita login locale (sessione admin attiva) → ok" "$RA" '"ok":true'
 # precedenza: il redirect usa i valori delle impostazioni, non le costanti/env
-curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
+dologout $ALOG
 LOC2=$(curl -s -b $ALOG -c $ALOG -o /dev/null -D - "$B/index.php?action=oidc_login" | sed -n 's/^[Ll]ocation: //p' | tr -d '\r')
 has "redirect usa client_id delle impostazioni" "$LOC2" 'client_id=TESTCLIENT123'
 has "redirect usa authorize delle impostazioni" "$LOC2" 'idp.example/auth'
@@ -160,7 +162,7 @@ has "redirect usa authorize delle impostazioni" "$LOC2" 'idp.example/auth'
 curl -s -c $ALOG -b $ALOG --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $ALOG)" "$B/index.php"
 ACSRF=$(curl -s -b $ALOG "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 curl -s -b $ALOG -H "X-CSRF: $ACSRF" --data-urlencode action=settings_save --data-urlencode oidc_present=1 --data-urlencode oidc_enabled=0 "$B/api.php" -o /dev/null
-curl -s -b $ALOG -c $ALOG "$B/index.php?action=logout" -o /dev/null
+dologout $ALOG
 LPD=$(curl -s "$B/")
 case "$LPD" in *"Accedi con desoauth"*) no "toggle OFF: bottone ancora presente";; *) ok "toggle OFF dalle impostazioni nasconde il bottone (vince sull'env)";; esac
 
@@ -168,7 +170,7 @@ case "$LPD" in *"Accedi con desoauth"*) no "toggle OFF: bottone ancora presente"
 kill $SRV 2>/dev/null; sleep 0.3
 php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv2.log" 2>&1 & SRV=$!; sleep 1
 curl -s -c $JAR -b $JAR --data-urlencode action=setup --data-urlencode username=admin2 --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $JAR)" "$B/index.php" 2>/dev/null
-curl -s -b $JAR -c $JAR "$B/index.php?action=logout" -o /dev/null
+dologout $JAR
 LP2=$(curl -s "$B/")
 case "$LP2" in *"Accedi con desoauth"*) no "OIDC off: bottone NON presente";; *) ok "OIDC off: bottone non mostrato";; esac
 
