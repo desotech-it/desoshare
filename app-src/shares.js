@@ -71,9 +71,12 @@ export async function sharesPanel() {
     if (x.ok) { toast('Condivisione revocata'); sharesPanel(); } else toast(x.error || 'Errore', true);
   });
   if (S.shareTimer) clearInterval(S.shareTimer);
+  // Il countdown usa l'orologio del SERVER (r.now) ancorato al caricamento: con
+  // il clock del client avanti le share sparivano dal pannello pur essendo valide.
+  const skew = (typeof r.now === 'number' ? r.now : Date.now() / 1000) - Date.now() / 1000;
   const tick = () => {
     modalBg.querySelectorAll('tr[data-exp]').forEach(tr => {
-      const rem = tr.dataset.exp - Date.now() / 1000;
+      const rem = tr.dataset.exp - (Date.now() / 1000 + skew);
       const cell = tr.querySelector('.sh-rem');
       if (rem <= 0) tr.remove(); else if (cell) cell.textContent = 'tra ' + fmtDuration(rem);
     });

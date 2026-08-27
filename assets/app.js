@@ -471,9 +471,10 @@
       } else toast(x.error || "Errore", true);
     });
     if (S.shareTimer) clearInterval(S.shareTimer);
+    const skew = (typeof r.now === "number" ? r.now : Date.now() / 1e3) - Date.now() / 1e3;
     const tick = () => {
       modalBg.querySelectorAll("tr[data-exp]").forEach((tr) => {
-        const rem = tr.dataset.exp - Date.now() / 1e3;
+        const rem = tr.dataset.exp - (Date.now() / 1e3 + skew);
         const cell = tr.querySelector(".sh-rem");
         if (rem <= 0) tr.remove();
         else if (cell) cell.textContent = "tra " + fmtDuration(rem);
