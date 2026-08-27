@@ -150,10 +150,11 @@ function share_editor_page(array $s, string $abs): void {
        . 'var t=' . json_encode($tok) . ',BV=' . json_encode($bv) . ';'
        . 'var host=document.getElementById("ed_host"),st=document.getElementById("ed_status"),pr=document.getElementById("ed_pres");'
        . 'function post(a,d){var b=new FormData();b.append("t",t);for(var k in d){var v=d[k];b.append(k,Array.isArray(v)?JSON.stringify(v):v);}return fetch("api.php?action="+a,{method:"POST",body:b}).then(function(r){return r.json();});}'
-       . 'var info=await fetch("api.php?action=note_open&t="+encodeURIComponent(t)).then(function(r){return r.json();});'
+       . 'function reopen(){return fetch("api.php?action=note_open&t="+encodeURIComponent(t)).then(function(r){return r.json();});}'
+       . 'var info=await reopen();'
        . 'if(!info.ok){host.textContent=info.error||"Errore";st.textContent="";return;}'
        . 'try{await NoteEditor.loadBundle("assets/editor-bundle.js?v="+BV);}catch(e){host.textContent="Impossibile caricare l\'editor";st.textContent="";return;}'
-       . 'NoteEditor.mount({host:host,statusEl:st,presEl:pr,info:info,sync:function(p){return post("note_sync",p);},save:function(c){return post("note_save",{content:c});}});'
+       . 'NoteEditor.mount({host:host,statusEl:st,presEl:pr,info:info,sync:function(p){return post("note_sync",p);},save:function(c,sn){return post("note_save",{content:c,snapshot:sn||""});},reopen:reopen});'
        . '})();</script>';
     share_footer();
 }

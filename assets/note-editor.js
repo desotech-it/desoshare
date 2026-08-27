@@ -25,76 +25,119 @@
     return window.__edLoad;
   }
 
-  // opts: { host, statusEl?, presEl?, info, sync(payload)->Promise, save(content)->Promise }
+  // opts: { host, statusEl?, presEl?, info, sync(payload)->Promise,
+  //         save(content, snapshot)->Promise, reopen()->Promise<info> }
   // Ritorna una funzione di cleanup. Richiede window.DesoEditor già caricato.
+  //
+  // PROTOCOLLO A GENERAZIONI: il server assegna al relay un id di epoca ('gen').
+  // Un salvataggio COMPATTA il relay allo snapshot Yjs completo e cambia gen: i
+  // client connessi rilevano il cambio in modo deterministico, ripartono da
+  // offset 0 sullo STESSO doc (lo snapshot è idempotente, cursore preservato) e
+  // chi apre dopo riceve lo stato completo. Solo un salvataggio SENZA snapshot
+  // (editor semplice) o il GC del relay richiedono la ricostruzione dal file
+  // (resync → reopen).
   function mount(opts) {
     const E = window.DesoEditor;
-    const { host, statusEl, presEl, info, sync, save } = opts;
+    const { host, statusEl, presEl, info, sync, save, reopen } = opts;
     const { Y, EditorState, EditorView, basicExtensions, yCollab, Awareness, encodeAwarenessUpdate, applyAwarenessUpdate, removeAwarenessStates } = E;
-    const doc = new Y.Doc();
-    const ytext = doc.getText('content');
-    const awareness = new Awareness(doc);
-    awareness.setLocalStateField('user', { name: info.user || 'utente', color: userColor(info.user || '') });
     const clientId = genClientId();
+    const editable = !!info.editable;
+    let cur = null;                       // { doc, ytext, awareness, ev } correnti
+    let offset = 0, gen = '';
+    let pending = [];
+    let stopped = false, saveTimer = null, dirty = false, resyncing = false;
 
-    // Osservatore PRIMA del seed: l'eventuale seed (idempotente) viene così inviato al relay.
-    const pending = [];
-    doc.on('update', (u, origin) => { if (origin !== 'remote') pending.push(u8ToB64(u)); });
+    const saveNow = async () => {
+      if (!dirty || !editable || !cur) return;
+      dirty = false;
+      let r = null;
+      // Lo snapshot (stato Yjs completo) permette al server di compattare il relay
+      // preservando la lineage del documento per tutti i client.
+      try { r = await save(cur.ytext.toString(), u8ToB64(Y.encodeStateAsUpdate(cur.doc))); } catch (_) { r = null; }
+      if (r && r.ok && r.gen) { gen = r.gen; offset = typeof r.offset === 'number' ? r.offset : 0; }
+    };
 
-    // Stato dal relay = sorgente di verità durante la collaborazione.
-    (info.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
-    let offset = info.offset || 0;
-    // Seed SOLO se il relay è vuoto. clientID FISSO → item identici su ogni client (seed idempotente),
-    // così le modifiche di chiunque si ancorano allo stesso testo iniziale e si integrano ovunque.
-    if (ytext.length === 0 && offset === 0 && info.text) {
-      const t = new TextDecoder().decode(b64ToU8(info.text));
-      if (t.length) { const orig = doc.clientID; doc.clientID = 1; ytext.insert(0, t); doc.clientID = orig; }
-    }
-    host.innerHTML = '';
-    const ev = new EditorView({
-      state: EditorState.create({ doc: ytext.toString(), extensions: [...basicExtensions(info.editable), yCollab(ytext, awareness)] }),
-      parent: host,
-    });
-    if (statusEl) statusEl.textContent = info.editable ? 'connesso' : 'sola lettura';
-    let stopped = false, saveTimer = null, dirty = false;
-    const saveNow = async () => { if (!dirty || !info.editable) return; dirty = false; try { await save(ytext.toString()); } catch (_) {} };
-    // Solo le modifiche LOCALI marcano dirty: gli update arrivati dal relay
-    // (origin 'remote') non devono far salvare ogni client che ha la nota aperta
-    // (N salvataggi ridondanti per modifica + reset continui del relay).
-    ytext.observe((ev, tr) => { if (info.editable && tr.origin !== 'remote') { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
+    // (Ri)costruisce doc+editor da uno stato note_open: all'avvio e nel raro
+    // resync completo (salvataggio dall'editor semplice, o GC del relay).
+    const initDoc = (st) => {
+      if (cur) { try { cur.ev.destroy(); } catch (_) {} try { cur.doc.destroy(); } catch (_) {} }
+      pending = []; dirty = false; clearTimeout(saveTimer);
+      const doc = new Y.Doc();
+      const ytext = doc.getText('content');
+      const awareness = new Awareness(doc);
+      awareness.setLocalStateField('user', { name: st.user || 'utente', color: userColor(st.user || '') });
+      // Osservatore PRIMA del seed: l'eventuale seed (idempotente) viene così inviato al relay.
+      doc.on('update', (u, origin) => { if (origin !== 'remote') pending.push(u8ToB64(u)); });
+      // Stato dal relay = sorgente di verità durante la collaborazione.
+      (st.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
+      offset = st.offset || 0;
+      gen = st.gen || '';
+      // Seed SOLO se il relay è vuoto. clientID FISSO → item identici su ogni client (seed idempotente),
+      // così le modifiche di chiunque si ancorano allo stesso testo iniziale e si integrano ovunque.
+      if (ytext.length === 0 && offset === 0 && st.text) {
+        const t = new TextDecoder().decode(b64ToU8(st.text));
+        if (t.length) { const orig = doc.clientID; doc.clientID = 1; ytext.insert(0, t); doc.clientID = orig; }
+      }
+      host.innerHTML = '';
+      const ev = new EditorView({
+        state: EditorState.create({ doc: ytext.toString(), extensions: [...basicExtensions(editable), yCollab(ytext, awareness)] }),
+        parent: host,
+      });
+      // Solo le modifiche LOCALI marcano dirty: gli update arrivati dal relay
+      // (origin 'remote') non devono far salvare ogni client che ha la nota aperta.
+      ytext.observe((evn, tr) => { if (editable && tr.origin !== 'remote') { dirty = true; clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 2000); } });
+      cur = { doc, ytext, awareness, ev };
+    };
+
     const renderPresence = () => {
-      if (!presEl) return;
+      if (!presEl || !cur) return;
       const names = new Set();
-      awareness.getStates().forEach((s, cid) => { if (cid !== awareness.clientID && s.user) names.add(s.user.name); });
+      cur.awareness.getStates().forEach((s, cid) => { if (cid !== cur.awareness.clientID && s.user) names.add(s.user.name); });
       presEl.textContent = names.size ? ('Collegati: ' + [...names].join(', ')) : 'Nessun altro collegato';
     };
-    const tick = async () => {
-      if (stopped) return;
-      const send = pending.splice(0);
-      const awB64 = u8ToB64(encodeAwarenessUpdate(awareness, [awareness.clientID]));
-      let r;
-      try { r = await sync({ id: info.id, since: offset, client: clientId, updates: send, aware: awB64 }); }
-      catch (_) { if (send.length) pending.unshift.apply(pending, send); return; }
-      if (r && r.ok) {
-        (r.updates || []).forEach(u => Y.applyUpdate(doc, b64ToU8(u), 'remote'));
-        // Il relay viene AZZERATO a ogni note_save: se l'offset del server è
-        // regredito sotto il nostro, le righe 0..count-1 sono nuove e non ci sono
-        // mai state consegnate (since oltre il conteggio → slice vuota). Si riparte
-        // da 0: al prossimo tick arriverà tutto (applicare update Yjs già noti è
-        // idempotente).
-        offset = (r.offset < offset && !(r.updates || []).length) ? 0 : r.offset;
-        (r.aware || []).forEach(a => { try { applyAwarenessUpdate(awareness, b64ToU8(a.b64), 'remote'); } catch (_) {} });
-        renderPresence();
-      } else if (send.length) { pending.unshift.apply(pending, send); }
+    const resyncFull = async () => {
+      if (resyncing || !reopen) return;
+      resyncing = true;
+      try { const ni = await reopen(); if (ni && ni.ok && !stopped) { initDoc(ni); renderPresence(); } } catch (_) {}
+      resyncing = false;
     };
+    const tick = async () => {
+      if (stopped || resyncing) return;
+      const send = pending.splice(0);
+      const awB64 = u8ToB64(encodeAwarenessUpdate(cur.awareness, [cur.awareness.clientID]));
+      let r;
+      try { r = await sync({ id: info.id, since: offset, client: clientId, gen, updates: send, aware: awB64 }); }
+      catch (_) { if (send.length) pending.unshift.apply(pending, send); return; }
+      if (!(r && r.ok)) { if (send.length) pending.unshift.apply(pending, send); return; }
+      if (r.resync) {
+        // Epoca cambiata e relay vuoto: l'unica fonte è il file, ricostruzione completa.
+        if (send.length) pending.unshift.apply(pending, send);
+        await resyncFull();
+        return;
+      }
+      if (r.gen && r.gen !== gen) {
+        // Epoca nuova con snapshot: il server ha risposto dall'inizio e NON ha
+        // accodato i nostri update → si ri-inviano al prossimo tick sotto la nuova
+        // epoca. Il doc locale continua (stessa lineage): nessuna ricostruzione.
+        gen = r.gen;
+        if (send.length) pending.unshift.apply(pending, send);
+      }
+      (r.updates || []).forEach(u => Y.applyUpdate(cur.doc, b64ToU8(u), 'remote'));
+      offset = r.offset;
+      (r.aware || []).forEach(a => { try { applyAwarenessUpdate(cur.awareness, b64ToU8(a.b64), 'remote'); } catch (_) {} });
+      renderPresence();
+    };
+
+    initDoc(info);
+    if (statusEl) statusEl.textContent = editable ? 'connesso' : 'sola lettura';
     const iv = setInterval(tick, info.poll_ms || 1500);
     tick();
     return () => {
       stopped = true; clearInterval(iv); clearTimeout(saveTimer);
       saveNow();
-      try { removeAwarenessStates(awareness, [awareness.clientID], 'local'); } catch (_) {}
-      try { ev.destroy(); } catch (_) {}
-      try { doc.destroy(); } catch (_) {}
+      try { removeAwarenessStates(cur.awareness, [cur.awareness.clientID], 'local'); } catch (_) {}
+      try { cur.ev.destroy(); } catch (_) {}
+      try { cur.doc.destroy(); } catch (_) {}
     };
   }
 

@@ -9,6 +9,29 @@ function notes_dir(): string {
 function note_id(string $rel): string { return sha1($rel); }
 function note_relay_path(string $id): string { return notes_dir() . '/' . $id . '.ydoc'; }
 function note_aware_path(string $id): string { return notes_dir() . '/' . $id . '.aware'; }
+function note_gen_path(string $id): string { return notes_dir() . '/' . $id . '.gen'; }
+
+// Id di GENERAZIONE del relay: cambia quando il relay viene compattato/azzerato
+// da un salvataggio. I client lo inviano a ogni sync: un mismatch segnala in modo
+// DETERMINISTICO che l'epoca è cambiata (niente euristiche sul conteggio righe).
+function note_gen_ensure(string $id): string {
+    $f = note_gen_path($id);
+    $g = is_file($f) ? trim((string) @file_get_contents($f)) : '';
+    if ($g !== '') return $g;
+    $g = bin2hex(random_bytes(8));
+    $tmp = $f . '.tmp.' . getmypid();
+    if (@file_put_contents($tmp, $g) !== false) {
+        if (!@link($tmp, $f) && !is_file($f)) @rename($tmp, $f);   // primo-vince (link fallisce se esiste); fallback senza hardlink
+    }
+    @unlink($tmp);
+    $g2 = is_file($f) ? trim((string) @file_get_contents($f)) : '';
+    return $g2 !== '' ? $g2 : $g;
+}
+function note_gen_bump(string $id): string {
+    $g = bin2hex(random_bytes(8));
+    @file_put_contents(note_gen_path($id), $g);
+    return $g;
+}
 function note_is_text(string $name): bool {
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     $binary = ['png','jpg','jpeg','gif','webp','bmp','ico','svgz','pdf','zip','rar','7z','gz','tgz','tar','bz2',

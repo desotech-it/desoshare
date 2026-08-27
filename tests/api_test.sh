@@ -187,6 +187,18 @@ has "clientA riceve l'update di B" "$RA2" "$UB"
 has "note_save (materializza su file)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")" '"ok":true'
 curl -s -b $JAR "$B/api.php?action=download&path=nota.md" -o "$SBX/nota.dl"
 grep -q "riga uno modificata" "$SBX/nota.dl" && ok "file aggiornato da note_save" || no "file aggiornato da note_save"
+# ─ Protocollo a generazioni (gen/snapshot/resync) ─
+G0=$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md" | sed -n 's/.*"gen":"\([a-f0-9]*\)".*/\1/p')
+[ -n "$G0" ] && ok "note_open espone gen" || no "note_open espone gen"
+SNAP=$(printf 'snapshotfinto' | openssl base64)
+NSV=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" --data-urlencode "snapshot=$SNAP" "$B/api.php?action=note_save")
+has "note_save con snapshot ritorna la nuova gen" "$NSV" '"gen":"'
+has "note_save con snapshot: relay compattato (offset 1)" "$NSV" '"offset":1'
+RS1=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=7 --data-urlencode "gen=$G0" --data-urlencode client=clientAAAAAA --data-urlencode path=nota.md "$B/api.php?action=note_sync")
+has "sync con gen vecchia: rimanda dallo snapshot (since ignorato)" "$RS1" "$SNAP"
+NSV2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")  # senza snapshot → relay azzerato
+RS2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$NID --data-urlencode since=1 --data-urlencode "gen=$G0" --data-urlencode client=clientAAAAAA --data-urlencode path=nota.md "$B/api.php?action=note_sync")
+has "sync con gen vecchia e relay vuoto: resync richiesto" "$RS2" '"resync":true'
 # Con l'isolamento per-utente la collaborazione cross-utente avviene SOLO via link:
 # il test "sola-lettura: update ignorato nel relay" è spostato nella sezione Note condivise (token view).
 

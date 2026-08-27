@@ -350,7 +350,9 @@
         presEl,
         info,
         sync: (payload) => apiPost("note_sync", Object.assign({ path: rel }, payload)),
-        save: (content) => apiPost("note_save", { path: rel, content })
+        save: (content, snapshot) => apiPost("note_save", { path: rel, content, snapshot: snapshot || "" }),
+        reopen: () => apiGet("note_open", { path: rel })
+        // resync completo (epoca cambiata senza snapshot)
       });
     } else {
       editorFallback(rel, info, host, statusEl);
