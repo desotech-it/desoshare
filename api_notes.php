@@ -26,9 +26,13 @@ function action_note_open(): void {
     note_gc();
     $id = note_id($p);
     $updates = note_relay_lines($id);
+    // La lettura DEVE essere verificata: un errore S3 trattato come '' aprirebbe
+    // una nota vuota che al primo autosave sovrascrive il file reale.
+    $rf = storage()->readFileChecked($p);
+    if (!$rf['ok']) json_out(['ok' => false, 'error' => 'Nota non leggibile in questo momento (storage non raggiungibile): riprova'], 503);
     json_out([
         'ok' => true, 'id' => $id, 'name' => basename($p), 'editable' => $ctx['editable'],
-        'text' => base64_encode((string) storage()->readFile($p)),
+        'text' => base64_encode($rf['data']),
         'updates' => $updates, 'offset' => count($updates), 'poll_ms' => note_poll_ms(), 'user' => $ctx['user'],
     ]);
 }

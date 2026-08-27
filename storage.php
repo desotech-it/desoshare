@@ -8,6 +8,7 @@ interface StorageBackend {
     public function listDirChecked(string $dir): array;     // ['items'=>come listDir, 'ok'=>bool]: ok=false se il listato può essere INCOMPLETO (errore backend)
     public function typeOf(string $path);                   // 'file' | 'dir' | false
     public function existsCheck(string $path): array;       // ['type'=>'file'|'dir'|false, 'sure'=>bool]: 'sure' false se il backend non ha potuto verificare (es. errore S3)
+    public function readFileChecked(string $path): array;   // ['data'=>string, 'ok'=>bool]: ok=false se la lettura è fallita ('' NON significa file vuoto)
     public function readFile(string $path): string;
     public function writeFile(string $path, string $data): bool;
     public function putFromLocal(string $localPath, string $path): bool;
@@ -37,6 +38,10 @@ class LocalBackend implements StorageBackend {
     public function existsCheck(string $path): array { return ['type' => $this->typeOf($path), 'sure' => true]; }   // il filesystem locale è sempre conclusivo
     public function listDirChecked(string $dir): array { return ['items' => $this->listDir($dir), 'ok' => true]; }  // scandir locale: niente listati parziali
     public function readFile(string $path): string { return (string) file_get_contents($this->abs($path)); }
+    public function readFileChecked(string $path): array {
+        $d = @file_get_contents($this->abs($path));
+        return ['data' => (string) $d, 'ok' => $d !== false];
+    }
     public function writeFile(string $path, string $data): bool {
         $a = $this->abs($path); $tmp = $a . '.tmp.' . bin2hex(random_bytes(4));
         if (file_put_contents($tmp, $data) === false || !@rename($tmp, $a)) { @unlink($tmp); return false; }
@@ -277,9 +282,12 @@ class S3Backend implements StorageBackend {
         $sure = $r['code'] === 404 && $r2['code'] === 200;
         return ['type' => false, 'sure' => $sure];
     }
-    public function readFile(string $path): string {
-        $r = s3_request($this->cfg, 'GET', $this->key($path));
-        return $r['code'] === 200 ? $r['body'] : '';
+    public function readFile(string $path): string { return $this->readFileChecked($path)['data']; }
+    public function readFileChecked(string $path): array {
+        // Con retry, e distinguendo l'errore dal contenuto: ritornare '' su un 503
+        // fa aprire all'editor una nota VUOTA che al salvataggio sovrascrive il file.
+        $r = s3_request_retry($this->cfg, 'GET', $this->key($path));
+        return ['data' => $r['code'] === 200 ? $r['body'] : '', 'ok' => $r['code'] === 200];
     }
     public function writeFile(string $path, string $data): bool {
         $r = s3_request($this->cfg, 'PUT', $this->key($path), [], ['content-length' => (string) strlen($data)], $data);
