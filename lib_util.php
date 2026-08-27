@@ -20,7 +20,8 @@ function human_size(int $b): string {
 }
 function valid_name(string $name): bool {
     return $name !== '' && !str_contains($name, '/') && !str_contains($name, '\\')
-        && $name !== '.' && $name !== '..' && !str_contains($name, "\0");
+        && $name !== '.' && $name !== '..'
+        && !preg_match('/[\x00-\x1F\x7F]/', $name);   // niente caratteri di controllo (rompono header, XML S3, firme)
 }
 function rrmdir(string $dir): void {
     foreach (scandir($dir) as $it) {
