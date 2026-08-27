@@ -53,18 +53,23 @@ async function api(action, data = {}, method = 'POST') {
 const SBX = mkdtempSync(join(tmpdir(), 'shfuzz-'));
 const PUB = join(SBX, 'public_html');
 cpSync(APP, PUB, { recursive: true, filter: (src) => !/node_modules|\/tests\/|\.git(\/|$)/.test(src) });
-const srv = spawn('php', ['-S', `127.0.0.1:${PORT}`, '-t', PUB], { stdio: ['ignore', 'ignore', 'ignore'] });
+const srv = spawn('php', ['-S', `127.0.0.1:${PORT}`, '-t', PUB], { stdio: ['ignore', 'ignore', 'inherit'] });
 process.on('exit', () => { try { srv.kill(); } catch {} try { rmSync(SBX, { recursive: true, force: true }); } catch {} });
-await new Promise(r => setTimeout(r, 800));
+// Attesa ATTIVA del server: in CI l'avvio di php -S può superare lo sleep fisso.
+for (let i = 0; ; i++) {
+  try { await fetch(B + '/index.php'); break; }
+  catch (e) { if (i >= 100) throw new Error('php -S non risponde: ' + e.message); await new Promise(r => setTimeout(r, 200)); }
+}
 
 async function bootstrap() {
   const page = await (await req('/index.php')).text();
   const pre = /name="csrf" value="([^"]+)"/.exec(page)?.[1] || '';
+  if (!pre) throw new Error('bootstrap: form di setup senza csrf. Pagina: ' + page.slice(0, 500));
   const fd = new URLSearchParams({ action: 'setup', username: 'admin', password: 'secret123', csrf: pre });
-  await req('/index.php', { method: 'POST', body: fd });
+  const sr = await req('/index.php', { method: 'POST', body: fd });
   const app = await (await req('/')).text();
   CSRF = /data-csrf="([^"]+)"/.exec(app)?.[1] || '';
-  if (!CSRF) throw new Error('bootstrap fallito: niente CSRF post-login');
+  if (!CSRF) throw new Error(`bootstrap fallito: niente CSRF post-login (setup HTTP ${sr.status}). Pagina: ` + app.slice(0, 500));
 }
 
 // ─── Modello dello stato atteso ──────────────────────────────────────────────
