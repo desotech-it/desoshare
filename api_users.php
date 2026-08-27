@@ -63,7 +63,13 @@ function action_user_save(): void {
         json_out(['ok' => false, 'error' => 'Username non valido (3-32: lettere, numeri, . _ -)'], 400);
     }
     // Quota: quota_mb >= 0 (0 = illimitata); -1/assente = non modificare (in update) o default (in create).
-    $quotaMbIn = isset($_POST['quota_mb']) && $_POST['quota_mb'] !== '' ? (int) $_POST['quota_mb'] : -1;
+    // Il valore deve essere NUMERICO: il solo cast (int) trasformava «12abc» in 12
+    // e «abc» in 0 = quota rimossa in silenzio.
+    $quotaRaw = isset($_POST['quota_mb']) && is_string($_POST['quota_mb']) ? trim($_POST['quota_mb']) : '';
+    if ($quotaRaw !== '' && !preg_match('/^\d+$/', $quotaRaw)) {
+        json_out(['ok' => false, 'error' => 'Quota non valida: inserisci un numero intero di MB (0 = illimitata)'], 400);
+    }
+    $quotaMbIn = $quotaRaw !== '' ? (int) $quotaRaw : -1;
     if ($quotaMbIn !== -1 && ($quotaMbIn < 0 || $quotaMbIn > QUOTA_MAX_MB)) {
         json_out(['ok' => false, 'error' => 'Quota non valida (0 = illimitata, max ' . QUOTA_MAX_MB . ' MB)'], 400);
     }

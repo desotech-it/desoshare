@@ -267,12 +267,14 @@ function userForm(u = null) {
     modalBg.querySelectorAll('.perm-opt').forEach(x => x.classList.toggle('active', x === o));
   });
   $('#u_save', modalBg).onclick = async () => {
+    const q = $('#u_quota', modalBg).value.trim();
+    if (q !== '' && !/^\d+$/.test(q)) { toast('Quota non valida: inserisci un numero intero di MB (0 = illimitata)', true); return; }
     const data = {
       username: $('#u_name', modalBg).value.trim(),
       password: $('#u_pass', modalBg).value,
       permission: chosen,
       role: $('#u_admin', modalBg).checked ? 'admin' : 'user',
-      quota_mb: $('#u_quota', modalBg).value.trim(),
+      quota_mb: q,
     };
     if (editing) data.original = u.username;
     const r = await apiPost('user_save', data);
