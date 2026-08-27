@@ -102,6 +102,10 @@ function action_user_save(): void {
                 json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: rinomina annullata, riprova'], 503);
             }
             if ($chkOld['type'] === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
+                // Fallimento (anche PARZIALE, es. S3 a metà copia): riporta indietro
+                // quello che si è mosso, best-effort, così la home non resta divisa
+                // su due prefissi con utente/share ancora sul vecchio nome.
+                if (storage()->typeOf($newPfx) === 'dir') storage()->renamePath($newPfx, $oldPfx);
                 json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
             }
             $isRename = true;
