@@ -78,6 +78,12 @@ function action_user_save(): void {
     if ($original !== '' && $original !== $username) {
         $existing = array_column(users_load()['users'] ?? [], null, 'username');
         if (isset($existing[$original])) {                       // altrimenti è una create: gestita sotto
+            // Un utente SSO ha lo username derivato dall'IdP: rinominarlo qui fa
+            // ri-provisionare il vecchio nome al login successivo (identità duplicata
+            // con lo stesso 'sub'). La rinomina va fatta sull'IdP.
+            if (!empty($existing[$original]['sso'])) {
+                json_out(['ok' => false, 'error' => 'Utente SSO: lo username è assegnato dall\'IdP (desoauth) e non è rinominabile da qui'], 400);
+            }
             if (isset($existing[$username])) json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
             $oldPfx = user_prefix($original); $newPfx = user_prefix($username);
             if (storage()->typeOf($newPfx) !== false) {
