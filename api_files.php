@@ -98,7 +98,9 @@ function action_delete(): void {
         $p = logical_join(user_home(), $clean);
         $t = storage()->typeOf($p);
         if ($t === false) { $errors[] = "$rel: non trovato"; continue; }
-        $sz = ($t === 'dir') ? storage()->usageOf($p) : storage()->sizeOf($p);   // byte liberati (prima della cancellazione)
+        try {
+            $sz = ($t === 'dir') ? storage()->usageOf($p) : storage()->sizeOf($p);   // byte liberati (prima della cancellazione)
+        } catch (RuntimeException $ex) { $errors[] = "$rel: storage non raggiungibile"; continue; }   // niente delete al buio
         if (storage()->deletePath($p, true)) { $deleted++; $freed += $sz; } else $errors[] = "$rel: impossibile eliminare";
     }
     if ($freed > 0) usage_bump((string) $_SESSION['username'], -$freed);

@@ -22,7 +22,15 @@ function usage_get(string $username, bool $fresh = false): int {
         return (int) $e['bytes'];
     }
     $t0 = time();
-    $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir), fuori lock
+    try {
+        $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir), fuori lock
+    } catch (RuntimeException $ex) {
+        // Storage non interrogabile: MAI cacheare una somma inaffidabile. Si usa
+        // l'ultimo valore noto (anche stantio); senza nemmeno quello, errore
+        // esplicito: meglio bloccare l'operazione che azzerare/aggirare la quota.
+        if (is_array($e) && isset($e['bytes'])) return (int) $e['bytes'];
+        json_out(['ok' => false, 'error' => 'Consumo non verificabile (storage non raggiungibile): riprova tra poco'], 503);
+    }
     // Scrittura CONDIZIONALE: se durante il LIST un usage_bump concorrente (fine
     // upload, delete) ha aggiornato la voce, il totale calcolato qui è già stantio
     // e sovrascriverlo cancellerebbe quel delta → si tiene la voce più recente.

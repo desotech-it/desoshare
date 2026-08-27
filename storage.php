@@ -365,14 +365,17 @@ class S3Backend implements StorageBackend {
     }
     public function usageOf(string $prefix): int {
         // Somma le dimensioni di TUTTI gli oggetti sotto <prefix>/ (paginazione completa).
+        // Con retry, e su errore persistente ECCEZIONE: una somma parziale finirebbe
+        // in cache quota come consumo reale (quota azzerata → aggirabile, o consumo
+        // gonfiato → utente bloccato). Il chiamante (usage_get) decide il fallback.
         $p = $prefix === '' ? '' : rtrim($prefix, '/') . '/';
         $sum = 0; $token = null;
         do {
             $q = ['list-type' => '2', 'prefix' => $p, 'max-keys' => '1000'];
             if ($token) $q['continuation-token'] = $token;
-            $r = s3_request($this->cfg, 'GET', '', $q);
-            if ($r['code'] !== 200) break;
-            $xml = @simplexml_load_string($r['body']); if (!$xml) break;
+            $r = s3_request_retry($this->cfg, 'GET', '', $q);
+            if ($r['code'] !== 200) throw new RuntimeException('usageOf: listato S3 non disponibile (HTTP ' . $r['code'] . ')');
+            $xml = @simplexml_load_string($r['body']); if (!$xml) throw new RuntimeException('usageOf: risposta S3 non valida');
             foreach ($xml->Contents as $c) $sum += (int) $c->Size;
             $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
         } while ($token);
