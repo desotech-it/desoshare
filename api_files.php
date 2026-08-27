@@ -137,14 +137,18 @@ function action_rename(): void {
     // Le condivisioni che puntano all'elemento (o a suoi discendenti) seguono il
     // nuovo percorso: altrimenti restano orfane e shares_prune le elimina.
     with_json_lock(shares_file(), function (array $sd) use ($from, $target) {
+        // NB: niente foreach-by-ref su `$sd['shares'] ?? []`: PHP itererebbe una
+        // COPIA temporanea scartando le modifiche in silenzio.
+        $shares = $sd['shares'] ?? [];
         $touched = false;
-        foreach ($sd['shares'] ?? [] as &$s) {
+        foreach ($shares as $i => $s) {
             $p = (string) ($s['path'] ?? '');
-            if ($p === $from) { $s['path'] = $target; $s['name'] = basename($target); $touched = true; }
-            elseif (str_starts_with($p, $from . '/')) { $s['path'] = $target . substr($p, strlen($from)); $touched = true; }
+            if ($p === $from) { $shares[$i]['path'] = $target; $shares[$i]['name'] = basename($target); $touched = true; }
+            elseif (str_starts_with($p, $from . '/')) { $shares[$i]['path'] = $target . substr($p, strlen($from)); $touched = true; }
         }
-        unset($s);
-        return $touched ? $sd : null;
+        if (!$touched) return null;
+        $sd['shares'] = $shares;
+        return $sd;
     });
     json_out(['ok' => true]);
 }

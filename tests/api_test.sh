@@ -187,6 +187,12 @@ has "clientA riceve l'update di B" "$RA2" "$UB"
 has "note_save (materializza su file)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")" '"ok":true'
 curl -s -b $JAR "$B/api.php?action=download&path=nota.md" -o "$SBX/nota.dl"
 grep -q "riga uno modificata" "$SBX/nota.dl" && ok "file aggiornato da note_save" || no "file aggiornato da note_save"
+# ─ Le condivisioni seguono la rinomina dell'elemento ─
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=segueme.txt --data-urlencode content=segui "$B/api.php?action=newfile" >/dev/null
+FTOK=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=segueme.txt --data-urlencode ttl=86400 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode from=segueme.txt --data-urlencode to=seguito.txt "$B/api.php?action=rename" >/dev/null
+has "share viva dopo la rinomina del file" "$(curl -s "$B/share.php?t=$FTOK")" 'seguito.txt'
+
 # ─ Cancellare e ricreare una nota NON deve far risorgere il contenuto ─
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=fantasma.md --data-urlencode content="testo segreto" "$B/api.php?action=newfile" >/dev/null
 FID=$(curl -s -b $JAR "$B/api.php?action=note_open&path=fantasma.md" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')

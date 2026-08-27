@@ -164,14 +164,17 @@ function action_user_save(): void {
     if ($isRename) {
         // Condivisioni: riscrive proprietario e percorso (prefisso home) sul nuovo nome.
         with_json_lock(shares_file(), function (array $sd) use ($original, $username) {
+            // NB: niente foreach-by-ref su `$sd['shares'] ?? []`: PHP itererebbe una
+            // COPIA temporanea scartando le modifiche in silenzio.
             $oldPfx = user_prefix($original); $newPfx = user_prefix($username);
-            foreach ($sd['shares'] ?? [] as &$s) {
-                if (($s['created_by'] ?? '') === $original) $s['created_by'] = $username;
+            $shares = $sd['shares'] ?? [];
+            foreach ($shares as $i => $s) {
+                if (($s['created_by'] ?? '') === $original) $shares[$i]['created_by'] = $username;
                 $p = (string) ($s['path'] ?? '');
-                if ($p === $oldPfx) $s['path'] = $newPfx;
-                elseif (str_starts_with($p, $oldPfx . '/')) $s['path'] = $newPfx . substr($p, strlen($oldPfx));
+                if ($p === $oldPfx) $shares[$i]['path'] = $newPfx;
+                elseif (str_starts_with($p, $oldPfx . '/')) $shares[$i]['path'] = $newPfx . substr($p, strlen($oldPfx));
             }
-            unset($s);
+            $sd['shares'] = $shares;
             return $sd;
         });
         // Cache di quota: sposta la voce sul nuovo nome (il consumo non è cambiato).
