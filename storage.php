@@ -43,8 +43,10 @@ class LocalBackend implements StorageBackend {
         return ['data' => (string) $d, 'ok' => $d !== false];
     }
     public function writeFile(string $path, string $data): bool {
-        $a = $this->abs($path); $tmp = $a . '.tmp.' . bin2hex(random_bytes(4));
-        if (file_put_contents($tmp, $data) === false || !@rename($tmp, $a)) { @unlink($tmp); return false; }
+        $a = $this->abs($path); $dir = dirname($a);
+        if (!is_dir($dir)) @mkdir($dir, 0755, true);   // come putFromLocal: la cartella può non esistere ancora (parità con S3, dove non serve)
+        $tmp = $a . '.tmp.' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $data) === false || !@rename($tmp, $a)) { @unlink($tmp); return false; }
         @chmod($a, 0644); return true;
     }
     public function putFromLocal(string $localPath, string $path): bool {
