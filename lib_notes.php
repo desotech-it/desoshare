@@ -17,9 +17,16 @@ function note_is_text(string $name): bool {
     return !in_array($ext, $binary, true);   // tutto ciò che non è chiaramente binario è editabile come testo
 }
 function note_relay_lines(string $id): array {
+    // Lettura sotto lock CONDIVISO: note_sync riscrive il file con ftruncate+fwrite
+    // sotto lock esclusivo, e una lettura non serializzata può osservare il file
+    // troncato a metà (righe base64 mozzate → update Yjs corrotti sui client).
     $f = note_relay_path($id);
-    if (!is_file($f)) return [];
-    $c = (string) file_get_contents($f);
+    $h = @fopen($f, 'rb');
+    if ($h === false) return [];
+    @flock($h, LOCK_SH);
+    $c = (string) stream_get_contents($h);
+    @flock($h, LOCK_UN);
+    fclose($h);
     return $c === '' ? [] : explode("\n", rtrim($c, "\n"));
 }
 // Scambio awareness (cursori/presence Yjs) effimero: aggiorna il proprio stato e ritorna gli altri recenti.
