@@ -47,7 +47,12 @@ function oidc_settings_view(): array {
 }
 function action_settings_save(): void {
     require_admin();
-    $s = settings_load();
+    // Tutta la read-modify-write avviene DENTRO la sezione critica: due salvataggi
+    // concorrenti non devono perdersi le modifiche a vicenda (lost update tra la
+    // settings_load() e la scrittura). json_out nelle validazioni esce col lock
+    // rilasciato alla chiusura del processo.
+    $saved = null;
+    with_json_lock(settings_file(), function (array $s) use (&$saved) {
     $title = trim((string) ($_POST['site_title'] ?? ''));
     if ($title !== '') {
         if (mb_strlen($title) > 40) json_out(['ok' => false, 'error' => 'Titolo troppo lungo (max 40)'], 400);
@@ -89,8 +94,10 @@ function action_settings_save(): void {
         $s['local_auth_enabled'] = $localOn;
     }
 
-    settings_save($s);
-    audit('settings_update', 'titolo="' . ($s['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . $backend . ' sso=' . (oidc_enabled() ? 'on' : 'off'));
+    $saved = $s;
+    return $s;
+    });
+    audit('settings_update', 'titolo="' . ($saved['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . (($saved['storage_backend'] ?? 'local')) . ' sso=' . (oidc_enabled() ? 'on' : 'off'));
     json_out(['ok' => true]);
 }
 
