@@ -1054,7 +1054,7 @@ Annulla = conserva i file`);
         const idx = missing[next++];
         const offset = idx * chunkSize, end = Math.min(offset + chunkSize, f.size);
         try {
-          await sendChunk(uid, idx, offset, chunkSize, f.size, f.slice(offset, end), (loaded) => {
+          await sendChunk(uid, idx, offset, chunkSize, f.size, f.slice(offset, end), dir, f.name, (loaded) => {
             live.set(idx, loaded);
             refresh();
           });
@@ -1072,7 +1072,7 @@ Annulla = conserva i file`);
     const fin = await apiPost("upload_finish", { uid, path: dir, name: f.name, total: f.size, chunk_size: chunkSize });
     if (!fin.ok) throw new Error(fin.error || "finalizzazione fallita");
   }
-  function sendChunk(uid, index, offset, chunkSize, total, blob, onProg, attempt = 0) {
+  function sendChunk(uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt = 0) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "api.php?action=upload_chunk");
@@ -1081,7 +1081,7 @@ Annulla = conserva i file`);
         if (e.lengthComputable && onProg) onProg(e.loaded);
       };
       const retry = () => {
-        if (attempt < MAX_RETRY) setTimeout(() => sendChunk(uid, index, offset, chunkSize, total, blob, onProg, attempt + 1).then(resolve, reject), 800 * (attempt + 1));
+        if (attempt < MAX_RETRY) setTimeout(() => sendChunk(uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt + 1).then(resolve, reject), 800 * (attempt + 1));
         else reject(new Error("connessione interrotta"));
       };
       xhr.onload = () => {
@@ -1101,6 +1101,8 @@ Annulla = conserva i file`);
       fd.append("offset", offset);
       fd.append("chunk_size", chunkSize);
       fd.append("total", total);
+      fd.append("path", dir);
+      fd.append("name", name);
       fd.append("chunk", blob);
       xhr.send(fd);
     });

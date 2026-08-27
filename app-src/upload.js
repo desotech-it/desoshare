@@ -91,7 +91,7 @@ async function uploadOne(r, base) {
       const idx = missing[next++];
       const offset = idx * chunkSize, end = Math.min(offset + chunkSize, f.size);
       try {
-        await sendChunk(uid, idx, offset, chunkSize, f.size, f.slice(offset, end), loaded => { live.set(idx, loaded); refresh(); });
+        await sendChunk(uid, idx, offset, chunkSize, f.size, f.slice(offset, end), dir, f.name, loaded => { live.set(idx, loaded); refresh(); });
         live.delete(idx); doneBytes += (end - offset); refresh();
       } catch (e) { failed = e; live.delete(idx); }
     }
@@ -102,13 +102,13 @@ async function uploadOne(r, base) {
   if (!fin.ok) throw new Error(fin.error || 'finalizzazione fallita');
 }
 
-function sendChunk(uid, index, offset, chunkSize, total, blob, onProg, attempt = 0) {
+function sendChunk(uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt = 0) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', 'api.php?action=upload_chunk');
     xhr.setRequestHeader('X-CSRF', CSRF);
     xhr.upload.onprogress = e => { if (e.lengthComputable && onProg) onProg(e.loaded); };
-    const retry = () => { if (attempt < MAX_RETRY) setTimeout(() => sendChunk(uid, index, offset, chunkSize, total, blob, onProg, attempt + 1).then(resolve, reject), 800 * (attempt + 1)); else reject(new Error('connessione interrotta')); };
+    const retry = () => { if (attempt < MAX_RETRY) setTimeout(() => sendChunk(uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt + 1).then(resolve, reject), 800 * (attempt + 1)); else reject(new Error('connessione interrotta')); };
     xhr.onload = () => {
       let r = {}; try { r = JSON.parse(xhr.responseText); } catch (_) {}
       if (xhr.status === 200 && r.ok) resolve(r);
@@ -118,7 +118,9 @@ function sendChunk(uid, index, offset, chunkSize, total, blob, onProg, attempt =
     xhr.onerror = retry;
     const fd = new FormData();
     fd.append('uid', uid); fd.append('index', index); fd.append('offset', offset);
-    fd.append('chunk_size', chunkSize); fd.append('total', total); fd.append('chunk', blob);
+    fd.append('chunk_size', chunkSize); fd.append('total', total);
+    fd.append('path', dir); fd.append('name', name);   // destinazione: il pre-check quota sconta il file sostituito
+    fd.append('chunk', blob);
     xhr.send(fd);
   });
 }

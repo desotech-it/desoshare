@@ -46,7 +46,18 @@ function action_upload_chunk(): void {
     // Pre-check quota al primo blocco usando la dimensione totale dichiarata.
     // 413 (NON 5xx) così il client non ritenta e mostra subito l'errore (prima
     // della validazione geometrica: "troppo grande" è l'errore più utile).
-    if (!is_file(upload_part($uid))) quota_check($total, 0, 413);
+    // Se il client dichiara la destinazione (path+name), la dimensione del file
+    // che verrà SOSTITUITO va scontata: ricaricare un file esistente vicino alla
+    // quota non deve dare un 413 errato (upload_finish riverifica comunque).
+    if (!is_file(upload_part($uid))) {
+        $repl = 0;
+        $rn = basename(trim((string) ($_POST['name'] ?? '')));
+        if ($rn !== '' && valid_name($rn)) {
+            $dest = logical_join(user_path($_POST['path'] ?? ''), $rn);
+            if (storage()->typeOf($dest) === 'file') $repl = (int) storage()->sizeOf($dest);
+        }
+        quota_check($total, $repl, 413);
+    }
     // Validazione RIGOROSA della geometria del blocco (niente offset arbitrari):
     $expectedCount = (int) ceil($total / $chunkSize);
     if ($index >= $expectedCount)        json_out(['ok' => false, 'error' => 'Indice blocco fuori intervallo'], 400);
