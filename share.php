@@ -4,11 +4,13 @@
 require_once __DIR__ . '/lib.php';
 
 $token = $_GET['t'] ?? '';
+if (!is_string($token)) { share_invalid_page(); exit; }   // t[]= non deve produrre un TypeError 500
 $share = share_find($token);
 if (!$share) { share_invalid_page(); exit; }
 
 $type = $share['type'] ?? 'file';
 $p = $_GET['p'] ?? '';
+if (!is_string($p)) $p = '';                              // idem per p[]=
 
 // Download di un file
 if (isset($_GET['dl'])) {
