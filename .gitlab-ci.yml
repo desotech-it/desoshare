@@ -51,6 +51,19 @@ test:js:
   script:
     - cd tests && npm install --no-audit --no-fund && node js_smoke.mjs
 
+# Test MODEL-BASED dei cicli di vita: sequenze pseudo-casuali riproducibili di
+# operazioni reali (crea/modifica/condividi/rinomina/cancella/ricrea) con
+# verifica delle invarianti dopo ogni passo. Trova i bug EMERGENTI dalle
+# sequenze (es. contenuti o link che "risorgono") che i test per-operazione
+# non vedono. Serve node (driver) + php (app).
+test:lifecycle:
+  image: node:22
+  stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -yqq --no-install-recommends php-cli > /dev/null
+  script:
+    - SEEDS="42 7 1234" OPS=120 node tests/lifecycle_fuzz.mjs
+
 # ─── Deploy ───────────────────────────────────────────────────────────────────
 # Copia in produzione SOLO i file dell'app (vedi tests/README.md): *.php,
 # assets/, .htaccess, .user.ini, icone. Mai tests/, *-src/, docs, .git.
