@@ -81,6 +81,9 @@ has "zip valido (firma PK)" "$(head -c2 "$SBX/z.zip")" "PK"
 # paths[] anche via POST (selezioni ampie: il GET supererebbe la request line)
 curl -s -b $JAR --data-urlencode "paths[]=docs" --data-urlencode "paths[]=up.bin" "$B/api.php?action=zip" -o "$SBX/zp.zip"
 has "zip via POST valido (firma PK)" "$(head -c2 "$SBX/zp.zip")" "PK"
+# paths[]='' = ZIP dell'intera radice della home (non deve essere un 400)
+curl -s -b $JAR "$B/api.php?action=zip&paths[]=" -o "$SBX/zr.zip"
+has "zip della radice valido (firma PK)" "$(head -c2 "$SBX/zr.zip")" "PK"
 # Backend LOCALE: zip_manifest deve ritornare mode:'server' (il client userà il server-zip).
 ZM=$(curl -s -b $JAR "$B/api.php?action=zip_manifest&paths[]=docs&paths[]=up.bin")
 has "zip_manifest locale → mode:server" "$ZM" '"mode":"server"'

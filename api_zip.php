@@ -7,8 +7,11 @@ function action_zip(): void {
     // request line del server (414); il client usa un form POST auto-inviato.
     $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);
     if (is_string($paths)) $paths = [$paths];
+    $raw = count((array) $paths);
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
-    if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
+    // paths[]='' = ZIP della RADICE della propria home (bottone «Scarica ZIP»
+    // senza selezione): il filtro degli elementi vuoti non deve renderlo un 400.
+    if (empty($paths)) { if ($raw > 0) $paths = ['']; else json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400); }
 
     $logical = array_map(fn($rel) => user_path((string) $rel), $paths);
     $tmp = zip_logical($logical);   // zip via storage (Local o S3), confinato alla home utente
@@ -33,8 +36,9 @@ function action_zip_manifest(): void {
     require_login();
     $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);   // anche via POST (selezioni ampie)
     if (is_string($paths)) $paths = [$paths];
+    $raw = count((array) $paths);
     $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
-    if (empty($paths)) json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400);
+    if (empty($paths)) { if ($raw > 0) $paths = ['']; else json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400); }   // '' = radice
 
     $logical = array_map(fn($rel) => user_path((string) $rel), $paths);   // confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
