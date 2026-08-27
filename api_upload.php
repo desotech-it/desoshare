@@ -64,9 +64,13 @@ function action_upload_chunk(): void {
     if ($fh === false) json_out(['ok' => false, 'error' => 'Impossibile scrivere il blocco'], 500);
     flock($fh, LOCK_EX);
     fseek($fh, $offset);
+    // La scrittura va VERIFICATA byte per byte: un fallimento parziale (disco
+    // pieno) marcato come ricevuto non verrebbe mai ritrasmesso → file corrotto.
+    $written = false;
     $in = fopen($_FILES['chunk']['tmp_name'], 'rb');
-    if ($in !== false) { stream_copy_to_stream($in, $fh); fclose($in); }
+    if ($in !== false) { $written = stream_copy_to_stream($in, $fh) === $expectLen; fclose($in); }
     fflush($fh); flock($fh, LOCK_UN); fclose($fh);
+    if (!$written) json_out(['ok' => false, 'error' => 'Scrittura del blocco incompleta (spazio disco?)'], 500);
     $count = manifest_mark($uid, $index, $total, $chunkSize);
     json_out(['ok' => true, 'count' => $count]);
 }
