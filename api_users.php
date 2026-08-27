@@ -86,10 +86,22 @@ function action_user_save(): void {
             }
             if (isset($existing[$username])) json_out(['ok' => false, 'error' => 'Username già esistente'], 409);
             $oldPfx = user_prefix($original); $newPfx = user_prefix($username);
-            if (storage()->typeOf($newPfx) !== false) {
+            // I controlli di esistenza devono essere CONCLUSIVI: su S3 in errore
+            // typeOf ritorna false e la migrazione verrebbe saltata in silenzio,
+            // riscrivendo utente/share/quota col nuovo nome ma lasciando i file
+            // orfani sotto il vecchio prefisso.
+            $chkNew = storage()->existsCheck($newPfx);
+            if ($chkNew['type'] === false && !$chkNew['sure']) {
+                json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: rinomina annullata, riprova'], 503);
+            }
+            if ($chkNew['type'] !== false) {
                 json_out(['ok' => false, 'error' => 'Nello storage esiste già una cartella col nuovo nome: risolvere prima il conflitto'], 409);
             }
-            if (storage()->typeOf($oldPfx) === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
+            $chkOld = storage()->existsCheck($oldPfx);
+            if ($chkOld['type'] === false && !$chkOld['sure']) {
+                json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: rinomina annullata, riprova'], 503);
+            }
+            if ($chkOld['type'] === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
                 json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
             }
             $isRename = true;
