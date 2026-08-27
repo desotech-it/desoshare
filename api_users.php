@@ -101,11 +101,16 @@ function action_user_save(): void {
             if ($chkOld['type'] === false && !$chkOld['sure']) {
                 json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: rinomina annullata, riprova'], 503);
             }
+            // Guardia anti-prune: tra lo spostamento della home e la riscrittura
+            // delle share i loro path puntano nel vuoto, e uno share_list
+            // concorrente le poterebbe definitivamente. Chiusa a fine migrazione.
+            migration_guard_begin();
             if ($chkOld['type'] === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
                 // Fallimento (anche PARZIALE, es. S3 a metà copia): riporta indietro
                 // quello che si è mosso, best-effort, così la home non resta divisa
                 // su due prefissi con utente/share ancora sul vecchio nome.
                 if (storage()->typeOf($newPfx) === 'dir') storage()->renamePath($newPfx, $oldPfx);
+                migration_guard_end();
                 json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
             }
             $isRename = true;
@@ -146,6 +151,7 @@ function action_user_save(): void {
         if ($isRename && storage()->typeOf(user_prefix($username)) === 'dir') {
             storage()->renamePath(user_prefix($username), user_prefix($original));
         }
+        if ($isRename) migration_guard_end();
         json_out(['ok' => false, 'error' => $err], $code);
     }
     if ($isRename) {
@@ -168,6 +174,7 @@ function action_user_save(): void {
         });
         // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome.
         if (($me['username'] ?? '') === $original) $_SESSION['username'] = $username;
+        migration_guard_end();
         audit('user_rename', $original . ' → ' . $username);
     }
     if ($auditMsg) audit($auditMsg[0], $auditMsg[1]);

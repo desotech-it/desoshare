@@ -32,6 +32,21 @@ function share_slugify(string $s): string {
 function share_base(array $s): string {
     return clean_logical($s['path'] ?? '');
 }
+// ─── Guardia di migrazione ───────────────────────────────────────────────────
+// Durante una migrazione di percorsi (es. rinomina utente: home spostata ma
+// share non ancora riscritte) shares_prune vedrebbe target "mancanti" e
+// cancellerebbe share valide. Il file-guardia sospende temporaneamente la
+// potatura per elemento mancante (quella per scadenza resta attiva).
+function migration_lock_file(): string { return DATA_DIR . '/migration.lock'; }
+function migration_guard_begin(): void { @file_put_contents(migration_lock_file(), (string) time()); }
+function migration_guard_end(): void { @unlink(migration_lock_file()); }
+function migration_guard_active(): bool {
+    $f = migration_lock_file();
+    if (!is_file($f)) return false;
+    if (time() - (int) @file_get_contents($f) > 600) { @unlink($f); return false; }   // stantia (processo morto)
+    return true;
+}
+
 // Rimuove le condivisioni scadute o il cui elemento non esiste più.
 // I controlli (typeOf, eventualmente su S3) avvengono FUORI dal lock; la rimozione
 // è poi atomica e mirata ai soli token individuati → non clobbera share aggiunte
@@ -39,9 +54,11 @@ function share_base(array $s): string {
 function shares_prune(): array {
     $d = shares_load();
     $now = time();
+    $migrating = migration_guard_active();   // rinomina in corso: non potare per "elemento mancante"
     $remove = [];
     foreach ($d['shares'] as $s) {
         if (($s['expires_at'] ?? 0) <= $now) { $remove[(string) ($s['token'] ?? '')] = true; continue; }
+        if ($migrating) continue;
         // Rimozione per elemento mancante SOLO se il backend ha potuto verificarlo con
         // certezza: un errore S3 (credenziali, rete, 5xx) non deve cancellare le share.
         $chk = storage()->existsCheck(share_base($s));
