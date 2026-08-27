@@ -193,6 +193,13 @@ FTOK=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=segueme.txt --da
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode from=segueme.txt --data-urlencode to=seguito.txt "$B/api.php?action=rename" >/dev/null
 has "share viva dopo la rinomina del file" "$(curl -s "$B/share.php?t=$FTOK")" 'seguito.txt'
 
+# ─ Cancellare un elemento condiviso revoca la share (niente risurrezione del link) ─
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=condiviso.txt --data-urlencode content=vecchio "$B/api.php?action=newfile" >/dev/null
+DTOK=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=condiviso.txt --data-urlencode ttl=86400 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode 'paths=["condiviso.txt"]' "$B/api.php?action=delete" >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=condiviso.txt --data-urlencode content=nuovo "$B/api.php?action=newfile" >/dev/null
+has "link di un file cancellato resta morto anche dopo la ricreazione" "$(curl -s "$B/share.php?t=$DTOK")" 'Link non valido o scaduto'
+
 # ─ Cancellare e ricreare una nota NON deve far risorgere il contenuto ─
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=fantasma.md --data-urlencode content="testo segreto" "$B/api.php?action=newfile" >/dev/null
 FID=$(curl -s -b $JAR "$B/api.php?action=note_open&path=fantasma.md" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')

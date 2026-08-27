@@ -93,7 +93,7 @@ function action_delete(): void {
     $paths = $_POST['paths'] ?? [];
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
     $deleted = 0; $errors = [];
-    $freed = 0;
+    $freed = 0; $removedPaths = [];
     foreach ($paths as $rel) {
         $clean = clean_logical((string) $rel);
         if ($clean === '') { $errors[] = 'la radice non è eliminabile'; continue; }
@@ -108,8 +108,25 @@ function action_delete(): void {
         if ($t === 'dir') note_state_purge_tree($p);   // prima del delete: serve il listato
         if (storage()->deletePath($p, true)) {
             if ($t !== 'dir') note_state_purge_path($p);
+            $removedPaths[] = $p;
             $deleted++; $freed += $sz;
         } else $errors[] = "$rel: impossibile eliminare";
+    }
+    // Revoca le share degli elementi eliminati (e dei loro discendenti): un link
+    // «morto» non deve risorgere servendo un futuro file omonimo a chi lo aveva
+    // (stesso principio del cleanup di user_delete).
+    if (!empty($removedPaths)) {
+        with_json_lock(shares_file(), function (array $sd) use ($removedPaths) {
+            $shares = $sd['shares'] ?? [];
+            $keep = array_values(array_filter($shares, function ($s) use ($removedPaths) {
+                $p = (string) ($s['path'] ?? '');
+                foreach ($removedPaths as $rp) if ($p === $rp || str_starts_with($p, $rp . '/')) return false;
+                return true;
+            }));
+            if (count($keep) === count($shares)) return null;
+            $sd['shares'] = $keep;
+            return $sd;
+        });
     }
     if ($freed > 0) usage_bump((string) $_SESSION['username'], -$freed);
     json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
