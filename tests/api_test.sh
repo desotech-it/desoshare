@@ -187,6 +187,18 @@ has "clientA riceve l'update di B" "$RA2" "$UB"
 has "note_save (materializza su file)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=nota.md --data-urlencode content="riga uno modificata" "$B/api.php?action=note_save")" '"ok":true'
 curl -s -b $JAR "$B/api.php?action=download&path=nota.md" -o "$SBX/nota.dl"
 grep -q "riga uno modificata" "$SBX/nota.dl" && ok "file aggiornato da note_save" || no "file aggiornato da note_save"
+# ─ Cancellare e ricreare una nota NON deve far risorgere il contenuto ─
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=fantasma.md --data-urlencode content="testo segreto" "$B/api.php?action=newfile" >/dev/null
+FID=$(curl -s -b $JAR "$B/api.php?action=note_open&path=fantasma.md" | sed -n 's/.*"id":"\([a-f0-9]*\)".*/\1/p')
+UF=$(printf 'updatefantasma' | openssl base64)
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=$FID --data-urlencode since=0 --data-urlencode client=clientFFFFFF --data-urlencode "updates=[\"$UF\"]" --data-urlencode path=fantasma.md "$B/api.php?action=note_sync" >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode 'paths=["fantasma.md"]' "$B/api.php?action=delete" >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=fantasma.md --data-urlencode content="nuovo" "$B/api.php?action=newfile" >/dev/null
+FO=$(curl -s -b $JAR "$B/api.php?action=note_open&path=fantasma.md")
+hasnt "nota ricreata: NESSUN update del relay precedente" "$FO" "$UF"
+has "nota ricreata: relay vergine (offset 0)" "$FO" '"offset":0'
+has "nota ricreata: testo = contenuto nuovo" "$FO" "$(printf 'nuovo' | openssl base64)"
+
 # ─ Protocollo a generazioni (gen/snapshot/resync) ─
 G0=$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md" | sed -n 's/.*"gen":"\([a-f0-9]*\)".*/\1/p')
 [ -n "$G0" ] && ok "note_open espone gen" || no "note_open espone gen"

@@ -102,6 +102,7 @@ function action_upload_finish(): void {
         $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
         $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
         if (!storage()->writeFile($dest, '')) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
+        if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura/ricreazione: via il relay stantio
         usage_bump((string) $_SESSION['username'], -$repl);
         @unlink(manifest_path($uid));
         json_out(['ok' => true]);
@@ -127,6 +128,7 @@ function action_upload_finish(): void {
     if (!storage()->putFromLocal($part, $dest)) {
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
+    if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
     usage_bump((string) $_SESSION['username'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();

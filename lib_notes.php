@@ -73,6 +73,27 @@ function note_aware_exchange(string $id, string $client, string $b64, string $us
     fflush($h); flock($h, LOCK_UN); fclose($h);
     return $others;
 }
+// ─── Invalidazione dello stato collaborativo ─────────────────────────────────
+// Il relay è indicizzato con lo sha1 del PERCORSO: se il file viene cancellato,
+// rinominato o sovrascritto fuori dall'editor, lo stato va eliminato, altrimenti
+// un file ricreato allo stesso percorso "risorge" col contenuto precedente
+// (e il testo cancellato resterebbe su disco fino al GC: anche privacy).
+function note_state_purge_path(string $logical): void {
+    $id = note_id($logical);
+    @unlink(note_relay_path($id));
+    @unlink(note_aware_path($id));
+    @unlink(note_gen_path($id));
+}
+// Variante ricorsiva per la cancellazione/rinomina di cartelle: va chiamata PRIMA
+// dell'operazione sullo storage (serve il listato dei percorsi ancora esistenti).
+function note_state_purge_tree(string $dir): void {
+    foreach (storage()->listDir($dir) as $e) {
+        $p = logical_join($dir, $e['name']);
+        if ($e['type'] === 'dir') note_state_purge_tree($p);
+        elseif (note_is_text($e['name'])) note_state_purge_path($p);
+    }
+}
+
 // Pulisce relay/awareness di note non toccate da oltre 7 giorni.
 function note_gc(): void {
     foreach (glob(notes_dir() . '/*') as $f) {

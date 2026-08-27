@@ -111,6 +111,7 @@ function action_user_save(): void {
             // delle share i loro path puntano nel vuoto, e uno share_list
             // concorrente le poterebbe definitivamente. Chiusa a fine migrazione.
             migration_guard_begin();
+            if ($chkOld['type'] === 'dir') note_state_purge_tree($oldPfx);   // i relay sono indicizzati per percorso: quelli vecchi diventano stantii
             if ($chkOld['type'] === 'dir' && !storage()->renamePath($oldPfx, $newPfx)) {
                 // Fallimento (anche PARZIALE, es. S3 a metà copia): riporta indietro
                 // quello che si è mosso, best-effort, così la home non resta divisa
@@ -223,6 +224,7 @@ function action_user_delete(): void {
 
     $purged = false;
     if (!empty($_POST['purge']) && $username !== '') {
+        note_state_purge_tree(user_prefix($username));   // prima del delete: serve il listato (anche privacy)
         $purged = storage()->deletePath(user_prefix($username), true);
     }
 

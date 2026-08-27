@@ -50,6 +50,7 @@ function action_newfile(): void {
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     $content = (string) ($_POST['content'] ?? '');
     quota_check(strlen($content));
+    note_state_purge_path($target);   // relay stantio di un omonimo cancellato in passato
     if (!storage()->writeFile($target, $content)) {
         json_out(['ok' => false, 'error' => 'Impossibile creare il file'], 500);
     }
@@ -79,6 +80,7 @@ function action_upload(): void {
         $sz = (int) filesize((string) $tmp[$i]);
         $repl = (storage()->typeOf(logical_join($dir, $n)) === 'file') ? storage()->sizeOf(logical_join($dir, $n)) : 0;
         if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; continue; }
+        if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
         $saved++; $savedBytes += $sz - $repl;
     }
     if ($savedBytes !== 0) usage_bump((string) $_SESSION['username'], $savedBytes);
@@ -101,7 +103,13 @@ function action_delete(): void {
         try {
             $sz = ($t === 'dir') ? storage()->usageOf($p) : storage()->sizeOf($p);   // byte liberati (prima della cancellazione)
         } catch (RuntimeException $ex) { $errors[] = "$rel: storage non raggiungibile"; continue; }   // niente delete al buio
-        if (storage()->deletePath($p, true)) { $deleted++; $freed += $sz; } else $errors[] = "$rel: impossibile eliminare";
+        // Stato collaborativo delle note eliminato CON i file: un file ricreato allo
+        // stesso percorso non deve "risorgere" col contenuto del relay precedente.
+        if ($t === 'dir') note_state_purge_tree($p);   // prima del delete: serve il listato
+        if (storage()->deletePath($p, true)) {
+            if ($t !== 'dir') note_state_purge_path($p);
+            $deleted++; $freed += $sz;
+        } else $errors[] = "$rel: impossibile eliminare";
     }
     if ($freed > 0) usage_bump((string) $_SESSION['username'], -$freed);
     json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
@@ -115,10 +123,16 @@ function action_rename(): void {
     if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     if ($fromRel === '') json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
     $from = logical_join(user_home(), $fromRel);
-    if (storage()->typeOf($from) === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
+    $ftype = storage()->typeOf($from);
+    if ($ftype === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
     $target = logical_join($parent, $newName);
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
+    // Lo stato collaborativo segue il percorso: si elimina quello del vecchio nome
+    // (l'albero va listato PRIMA della rinomina) e l'eventuale relay stantio già
+    // presente alla destinazione (file omonimo cancellato in passato).
+    if ($ftype === 'dir') note_state_purge_tree($from); else note_state_purge_path($from);
+    note_state_purge_path($target);
     if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
     // Le condivisioni che puntano all'elemento (o a suoi discendenti) seguono il
     // nuovo percorso: altrimenti restano orfane e shares_prune le elimina.
