@@ -257,11 +257,13 @@ class S3Backend implements StorageBackend {
     public function existsCheck(string $path): array {
         if ($path === '') return ['type' => 'dir', 'sure' => true];
         $key = $this->key($path);
-        $r = s3_request_retry($this->cfg, 'HEAD', $key);
-        if ($r['code'] === 200) return ['type' => 'file', 'sure' => true];
-        // cartella? esistono oggetti sotto 'key/'
+        // Prima la CARTELLA, come il backend locale (is_dir prima di is_file):
+        // con un file e una cartella omonimi la cartella deve prevalere, altrimenti
+        // listDir la mostra ma typeOf risponde 'file' e la navigazione si rompe.
         $r2 = s3_request_retry($this->cfg, 'GET', '', ['list-type' => '2', 'prefix' => rtrim($key, '/') . '/', 'max-keys' => '1']);
         if ($r2['code'] === 200 && strpos($r2['body'], '<Contents>') !== false) return ['type' => 'dir', 'sure' => true];
+        $r = s3_request_retry($this->cfg, 'HEAD', $key);
+        if ($r['code'] === 200) return ['type' => 'file', 'sure' => true];
         // "Non esiste" è CONCLUSIVO solo con un 404 certo sul HEAD e un list 200 senza
         // risultati. Un 403 (credenziali revocate/clock skew), un 5xx oltre i retry o un
         // errore di rete NON dimostrano che l'oggetto manca: sure=false, e chi deve
