@@ -26,10 +26,18 @@ if (!users_exist()) {
         } elseif (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $u) || strlen($p) < 6) {
             $err = 'Username 3-32 caratteri (lettere, numeri, . _ -) e password di almeno 6 caratteri.';
         } else {
-            users_save(['users' => [[
-                'username' => $u, 'password_hash' => password_hash($p, PASSWORD_DEFAULT),
-                'role' => 'admin', 'permission' => 'write',
-            ]]]);
+            // Sezione critica: due setup concorrenti non devono sovrascriversi
+            // (il secondo diventerebbe l'unico admin, cancellando il primo).
+            $won = false;
+            with_json_lock(USERS_FILE, function (array $data) use (&$won, $u, $p) {
+                if (!empty($data['users'])) return null;         // qualcuno ha già completato il setup
+                $won = true;
+                return ['users' => [[
+                    'username' => $u, 'password_hash' => password_hash($p, PASSWORD_DEFAULT),
+                    'role' => 'admin', 'permission' => 'write',
+                ]]];
+            });
+            if (!$won) { header('Location: index.php'); exit; }  // setup già fatto: vai al login
             session_regenerate_id(true);
             $_SESSION['username'] = $u;
             ensure_user_home($u);                    // crea la home (sandbox) dell'admin
