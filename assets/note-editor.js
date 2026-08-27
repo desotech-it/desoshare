@@ -54,7 +54,16 @@
       // Lo snapshot (stato Yjs completo) permette al server di compattare il relay
       // preservando la lineage del documento per tutti i client.
       try { r = await save(cur.ytext.toString(), u8ToB64(Y.encodeStateAsUpdate(cur.doc))); } catch (_) { r = null; }
-      if (r && r.ok && r.gen) { gen = r.gen; offset = typeof r.offset === 'number' ? r.offset : 0; }
+      if (r && r.ok) {
+        if (r.gen) { gen = r.gen; offset = typeof r.offset === 'number' ? r.offset : 0; }
+        if (statusEl) statusEl.textContent = 'connesso';
+      } else {
+        // 507 quota, 500, rete: l'errore va MOSTRATO e il contenuto resta dirty,
+        // con un nuovo tentativo programmato — non «salvato» in silenzio.
+        dirty = true;
+        if (statusEl) statusEl.textContent = 'errore salvataggio: ' + ((r && r.error) || 'rete');
+        if (!stopped) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 5000); }
+      }
     };
 
     // (Ri)costruisce doc+editor da uno stato note_open: all'avvio e nel raro
