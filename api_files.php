@@ -120,6 +120,18 @@ function action_rename(): void {
     $target = logical_join($parent, $newName);
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
     if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
+    // Le condivisioni che puntano all'elemento (o a suoi discendenti) seguono il
+    // nuovo percorso: altrimenti restano orfane e shares_prune le elimina.
+    with_json_lock(shares_file(), function (array $sd) use ($from, $target) {
+        $touched = false;
+        foreach ($sd['shares'] ?? [] as &$s) {
+            $p = (string) ($s['path'] ?? '');
+            if ($p === $from) { $s['path'] = $target; $s['name'] = basename($target); $touched = true; }
+            elseif (str_starts_with($p, $from . '/')) { $s['path'] = $target . substr($p, strlen($from)); $touched = true; }
+        }
+        unset($s);
+        return $touched ? $sd : null;
+    });
     json_out(['ok' => true]);
 }
 
