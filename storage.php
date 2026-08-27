@@ -5,6 +5,7 @@
 
 interface StorageBackend {
     public function listDir(string $dir): array;            // [['name','type'=>'file'|'dir','size','mtime'], ...]
+    public function listDirChecked(string $dir): array;     // ['items'=>come listDir, 'ok'=>bool]: ok=false se il listato può essere INCOMPLETO (errore backend)
     public function typeOf(string $path);                   // 'file' | 'dir' | false
     public function existsCheck(string $path): array;       // ['type'=>'file'|'dir'|false, 'sure'=>bool]: 'sure' false se il backend non ha potuto verificare (es. errore S3)
     public function readFile(string $path): string;
@@ -34,6 +35,7 @@ class LocalBackend implements StorageBackend {
     }
     public function typeOf(string $path) { $a = $this->abs($path); return is_dir($a) ? 'dir' : (is_file($a) ? 'file' : false); }
     public function existsCheck(string $path): array { return ['type' => $this->typeOf($path), 'sure' => true]; }   // il filesystem locale è sempre conclusivo
+    public function listDirChecked(string $dir): array { return ['items' => $this->listDir($dir), 'ok' => true]; }  // scandir locale: niente listati parziali
     public function readFile(string $path): string { return (string) file_get_contents($this->abs($path)); }
     public function writeFile(string $path, string $data): bool {
         $a = $this->abs($path); $tmp = $a . '.tmp.' . bin2hex(random_bytes(4));
@@ -227,15 +229,19 @@ class S3Backend implements StorageBackend {
     public function __construct(array $cfg) { $this->cfg = $cfg; }
     private function key(string $p): string { return ltrim($p, '/'); }
 
-    public function listDir(string $dir): array {
+    public function listDir(string $dir): array { return $this->listDirChecked($dir)['items']; }
+    public function listDirChecked(string $dir): array {
         $prefix = $dir === '' ? '' : rtrim($dir, '/') . '/';
-        $byName = []; $token = null;   // dedup per nome (un nome può esistere sia come file sia come cartella)
+        $byName = []; $token = null; $ok = true;   // dedup per nome (un nome può esistere sia come file sia come cartella)
         do {
             $q = ['list-type' => '2', 'delimiter' => '/', 'prefix' => $prefix, 'max-keys' => '1000'];
             if ($token) $q['continuation-token'] = $token;
-            $r = s3_request($this->cfg, 'GET', '', $q);
-            if ($r['code'] !== 200) break;
-            $xml = @simplexml_load_string($r['body']); if (!$xml) break;
+            // Con retry, e senza inghiottire gli errori: una pagina fallita del
+            // ListObjectsV2 rende il listato INCOMPLETO e chi consuma (ZIP, delete,
+            // quota) deve poterlo sapere invece di trattarlo come verità.
+            $r = s3_request_retry($this->cfg, 'GET', '', $q);
+            if ($r['code'] !== 200) { $ok = false; break; }
+            $xml = @simplexml_load_string($r['body']); if (!$xml) { $ok = false; break; }
             foreach ($xml->CommonPrefixes as $cp) {
                 $name = rtrim((string) $cp->Prefix, '/'); $name = substr($name, strlen($prefix));
                 if ($name === '' || strpos($name, '/') !== false) continue;   // scarta artefatti (es. chiavi '//')
@@ -251,7 +257,7 @@ class S3Backend implements StorageBackend {
             }
             $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
         } while ($token);
-        return array_values($byName);
+        return ['items' => array_values($byName), 'ok' => $ok];
     }
     public function typeOf(string $path) { return $this->existsCheck($path)['type']; }
     public function existsCheck(string $path): array {

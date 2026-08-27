@@ -91,12 +91,17 @@ function zip_logical(array $logicalPaths): string {
         http_response_code(500); echo 'Errore nel recupero di "' . h(basename($logical)) . '" dallo storage: ZIP annullato'; exit;
     };
     $add = function (string $logical, string $zipPath) use (&$add, $zip, &$temps, $fail) {
-        $t = storage()->typeOf($logical);
-        if ($t === 'dir') {
-            $items = storage()->listDir($logical);
+        // typeOf/listDir non conclusivi (errore S3) = archivio potenzialmente
+        // INCOMPLETO servito come valido: meglio fallire forte che zippare monco.
+        $chk = storage()->existsCheck($logical);
+        if ($chk['type'] === false && !$chk['sure']) $fail($logical);
+        if ($chk['type'] === 'dir') {
+            $ld = storage()->listDirChecked($logical);
+            if (!$ld['ok']) $fail($logical);
+            $items = $ld['items'];
             if (!$items) { $zip->addEmptyDir($zipPath); return; }
             foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
-        } elseif ($t === 'file') {
+        } elseif ($chk['type'] === 'file') {
             $tf = tempnam(sys_get_temp_dir(), 'shz');
             if (!storage()->fetchToLocal($logical, $tf)) { @unlink($tf); $fail($logical); }
             $zip->addFile($tf, $zipPath); $temps[] = $tf;
@@ -116,12 +121,18 @@ function zip_logical(array $logicalPaths): string {
 function zip_manifest_files(array $logicalPaths): array {
     $out = [];
     $add = function (string $logical, string $zipPath) use (&$add, &$out) {
-        $t = storage()->typeOf($logical);
-        if ($t === 'dir') {
-            $items = storage()->listDir($logical);
+        // Stessa garanzia di zip_logical: un manifest costruito su un listato
+        // incompleto produrrebbe uno ZIP client monco. Entrambi i chiamanti sono
+        // endpoint JSON → errore esplicito.
+        $chk = storage()->existsCheck($logical);
+        if ($chk['type'] === false && !$chk['sure']) json_out(['ok' => false, 'error' => 'Storage non raggiungibile: riprova tra poco'], 503);
+        if ($chk['type'] === 'dir') {
+            $ld = storage()->listDirChecked($logical);
+            if (!$ld['ok']) json_out(['ok' => false, 'error' => 'Storage non raggiungibile: riprova tra poco'], 503);
+            $items = $ld['items'];
             if (!$items) { $out[] = ['name' => $zipPath . '/', 'logical' => null, 'size' => 0]; return; }
             foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
-        } elseif ($t === 'file') {
+        } elseif ($chk['type'] === 'file') {
             $out[] = ['name' => $zipPath, 'logical' => $logical, 'size' => (int) storage()->sizeOf($logical)];
         }
     };
