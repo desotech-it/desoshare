@@ -1,7 +1,7 @@
 // upload.js — upload a chunk, parallelo + ripresa (file e cartelle, drag&drop).
 import { S, CSRF, CAN_WRITE, $, modalBg } from './state.js';
 import { apiPost } from './net.js';
-import { esc, fmtBytes } from './util.js';
+import { esc, fmtBytes, toast } from './util.js';
 import { openModal, closeModal } from './modal.js';
 import { load } from './listing.js';
 
@@ -25,6 +25,12 @@ async function fileUid(dir, f) {
 // items: [{file, rel}] — rel è la sottocartella relativa alla cartella corrente
 export function uploadItems(items) {
   if (!CAN_WRITE || !items.length) return;
+  // Un solo batch alla volta: un secondo drop azzererebbe S.uploading alla fine
+  // del PRIMO batch, vanificando la guardia del modale per quello ancora in corso.
+  if (S.uploading) { toast('Un caricamento è già in corso: attendi che finisca', true); return; }
+  // Teardown esplicito di un eventuale modale aperto (editor incluso: esegue la
+  // sua cleanup) prima di sostituirne il contenuto.
+  closeModal();
   openModal(`<div class="modal"><h3><i class="ti ti-upload"></i> Caricamento (${items.length})</h3>
     <div id="up_list" style="max-height:340px;overflow:auto"></div>
     <div class="modal-actions"><button class="btn" id="up_close" disabled>Chiudi</button></div></div>`);

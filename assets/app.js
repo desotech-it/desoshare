@@ -974,6 +974,11 @@ Annulla = conserva i file`);
   }
   function uploadItems(items) {
     if (!CAN_WRITE || !items.length) return;
+    if (S.uploading) {
+      toast("Un caricamento è già in corso: attendi che finisca", true);
+      return;
+    }
+    closeModal();
     openModal(`<div class="modal"><h3><i class="ti ti-upload"></i> Caricamento (${items.length})</h3>
     <div id="up_list" style="max-height:340px;overflow:auto"></div>
     <div class="modal-actions"><button class="btn" id="up_close" disabled>Chiudi</button></div></div>`);
