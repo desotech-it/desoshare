@@ -19,13 +19,14 @@ stages: [test, deploy]
 # esterno). s3_test.sh resta FUORI dalla CI: richiede credenziali Wasabi reali.
 
 .php: &php
-  image: php:8.2-cli   # stessa major/minor del server Hostinger
+  image: php:8.5-cli   # stessa major.minor del server Hostinger (prod: PHP 8.5)
   stage: test
   before_script:
     # libzip-dev + ext-zip: il server ha zip abilitato (PHP 8.5); l'immagine cli no.
     # Serve a action=zip (ZipArchive) — senza, api_test.sh fallisce su "firma PK".
     - apt-get update -qq && apt-get install -yqq --no-install-recommends curl openssl ca-certificates libzip-dev > /dev/null
     - docker-php-ext-install zip > /dev/null 2>&1
+    - php -v | head -1   # tracciabilità: deve essere 8.5.x come la produzione
 
 lint:
   <<: *php
@@ -43,7 +44,7 @@ test:oidc:
     - bash tests/oidc_test.sh
 
 test:js:
-  image: node:22-alpine
+  image: node:24-alpine
   stage: test
   cache:
     key: js-smoke-node-modules
@@ -57,10 +58,18 @@ test:js:
 # sequenze (es. contenuti o link che "risorgono") che i test per-operazione
 # non vedono. Serve node (driver) + php (app).
 test:lifecycle:
-  image: node:22
+  # Immagine PHP (non node): il soggetto del test è l'app, quindi deve girare
+  # sullo stesso PHP della produzione. Node serve solo come driver e lo si
+  # aggiunge dal tarball ufficiale: `apt-get install php-cli` dentro node:24
+  # installerebbe il PHP della distro (8.2), non 8.5.
+  image: php:8.5-cli
   stage: test
+  variables:
+    NODE_VERSION: "24.21.0"
   before_script:
-    - apt-get update -qq && apt-get install -yqq --no-install-recommends php-cli php-mbstring > /dev/null   # mbstring: lib.php usa mb_internal_encoding
+    - apt-get update -qq && apt-get install -yqq --no-install-recommends curl ca-certificates xz-utils > /dev/null
+    - curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" | tar xJ -C /usr/local --strip-components=1
+    - php -v | head -1 && node -v
   script:
     - SEEDS="42 7 1234" OPS=120 node tests/lifecycle_fuzz.mjs
 
