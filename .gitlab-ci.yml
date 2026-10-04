@@ -58,11 +58,18 @@ test:js:
 # sequenze (es. contenuti o link che "risorgono") che i test per-operazione
 # non vedono. Serve node (driver) + php (app).
 test:lifecycle:
-  image: node:24
+  # Immagine PHP (non node): il soggetto del test è l'app, quindi deve girare
+  # sullo stesso PHP della produzione. Node serve solo come driver e lo si
+  # aggiunge dal tarball ufficiale: `apt-get install php-cli` dentro node:24
+  # installerebbe il PHP della distro (8.2), non 8.5.
+  image: php:8.5-cli
   stage: test
+  variables:
+    NODE_VERSION: "24.21.0"
   before_script:
-    - apt-get update -qq && apt-get install -yqq --no-install-recommends php-cli php-mbstring > /dev/null   # mbstring: lib.php usa mb_internal_encoding
-    - php -v | head -1   # NB: è il php della distro dell'immagine node (non 8.5): il fuzzer serve per le SEQUENZE, la compatibilità 8.5 la coprono lint/test:api/test:oidc
+    - apt-get update -qq && apt-get install -yqq --no-install-recommends curl ca-certificates xz-utils > /dev/null
+    - curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" | tar xJ -C /usr/local --strip-components=1
+    - php -v | head -1 && node -v
   script:
     - SEEDS="42 7 1234" OPS=120 node tests/lifecycle_fuzz.mjs
 
