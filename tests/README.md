@@ -1,6 +1,8 @@
 # Test del file manager "Share"
 
-Due suite per prevenire regressioni. Eseguile dopo ogni modifica.
+Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
+`api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
+fuori `s3_test.sh` (serve Wasabi reale) e `editor_smoke.mjs` (serve un browser).
 
 ## 1. Test API (PHP) — `api_test.sh`
 Avvia un'istanza **isolata** con `php -S` (non tocca la produzione) e verifica
@@ -39,3 +41,21 @@ node js_smoke.mjs
 
 > Nota: `tests/node_modules/` non va deployato. Il deploy copia solo i file
 > dell'app (`*.php`, `assets/`, `.htaccess`, `.user.ini`), mai la cartella `tests/`.
+
+## Smoke del bundle editor — `editor_smoke.mjs`
+Carica `assets/editor-bundle.js` in **Chromium** e ci monta un editor
+collaborativo: export di `window.DesoEditor`, propagazione della digitazione nel
+`Y.Text` via `yCollab`, sincronizzazione fra due `Y.Doc` con update binario
+(quello che fa il relay) e round-trip dell'awareness. Serve perché il bundle è
+GENERATO e nessun'altra suite lo esercita: `js_smoke.mjs` gira in jsdom e non
+monta l'editor, quindi dopo un aggiornamento di CodeMirror/Yjs "si costruisce"
+non significa "funziona".
+
+```bash
+node tests/editor_smoke.mjs                                   # bundle locale
+node tests/editor_smoke.mjs https://share.deso.tech/assets/editor-bundle.js
+# atteso: "SMOKE EDITOR OK ✓"
+```
+
+> Richiede Playwright + Chromium: fuori dalla CI, come `s3_test.sh`. Esce 2 se
+> il browser non c'è (così non si confonde "non eseguito" con "passato").
