@@ -12,5 +12,7 @@
     "y-protocols": "^1",
     "yjs": "^13"
   },
-  "devDependencies": { "esbuild": "^0.24" }
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
 }
