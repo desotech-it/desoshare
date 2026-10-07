@@ -39,3 +39,19 @@ node js_smoke.mjs
 
 > Nota: `tests/node_modules/` non va deployato. Il deploy copia solo i file
 > dell'app (`*.php`, `assets/`, `.htaccess`, `.user.ini`), mai la cartella `tests/`.
+
+## Smoke dell'upload via link — `share_upload_smoke.mjs`
+Esercita `assets/share-upload.js` (lo script della pagina pubblica di una cartella
+condivisa in modalità modificabile) in **Chromium**, contro uno stub Node che
+implementa il CONTRATTO degli endpoint `upload_status`/`upload_chunk`/`upload_finish`
+e registra le richieste: sequenza corretta, geometria dei blocchi, file vuoto
+senza blocchi, token e cartella di destinazione propagati, ricarica a fine batch,
+errore del server mostrato in riga senza ricarica. Il lato PHP degli stessi
+endpoint è coperto da `api_test.sh` (sezione «Cartelle modificabili via link»).
+
+```bash
+node tests/share_upload_smoke.mjs
+# atteso: "SMOKE UPLOAD VIA LINK OK ✓"
+```
+
+> Richiede Playwright + Chromium: fuori dalla CI, come `editor_smoke.mjs`.
