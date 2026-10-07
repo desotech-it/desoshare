@@ -25,6 +25,7 @@ define('NOTE_RELAY_MAX_BYTES', 8 * 1024 * 1024); // tetto del file di relay Yjs 
 // ─── Quota / consumo per-utente ──────────────────────────────────────────────
 define('USAGE_TTL', 300);                    // validità (s) del consumo in cache prima della riconciliazione
 define('QUOTA_MAX_MB', 4 * 1024 * 1024);     // tetto della quota impostabile (4 TB) — evita overflow su PHP 32-bit
+define('SHARE_UPLOAD_LIMIT_MB_DEFAULT', 1024);  // spazio caricabile via link 'edit' di cartella se non specificato (0 = solo la quota del creatore)
 
 // Scadenza (s) dell'URL presigned per il download di un singolo file via link
 // pubblico: tenuta breve e comunque MAI oltre la scadenza del link di condivisione.

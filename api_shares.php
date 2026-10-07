@@ -18,6 +18,18 @@ function action_share_create(): void {
         if ($kind === 'file' && !note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
     }
 
+    // Spazio caricabile via link (solo cartelle 'edit'): MB interi, 0 = nessun tetto
+    // proprio (vale solo la quota del creatore); assente → default. Stessa validazione
+    // numerica delle quote utente: «12abc» non deve diventare 12 né «abc» 0.
+    $uploadLimit = 0;
+    if ($mode === 'edit' && $kind === 'dir') {
+        $raw = isset($_POST['upload_limit_mb']) && is_string($_POST['upload_limit_mb']) ? trim($_POST['upload_limit_mb']) : '';
+        if ($raw === '') $mb = SHARE_UPLOAD_LIMIT_MB_DEFAULT;
+        elseif (!preg_match('/^\d+$/', $raw) || (int) $raw > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Spazio caricabile non valido: numero intero di MB (0 = nessun tetto, max ' . QUOTA_MAX_MB . ')'], 400);
+        else $mb = (int) $raw;
+        $uploadLimit = $mb * 1048576;
+    }
+
     $slug = share_slugify((string) ($_POST['slug'] ?? ''));
     $token = gen_share_token();
     $share = [
@@ -27,6 +39,8 @@ function action_share_create(): void {
         'type'       => $kind,
         'name'       => ($b = basename($p)) === '' ? '/' : $b,   // "0" è un nome valido (falsy per ?:)
         'mode'       => $mode,
+        'upload_limit' => $uploadLimit,   // byte caricabili via link (solo cartelle 'edit'; 0 = nessun tetto proprio)
+        'uploaded'   => 0,                // byte ricevuti via link (lordi)
         'created_at' => time(),
         'expires_at' => time() + $ttl,
         'created_by' => $u['username'],
@@ -50,7 +64,7 @@ function action_share_create(): void {
         return $d;
     });
     if ($conflict) json_out(['ok' => false, 'error' => 'Indirizzo già in uso, scegline un altro'], 409);
-    audit('share_create', ($share['name'] ?? '') . ' (' . $mode . ', ' . ($slug !== '' ? '/d/' . $slug : 'token') . ', scade ' . date('c', $share['expires_at']) . ')');
+    audit('share_create', ($share['name'] ?? '') . ' (' . $mode . ($uploadLimit > 0 ? ', tetto ' . human_size($uploadLimit) : '') . ', ' . ($slug !== '' ? '/d/' . $slug : 'token') . ', scade ' . date('c', $share['expires_at']) . ')');
     json_out(['ok' => true, 'token' => $token, 'slug' => $slug, 'url' => share_url($share), 'expires_at' => $share['expires_at']]);
 }
 
@@ -69,6 +83,8 @@ function action_share_list(): void {
             'name'       => $s['name'] ?? basename($s['path']),
             'type'       => $s['type'] ?? 'file',
             'mode'       => $s['mode'] ?? 'view',
+            'upload_limit' => (int) ($s['upload_limit'] ?? 0),
+            'uploaded'   => (int) ($s['uploaded'] ?? 0),
             'expires_at' => $s['expires_at'],
             'created_by' => $s['created_by'] ?? '',
             'url'        => share_url($s),

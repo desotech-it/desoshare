@@ -21,6 +21,14 @@ fase `0.x.x`.
   cartella condivisa (niente traversal, nomi validati) e vengono tracciati nel
   registro attività (`link_upload`). Se al creatore viene tolto il permesso di
   scrittura, il link degrada a sola lettura, come già per le note. [lib_shares.php]
+- **Tetto di caricamento per link**: ogni cartella modificabile via link ha uno
+  spazio caricabile proprio (default **1 GB**, scelta nel dialog: 100 MB, 500 MB,
+  1 GB, 5 GB, oppure nessun tetto — vale comunque la quota del creatore). Il
+  contatore è lordo (le sovrascritture contano) e la prenotazione è atomica, così
+  chi ha il link non può «caricare il mondo» nemmeno con upload concorrenti; a
+  tetto esaurito la pagina pubblica lo dice e non offre più l'upload. Il pannello
+  delle condivisioni mostra caricati/tetto. [api_shares.php, lib_shares.php,
+  api_upload.php, api_files.php, share.php, app-src/shares.js]
 
 ### Modificato
 - Il token di un link modificabile è la credenziale degli upload anonimi: per queste

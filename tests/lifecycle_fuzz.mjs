@@ -219,7 +219,10 @@ function makeOps(rand) {
       // link MODIFICABILE di una cartella: chi lo ha può caricare file dentro
       const dirs = [...M.dirs]; if (!dirs.length) return;
       const p = pick(dirs);
-      const r = await api('share_create', { path: p, ttl: 86400, mode: 'edit', slug: '' });
+      // upload_limit_mb 0 = nessun tetto proprio: i contenuti del fuzzer sono di pochi
+      // byte, un tetto non scatterebbe mai e il modello resta senza contabilità (il
+      // tetto è coperto puntualmente da api_test.sh).
+      const r = await api('share_create', { path: p, ttl: 86400, mode: 'edit', slug: '', upload_limit_mb: 0 });
       if (!r.ok) { violation(`share_create(edit, ${p}) fallita: ${r.error}`); return; }
       M.shares.set(r.token, { path: p, alive: true, upload: true });
       return `share-edit ${p} → ${r.token.slice(0, 8)}`;

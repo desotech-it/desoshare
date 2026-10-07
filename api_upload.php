@@ -90,6 +90,10 @@ function action_upload_chunk(): void {
             if (storage()->typeOf($dest) === 'file') $repl = (int) storage()->sizeOf($dest);
         }
         quota_check_user($cx['owner'], $total, $repl, 413);
+        // Tetto del LINK: 413 (non 5xx) come la quota, così il client non ritenta.
+        if ($cx['link'] && ($rem = share_upload_remaining($cx['link'])) !== null && $total > $rem) {
+            json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito (restano ' . human_size($rem) . ')'], 413);
+        }
     }
     // Validazione RIGOROSA della geometria del blocco (niente offset arbitrari):
     $expectedCount = (int) ceil($total / $chunkSize);
@@ -158,7 +162,14 @@ function action_upload_finish(): void {
         @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
         json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
     }
+    // Tetto del LINK, prenotato in modo atomico PRIMA di scrivere (due upload
+    // concorrenti non possono sforarlo entrambi); restituito se la scrittura fallisce.
+    if ($cx['link'] && !share_upload_reserve($cx['link']['token'], $total)) {
+        @unlink($part); @unlink(manifest_path($uid));
+        json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
+    }
     if (!storage()->putFromLocal($part, $dest)) {
+        if ($cx['link']) share_upload_release($cx['link']['token'], $total);
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
     if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
