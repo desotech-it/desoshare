@@ -60,8 +60,8 @@ function action_newfile(): void {
 
 // ─── File: upload (multiplo, tutti i tipi) ───────────────────────────────────
 function action_upload(): void {
-    require_write();
-    $dir = user_path($_POST['path'] ?? '');
+    $cx = upload_ctx();               // sessione, oppure link 'edit' di una cartella (vedi api_upload.php)
+    $dir = $cx['base'];
     if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
     $f = $_FILES['files'];
     $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
@@ -70,7 +70,7 @@ function action_upload(): void {
     for ($i = 0; $i < count($names); $i++) {
         if (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) $batchBytes += (int) filesize((string) $tmp[$i]);
     }
-    quota_check($batchBytes);
+    quota_check_user($cx['owner'], $batchBytes);
     $saved = 0; $savedBytes = 0; $errors = [];
     for ($i = 0; $i < count($names); $i++) {
         $n = basename((string) $names[$i]);
@@ -83,7 +83,8 @@ function action_upload(): void {
         if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
         $saved++; $savedBytes += $sz - $repl;
     }
-    if ($savedBytes !== 0) usage_bump((string) $_SESSION['username'], $savedBytes);
+    if ($savedBytes !== 0) usage_bump($cx['owner'], $savedBytes);
+    if ($cx['link'] && $saved) audit('link_upload', $saved . ' file (' . human_size($savedBytes) . ') in "' . ($cx['link']['name'] ?? '') . '" via link');
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
 }
 

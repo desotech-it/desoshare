@@ -37,11 +37,13 @@ switch ($action) {
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
     case 'note_save':    action_note_save();    break;
-    case 'upload_chunk':  csrf_check(); action_upload_chunk();  break;
-    case 'upload_finish': csrf_check(); action_upload_finish(); break;
+    // Upload: CSRF condizionale come per le note — sessione sì, token di link no
+    // (un link 'edit' di cartella accetta upload anonimi: vedi upload_ctx/upload_csrf).
+    case 'upload_chunk':  upload_csrf(); action_upload_chunk();  break;
+    case 'upload_finish': upload_csrf(); action_upload_finish(); break;
     case 'mkdir':       csrf_check(); action_mkdir();       break;
     case 'newfile':     csrf_check(); action_newfile();     break;
-    case 'upload':      csrf_check(); action_upload();      break;
+    case 'upload':      upload_csrf(); action_upload();      break;
     case 'delete':      csrf_check(); action_delete();      break;
     case 'rename':      csrf_check(); action_rename();      break;
     case 'user_save':   csrf_check(); action_user_save();   break;

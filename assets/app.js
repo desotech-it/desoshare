@@ -388,8 +388,8 @@
   }
 
   // shares.js
-  function shareDialog(rel, name) {
-    const canEdit = isTextFile(name);
+  function shareDialog(rel, name, isDir = false) {
+    const canEdit = isDir || isTextFile(name);
     const defSlug = slugify(name.replace(/\.[^.]+$/, ""));
     const base = location.origin + location.pathname.replace(/\/[^/]*$/, "");
     openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
@@ -403,7 +403,7 @@
     ${canEdit ? `<label style="margin-top:10px">Accesso</label>
     <select id="sh_mode">
       <option value="view">Sola lettura</option>
-      <option value="edit">Modificabile (chiunque abbia il link co-edita)</option>
+      <option value="edit">${isDir ? "Modificabile (chiunque abbia il link può caricare file nella cartella)" : "Modificabile (chiunque abbia il link co-edita)"}</option>
     </select>` : ""}
     <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
     <div style="display:flex;align-items:center;gap:3px;font-size:13px">
@@ -629,7 +629,7 @@
         if (isDir) startZip([rel]);
         else window.location = "api.php?action=download&path=" + encodeURIComponent(rel);
       };
-      row.querySelector(".ti-share").onclick = () => shareDialog(rel, it.name);
+      row.querySelector(".ti-share").onclick = () => shareDialog(rel, it.name, isDir);
       if (CAN_WRITE) {
         row.querySelector(".ti-pencil").onclick = () => renameDialog(it.name, rel);
         row.querySelector(".ti-trash").onclick = () => deleteDialog([rel], it.name);

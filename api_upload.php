@@ -10,18 +10,51 @@ function upload_uid(string $uid): string {
     if (!preg_match('/^[a-f0-9]{16,64}$/', $uid)) json_out(['ok' => false, 'error' => 'Identificativo upload non valido'], 400);
     return $uid;
 }
-// Chiave di staging legata al PROPRIETARIO: due utenti col medesimo uid client
-// (stesso nome/size/mtime) NON condividono mai lo stesso .part/.json, e un uid
-// non è utilizzabile per toccare lo staging di un altro utente.
+// ─── Principale dell'upload: sessione oppure LINK modificabile ───────────────
+// Gli upload arrivano da due strade: l'utente loggato (permesso di scrittura +
+// CSRF, destinazione nella SUA sandbox) oppure un link di condivisione di una
+// cartella in modalità 'edit' (parametro t, nessun login: il token È la
+// capability, come per le note condivise). Nel secondo caso si scrive A NOME del
+// creatore del link — sandbox, quota e consumo sono i suoi — e il percorso resta
+// confinato alla cartella condivisa (sottocartelle nuove ammesse, traversal no).
+function upload_ctx(): array {
+    static $ctx = null;
+    if ($ctx !== null) return $ctx;
+    $t = $_REQUEST['t'] ?? '';
+    $rel = $_REQUEST['path'] ?? '';
+    if (!is_string($rel)) $rel = '';
+    if (is_string($t) && $t !== '') {
+        $s = share_find($t);
+        if (!$s) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
+        if (($s['type'] ?? '') !== 'dir') json_out(['ok' => false, 'error' => 'Questo link non è una cartella'], 400);
+        if (!share_link_writable($s)) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
+        foreach (explode('/', str_replace('\\', '/', $rel)) as $seg) {
+            if ($seg !== '' && $seg !== '.' && !valid_name($seg)) json_out(['ok' => false, 'error' => 'Percorso non valido'], 400);
+        }
+        $base = share_join($s, $rel);
+        if ($base === null) json_out(['ok' => false, 'error' => 'Percorso non consentito'], 400);
+        return $ctx = ['link' => $s, 'base' => $base, 'owner' => (string) ($s['created_by'] ?? ''), 'skey' => 'share:' . $s['token']];
+    }
+    $u = require_write();
+    return $ctx = ['link' => null, 'base' => user_path($rel), 'owner' => (string) $u['username'], 'skey' => (string) $u['username']];
+}
+// CSRF solo per la sessione: con un token di link non c'è sessione da proteggere
+// (chi ha il token può già fare la stessa richiesta direttamente).
+function upload_csrf(): void {
+    $t = $_REQUEST['t'] ?? '';
+    if (!is_string($t) || $t === '') csrf_check();
+}
+// Chiave di staging legata al PRINCIPALE (utente, oppure link): due utenti col
+// medesimo uid client (stesso nome/size/mtime) NON condividono mai lo stesso
+// .part/.json, e un uid non è utilizzabile per toccare lo staging di un altro.
 function upload_skey(string $uid): string {
-    $owner = (string) ($_SESSION['username'] ?? '');
-    return substr(hash('sha256', $owner . '|' . $uid), 0, 40);
+    return substr(hash('sha256', upload_ctx()['skey'] . '|' . $uid), 0, 40);
 }
 function upload_part(string $uid): string { return upload_dir() . '/' . upload_skey($uid) . '.part'; }
 
 // Stato dell'upload: quali blocchi sono già stati ricevuti (per riprendere).
 function action_upload_status(): void {
-    require_write();
+    upload_ctx();
     $uid = upload_uid($_GET['uid'] ?? '');
     $m = manifest_read($uid);
     $parts = array_map('intval', array_keys($m['parts']));
@@ -31,7 +64,7 @@ function action_upload_status(): void {
 
 // Riceve un blocco e lo scrive al suo offset. Supporta invii paralleli e fuori ordine.
 function action_upload_chunk(): void {
-    require_write();
+    $cx = upload_ctx();
     $uid = upload_uid($_POST['uid'] ?? '');
     $index = (int) ($_POST['index'] ?? -1);
     $offset = (int) ($_POST['offset'] ?? -1);
@@ -53,10 +86,10 @@ function action_upload_chunk(): void {
         $repl = 0;
         $rn = basename(trim((string) ($_POST['name'] ?? '')));
         if ($rn !== '' && valid_name($rn)) {
-            $dest = logical_join(user_path($_POST['path'] ?? ''), $rn);
+            $dest = logical_join($cx['base'], $rn);
             if (storage()->typeOf($dest) === 'file') $repl = (int) storage()->sizeOf($dest);
         }
-        quota_check($total, $repl, 413);
+        quota_check_user($cx['owner'], $total, $repl, 413);
     }
     // Validazione RIGOROSA della geometria del blocco (niente offset arbitrari):
     $expectedCount = (int) ceil($total / $chunkSize);
@@ -88,7 +121,7 @@ function action_upload_chunk(): void {
 
 // Finalizza: verifica che tutti i blocchi ci siano e sposta il file (creando le cartelle).
 function action_upload_finish(): void {
-    require_write();
+    $cx = upload_ctx();
     $uid = upload_uid($_POST['uid'] ?? '');
     $name = basename(trim($_POST['name'] ?? ''));
     $total = (int) ($_POST['total'] ?? -1);
@@ -99,12 +132,13 @@ function action_upload_finish(): void {
     // File da 0 byte: nessun blocco può esistere (upload_chunk rifiuta total<=0),
     // quindi niente .part da pretendere — si crea direttamente il file vuoto.
     if ($total === 0) {
-        $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
+        $dest = logical_join($cx['base'], $name);
         $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
         if (!storage()->writeFile($dest, '')) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
         if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura/ricreazione: via il relay stantio
-        usage_bump((string) $_SESSION['username'], -$repl);
+        usage_bump($cx['owner'], -$repl);
         @unlink(manifest_path($uid));
+        if ($cx['link']) audit('link_upload', $name . ' (0 B) in "' . ($cx['link']['name'] ?? '') . '" via link');
         json_out(['ok' => true]);
     }
 
@@ -116,12 +150,11 @@ function action_upload_finish(): void {
         json_out(['ok' => false, 'error' => 'Trasferimento incompleto', 'have' => count($m['parts']), 'expected' => $expected], 409);
     }
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
-    $dest = logical_join(user_path($_POST['path'] ?? ''), $name);
-    // Re-check quota (un altro upload può aver consumato spazio nel frattempo).
+    $dest = logical_join($cx['base'], $name);
+    // Re-check quota del PROPRIETARIO (un altro upload può aver consumato spazio nel frattempo).
     $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
-    $u = current_user();
-    $quota = $u ? user_quota_of($u) : 0;
-    if ($quota > 0 && (usage_get($u['username']) - $repl + $total) > $quota) {
+    $quota = user_quota($cx['owner']);
+    if ($quota > 0 && (usage_get($cx['owner']) - $repl + $total) > $quota) {
         @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
         json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
     }
@@ -129,9 +162,10 @@ function action_upload_finish(): void {
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
     if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
-    usage_bump((string) $_SESSION['username'], $total - $repl);
+    usage_bump($cx['owner'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
+    if ($cx['link']) audit('link_upload', $name . ' (' . human_size($total) . ') in "' . ($cx['link']['name'] ?? '') . '" via link');
     json_out(['ok' => true]);
 }
 

@@ -12,8 +12,10 @@ function action_share_create(): void {
     $mode = (($_POST['mode'] ?? 'view') === 'edit') ? 'edit' : 'view';
     if ($mode === 'edit') {
         if (!can_write()) json_out(['ok' => false, 'error' => 'Serve il permesso di scrittura per creare un link modificabile'], 403);
-        if ($kind === 'dir') json_out(['ok' => false, 'error' => 'Le cartelle non sono modificabili via link'], 400);
-        if (!note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
+        // Cartella modificabile: chiunque abbia il link può CARICARE file al suo interno
+        // (upload via token, vedi upload_ctx) oltre a leggere tutto. File modificabile:
+        // solo le note di testo (editor collaborativo).
+        if ($kind === 'file' && !note_is_text(basename($p))) json_out(['ok' => false, 'error' => 'Solo i file di testo sono modificabili via link'], 400);
     }
 
     $slug = share_slugify((string) ($_POST['slug'] ?? ''));

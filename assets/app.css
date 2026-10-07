@@ -214,6 +214,17 @@ details.adv[open] summary::before { content: "▾ "; }
 .share-row a.name.clickable:hover .label { color: var(--primary); text-decoration: underline; }
 .share-row a.dl { color: var(--tertiary); text-align: right; }
 .share-row a.dl:hover { color: var(--primary); }
+/* upload via link modificabile (pagina pubblica) */
+.share-mode { font-size: 13px; text-align: center; margin: -6px 0 10px; }
+.share-mode .ti { vertical-align: -2px; }
+.share-up:empty { display: none; }
+.share-up { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 12px 10px; margin-bottom: 10px; }
+.share-up .up-row { font-size: 13px; margin: 8px 0; }
+.share-up .up-row .up-head { display: flex; justify-content: space-between; gap: 8px; }
+.share-up .up-row .up-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-up .up-row .up-stat { flex: none; color: var(--muted); }
+.share-up .up-actions { text-align: right; margin-top: 8px; }
+body.dragging .listing { outline: 2px dashed var(--primary); outline-offset: -2px; background: var(--primary-bg); }
 .share-brand { text-align: center; color: var(--tertiary); font-size: 12px; margin-top: 22px;
   display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-brand img { height: 18px; }

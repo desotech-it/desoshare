@@ -6,6 +6,27 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.24.0] - 2026-10-07
+
+### Aggiunto
+- **Cartelle modificabili via link**: un link di condivisione di una cartella può
+  essere creato in modalità *modificabile*; chiunque lo abbia può **caricare file**
+  nella cartella (e nelle sue sottocartelle, anche nuove), oltre a leggere e
+  scaricare tutto. La pagina pubblica mostra il pulsante «Carica file» e accetta
+  il trascinamento di file e cartelle, con avanzamento e ripresa a blocchi come
+  nell'app. [api_shares.php, api_upload.php, api_files.php, share.php,
+  assets/share-upload.js, app-src/shares.js]
+- Gli upload via link scrivono **a nome del creatore del link**: finiscono nella sua
+  cartella, contano sulla sua quota e sul suo consumo, restano confinati alla
+  cartella condivisa (niente traversal, nomi validati) e vengono tracciati nel
+  registro attività (`link_upload`). Se al creatore viene tolto il permesso di
+  scrittura, il link degrada a sola lettura, come già per le note. [lib_shares.php]
+
+### Modificato
+- Il token di un link modificabile è la credenziale degli upload anonimi: per queste
+  richieste il controllo CSRF non si applica (non c'è una sessione da proteggere),
+  esattamente come per la sincronizzazione delle note condivise. [api.php]
+
 ## [0.23.0] - 2026-06-21
 
 ### Sicurezza e robustezza (hardening P2, da audit)
