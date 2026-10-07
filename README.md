@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.23.0** · stato: in sviluppo (0.x.x)
+Versione: **0.24.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -46,10 +46,14 @@ Versione: **0.23.0** · stato: in sviluppo (0.x.x)
 - **Note collaborative** stile blocco note: i file di testo si aprono in un editor
   e più utenti possono modificarli **in tempo reale** (sincronizzazione tipo
   Etherpad, CRDT Yjs su relay PHP via polling, senza WebSocket né database).
-- **Condivisione con link a scadenza**: genera un link pubblico (sola lettura o,
-  per le note, modificabile) valido per una durata scelta, senza login. Si può
-  dare al link un **indirizzo personalizzato** facile da digitare
-  (`…/d/relazione-2026`) invece del token casuale.
+- **Condivisione con link a scadenza**: genera un link pubblico valido per una
+  durata scelta, senza login. In **sola lettura** chi ha il link scarica; in
+  modalità **modificabile** una nota si co-edita in tempo reale e una **cartella
+  accetta upload**: chiunque abbia il link può caricare file (anche in
+  sottocartelle, anche trascinandoli), che finiscono nello spazio e nella quota
+  di chi ha creato il link, entro un **tetto di caricamento proprio del link**
+  (default 1 GB) oltre alla scadenza. Si può dare al link un **indirizzo personalizzato**
+  facile da digitare (`…/d/relazione-2026`) invece del token casuale.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

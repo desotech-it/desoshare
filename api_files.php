@@ -60,8 +60,8 @@ function action_newfile(): void {
 
 // ─── File: upload (multiplo, tutti i tipi) ───────────────────────────────────
 function action_upload(): void {
-    require_write();
-    $dir = user_path($_POST['path'] ?? '');
+    $cx = upload_ctx();               // sessione, oppure link 'edit' di una cartella (vedi api_upload.php)
+    $dir = $cx['base'];
     if (empty($_FILES['files'])) json_out(['ok' => false, 'error' => 'Nessun file ricevuto'], 400);
     $f = $_FILES['files'];
     $names = (array) $f['name']; $tmp = (array) $f['tmp_name']; $err = (array) $f['error'];
@@ -70,20 +70,28 @@ function action_upload(): void {
     for ($i = 0; $i < count($names); $i++) {
         if (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) $batchBytes += (int) filesize((string) $tmp[$i]);
     }
-    quota_check($batchBytes);
-    $saved = 0; $savedBytes = 0; $errors = [];
+    quota_check_user($cx['owner'], $batchBytes);
+    // Tetto del LINK: prenotazione atomica del batch; i byte dei file poi non salvati vengono restituiti.
+    if ($cx['link'] && $batchBytes > 0 && !share_upload_reserve($cx['link']['token'], $batchBytes)) {
+        $rem = share_upload_remaining($cx['link']);
+        json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito' . ($rem !== null ? ' (restano ' . human_size($rem) . ')' : '')], 507);
+    }
+    $saved = 0; $savedBytes = 0; $errors = []; $lost = 0;
     for ($i = 0; $i < count($names); $i++) {
         $n = basename((string) $names[$i]);
-        if (!valid_name($n)) { $errors[] = "$n: nome non valido"; continue; }
+        $counted = (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) ? (int) filesize((string) $tmp[$i]) : 0;   // byte già conteggiati nel batch
+        if (!valid_name($n)) { $errors[] = "$n: nome non valido"; $lost += $counted; continue; }
         if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
         if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
-        $sz = (int) filesize((string) $tmp[$i]);
+        $sz = $counted;
         $repl = (storage()->typeOf(logical_join($dir, $n)) === 'file') ? storage()->sizeOf(logical_join($dir, $n)) : 0;
-        if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; continue; }
+        if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; $lost += $counted; continue; }
         if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
         $saved++; $savedBytes += $sz - $repl;
     }
-    if ($savedBytes !== 0) usage_bump((string) $_SESSION['username'], $savedBytes);
+    if ($savedBytes !== 0) usage_bump($cx['owner'], $savedBytes);
+    if ($cx['link'] && $lost > 0) share_upload_release($cx['link']['token'], $lost);
+    if ($cx['link'] && $saved) audit('link_upload', $saved . ' file (' . human_size($savedBytes) . ') in "' . ($cx['link']['name'] ?? '') . '" via link');
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
 }
 

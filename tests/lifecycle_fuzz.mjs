@@ -73,7 +73,8 @@ async function bootstrap() {
 }
 
 // ─── Modello dello stato atteso ──────────────────────────────────────────────
-// files: Map<relPath, content> · dirs: Set<relPath> · shares: Map<token, {path, alive}>
+// files: Map<relPath, content> · dirs: Set<relPath> · shares: Map<token, {path, alive, upload?}>
+// (upload = link 'edit' di una cartella: accetta upload anonimi via token)
 const M = { files: new Map(), dirs: new Set(), shares: new Map() };
 const parentOf = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
 const modelChildren = dir => {
@@ -214,6 +215,48 @@ function makeOps(rand) {
       s.alive = false;
       return `revoke ${tok.slice(0, 8)}`;
     },
+    shareDirEdit: async () => {
+      // link MODIFICABILE di una cartella: chi lo ha può caricare file dentro
+      const dirs = [...M.dirs]; if (!dirs.length) return;
+      const p = pick(dirs);
+      // upload_limit_mb 0 = nessun tetto proprio: i contenuti del fuzzer sono di pochi
+      // byte, un tetto non scatterebbe mai e il modello resta senza contabilità (il
+      // tetto è coperto puntualmente da api_test.sh).
+      const r = await api('share_create', { path: p, ttl: 86400, mode: 'edit', slug: '', upload_limit_mb: 0 });
+      if (!r.ok) { violation(`share_create(edit, ${p}) fallita: ${r.error}`); return; }
+      M.shares.set(r.token, { path: p, alive: true, upload: true });
+      return `share-edit ${p} → ${r.token.slice(0, 8)}`;
+    },
+    linkUpload: async () => {
+      // upload ANONIMO via token (niente cookie/CSRF) in una cartella condivisa 'edit':
+      // nella radice del link, in una sua sottocartella esistente, o in una nuova.
+      const alive = [...M.shares.entries()].filter(([, s]) => s.alive && s.upload);
+      if (!alive.length) return;
+      const [tok, s] = pick(alive);
+      const subs = [...M.dirs].filter(d => d.startsWith(s.path + '/'));
+      let rel = '';
+      const dice = rand();
+      if (dice < 0.25) rel = `ospite${++nameCounter}`;
+      else if (dice < 0.5 && subs.length) rel = pick(subs).slice(s.path.length + 1);
+      const name = newName(pick(['.md', '.txt', '.bin']));
+      const dir = rel ? `${s.path}/${rel}` : s.path;
+      const p = `${dir}/${name}`;
+      // Nome già usato da una CARTELLA: l'upload (come nell'app) non la rimpiazza con
+      // un file — si evita la richiesta, come farebbe un utente davanti all'errore.
+      if (M.dirs.has(p)) return `link-upload ${p} saltato (cartella omonima)`;
+      const content = `link-${Math.floor(rand() * 1e6)}`;
+      const body = new FormData();
+      body.append('path', rel);
+      body.append('files[]', new File([content], name));
+      const r = await (await req(`/api.php?action=upload&t=${tok}`, { method: 'POST', body })).json();
+      if (!r.ok || (r.errors || []).length) { violation(`upload via link (${p}): ${r.error || (r.errors || []).join(',')}`); return; }
+      if (rel) {   // la sottocartella (eventualmente nuova) entra nel modello
+        let acc = s.path;
+        for (const seg of rel.split('/')) { acc = `${acc}/${seg}`; M.dirs.add(acc); }
+      }
+      M.files.set(p, content);
+      return `link-upload ${p} via ${tok.slice(0, 8)}`;
+    },
     overwriteUpload: async () => {
       const p = someFile(); if (!p) return;
       const dir = parentOf(p), name = p.slice(dir ? dir.length + 1 : 0);
@@ -240,7 +283,7 @@ for (const seed of seeds) {
   const rand = rng(seed);
   const ops = makeOps(rand);
   const keys = Object.keys(ops);
-  const weights = { newfile: 3, mkdir: 2, editNote: 3, del: 3, rename: 2, share: 2, revoke: 1, overwriteUpload: 2 };
+  const weights = { newfile: 3, mkdir: 2, editNote: 3, del: 3, rename: 2, share: 2, revoke: 1, overwriteUpload: 2, shareDirEdit: 1, linkUpload: 3 };
   const bag = keys.flatMap(k => Array(weights[k] || 1).fill(k));
   console.log(`— seed ${seed}: ${N} operazioni`);
   for (let i = 0; i < N; i++) {

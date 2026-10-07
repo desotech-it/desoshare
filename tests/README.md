@@ -2,7 +2,8 @@
 
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
-fuori `s3_test.sh` (serve Wasabi reale) e `editor_smoke.mjs` (serve un browser).
+fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs` e
+`share_upload_smoke.mjs` (servono un browser).
 
 ## 1. Test API (PHP) — `api_test.sh`
 Avvia un'istanza **isolata** con `php -S` (non tocca la produzione) e verifica
@@ -59,3 +60,19 @@ node tests/editor_smoke.mjs https://share.deso.tech/assets/editor-bundle.js
 
 > Richiede Playwright + Chromium: fuori dalla CI, come `s3_test.sh`. Esce 2 se
 > il browser non c'è (così non si confonde "non eseguito" con "passato").
+
+## Smoke dell'upload via link — `share_upload_smoke.mjs`
+Esercita `assets/share-upload.js` (lo script della pagina pubblica di una cartella
+condivisa in modalità modificabile) in **Chromium**, contro uno stub Node che
+implementa il CONTRATTO degli endpoint `upload_status`/`upload_chunk`/`upload_finish`
+e registra le richieste: sequenza corretta, geometria dei blocchi, file vuoto
+senza blocchi, token e cartella di destinazione propagati, ricarica a fine batch,
+errore del server mostrato in riga senza ricarica. Il lato PHP degli stessi
+endpoint è coperto da `api_test.sh` (sezione «Cartelle modificabili via link»).
+
+```bash
+node tests/share_upload_smoke.mjs
+# atteso: "SMOKE UPLOAD VIA LINK OK ✓"
+```
+
+> Richiede Playwright + Chromium: fuori dalla CI, come `editor_smoke.mjs`.

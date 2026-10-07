@@ -253,6 +253,86 @@ has "id non corrispondente al token → 403" "$(curl -s --data-urlencode t=$ET -
 has "edit-mode su file binario rifiutato" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")" 'file di testo'
 has "pagina pubblica nota = editor" "$(curl -s "$B/share.php?t=$ET")" 'editor-bundle.js'
 
+echo "=== Cartelle modificabili via link (upload anonimo via token) ==="
+# Un link 'edit' su una CARTELLA permette a chiunque lo abbia di CARICARE file
+# (prima: "Le cartelle non sono modificabili via link"). Nessun cookie né CSRF:
+# il token è la capability. Si scrive a nome del creatore, confinati alla cartella.
+has "mkdir inbox" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=inbox "$B/api.php?action=mkdir")" '"ok":true'
+DE=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=inbox --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")
+has "share_create cartella modificabile" "$DE" '"ok":true'
+DT=$(printf '%s' "$DE" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "share_list: cartella in modalità edit" "$(curl -s -b $JAR "$B/api.php?action=share_list")" "\"token\":\"$DT\",\"slug\":\"\",\"path\":\"inbox\",\"name\":\"inbox\",\"type\":\"dir\",\"mode\":\"edit\""
+has "pagina pubblica: upload disponibile" "$(curl -s "$B/share.php?t=$DT")" 'share-upload.js'
+hasnt "pagina pubblica di un link sola-lettura: niente upload" "$(curl -s "$B/share.php?t=$TOKF")" 'share-upload.js'
+# upload semplice (files[]) SENZA cookie: il token basta
+has "upload anonimo via link" "$(curl -s -F "files[]=@$S;filename=consegna.bin" "$B/api.php?action=upload&t=$DT&path=")" '"saved":1'
+has "il file compare nella home del proprietario" "$(curl -s -b $JAR "$B/api.php?action=list&path=inbox")" '"name":"consegna.bin"'
+has "e nella pagina pubblica" "$(curl -s "$B/share.php?t=$DT")" 'consegna.bin'
+curl -s "$B/share.php?t=$DT&p=consegna.bin&dl=1" -o "$SBX/consegna.bin"
+[ "$(md5of "$S")" = "$(md5of "$SBX/consegna.bin")" ] && ok "integrità del file caricato via link (md5)" || no "integrità del file caricato via link (md5)"
+# upload a BLOCCHI via token, in una sottocartella NUOVA (auto-mkdir, confinata)
+LU=$(openssl rand -hex 16)
+has "upload_chunk via token" "$(curl -s -F "uid=$LU" -F index=0 -F offset=0 -F chunk_size=16777216 -F total=1000000 -F path=da-ospite -F name=blocchi.bin -F "chunk=@$F" "$B/api.php?action=upload_chunk&t=$DT")" '"ok":true'
+has "upload_status via token" "$(curl -s "$B/api.php?action=upload_status&t=$DT&uid=$LU")" '"parts":[0]'
+has "upload_finish via token crea la sottocartella" "$(curl -s --data-urlencode uid=$LU --data-urlencode path=da-ospite --data-urlencode name=blocchi.bin --data-urlencode total=1000000 --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$DT")" '"ok":true'
+has "sottocartella e file visibili al proprietario" "$(curl -s -b $JAR "$B/api.php?action=list&path=inbox/da-ospite")" '"name":"blocchi.bin"'
+curl -s "$B/share.php?t=$DT&p=da-ospite/blocchi.bin&dl=1" -o "$SBX/blocchi.bin"
+[ "$MF" = "$(md5of "$SBX/blocchi.bin")" ] && ok "integrità upload a blocchi via link (md5)" || no "integrità upload a blocchi via link (md5)"
+has "file vuoto via token (finish diretto)" "$(curl -s --data-urlencode uid=$(openssl rand -hex 16) --data-urlencode path= --data-urlencode name=vuoto.txt --data-urlencode total=0 --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$DT")" '"ok":true'
+has "lo staging di un token NON è visibile da un altro principale" "$(curl -s -b $JAR "$B/api.php?action=upload_status&uid=$LU")" '"parts":[]'
+# confinamento e permessi
+has "traversal nel path → rifiutato (400)" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=evaso.bin" "$B/api.php?action=upload&t=$DT&path=../")" '400'
+hasnt "nessun file evaso fuori dalla cartella condivisa" "$(curl -s -b $JAR "$B/api.php?action=list&path=")" 'evaso.bin'
+has "segmento di path illecito → rifiutato (400)" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=x.bin" "$B/api.php?action=upload&t=$DT&path=a%00b")" '400'
+has "nome file non valido → errore nel batch" "$(curl -s -F "files[]=@$S;filename=.." "$B/api.php?action=upload&t=$DT&path=")" 'nome non valido'
+has "link di cartella SOLA LETTURA: upload vietato (403)" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=no.bin" "$B/api.php?action=upload&t=$TOKF&path=")" '403'
+has "link di un FILE (nota edit): upload rifiutato (400)" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=no.bin" "$B/api.php?action=upload&t=$ET&path=")" '400'
+has "token inesistente: upload → 404" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=no.bin" "$B/api.php?action=upload&t=aaaabbbbccccdddd&path=")" '404'
+has "senza token e senza login: upload → 401" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=no.bin" "$B/api.php?action=upload&path=")" '401'
+has "con login ma senza CSRF: upload → 419 (il bypass vale SOLO col token)" "$(curl -s -o /dev/null -w '%{http_code}' -b $JAR -F "files[]=@$S;filename=no.bin" "$B/api.php?action=upload&path=")" '419'
+# la quota è quella del PROPRIETARIO del link (l'admin ha già >1 MB di file)
+has "quota admin → 1 MB" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=admin --data-urlencode original=admin --data-urlencode role=admin --data-urlencode permission=write --data-urlencode quota_mb=1 "$B/api.php?action=user_save")" '"ok":true'
+has "upload via link oltre la quota del proprietario → 507" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$G;filename=grosso.bin" "$B/api.php?action=upload&t=$DT&path=")" '507'
+has "upload_chunk via link oltre quota → 413 al primo blocco" "$(curl -s -o /dev/null -w '%{http_code}' -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=16777216 -F total=1048576 -F path= -F name=grosso2.bin -F "chunk=@$G" "$B/api.php?action=upload_chunk&t=$DT")" '413'
+has "quota admin ripristinata (illimitata)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=admin --data-urlencode original=admin --data-urlencode role=admin --data-urlencode permission=write --data-urlencode quota_mb=0 "$B/api.php?action=user_save")" '"ok":true'
+has "audit registra link_upload (attore anonimo)" "$(curl -s -b $JAR "$B/api.php?action=audit_list")" 'link_upload'
+# tetto di caricamento del LINK (oltre alla quota del creatore): default 1 GB, impostabile in MB.
+# Contatore LORDO dei byte ricevuti: finora via $DT sono passati consegna.bin (50000) + blocchi.bin (1000000)
+# + vuoto.txt (0); i tentativi respinti dalla quota NON contano.
+SL=$(curl -s -b $JAR "$B/api.php?action=share_list")
+has "share_list: tetto di default 1 GB sul link modificabile" "$SL" '"upload_limit":1073741824'
+has "share_list: byte caricati via link conteggiati (1050000)" "$SL" '"uploaded":1050000'
+has "mkdir cassetta" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=cassetta "$B/api.php?action=mkdir")" '"ok":true'
+has "tetto non numerico → 400" "$(curl -s -o /dev/null -w '%{http_code}' -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=cassetta --data-urlencode ttl=86400 --data-urlencode mode=edit --data-urlencode upload_limit_mb=abc "$B/api.php?action=share_create")" '400'
+DL=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=cassetta --data-urlencode ttl=86400 --data-urlencode mode=edit --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create")
+has "share_create con tetto di 1 MB" "$DL" '"ok":true'
+LT=$(printf '%s' "$DL" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "share_list espone il tetto personalizzato (1048576)" "$(curl -s -b $JAR "$B/api.php?action=share_list")" '"upload_limit":1048576'
+has "pagina pubblica mostra lo spazio ancora caricabile" "$(curl -s "$B/share.php?t=$LT")" 'Spazio ancora caricabile'
+has "tetto: il primo upload (1000000 B) entra" "$(curl -s -F "files[]=@$F;filename=a.bin" "$B/api.php?action=upload&t=$LT&path=")" '"saved":1'
+has "tetto: il secondo (50000 B > 48576 residui) → 507" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=b.bin" "$B/api.php?action=upload&t=$LT&path=")" '507'
+hasnt "tetto: il file respinto non esiste" "$(curl -s -b $JAR "$B/api.php?action=list&path=cassetta")" 'b.bin'
+has "tetto: upload_chunk oltre il residuo → 413 al primo blocco" "$(curl -s -o /dev/null -w '%{http_code}' -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=16777216 -F total=50000 -F path= -F name=c.bin -F "chunk=@$S" "$B/api.php?action=upload_chunk&t=$LT")" '413'
+has "tetto: un file che ci sta ancora (10 B) entra" "$(printf 'dieci byte' > "$SBX/dieci.txt"; curl -s -F "files[]=@$SBX/dieci.txt;filename=dieci.txt" "$B/api.php?action=upload&t=$LT&path=")" '"saved":1'
+has "tetto: la sovrascrittura CONTA (lordo): 1000000 B di nuovo → 507" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$F;filename=a.bin" "$B/api.php?action=upload&t=$LT&path=")" '507'
+# esaurimento completo: tetto 1 MB con 1000010 usati → carico ancora 48566 B esatti… più semplice: nuovo link da 1 MB riempito con 1048576 B
+head -c 1048576 /dev/zero > "$SBX/pieno.bin"
+DP=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=cassetta --data-urlencode ttl=86400 --data-urlencode mode=edit --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create")
+PT=$(printf '%s' "$DP" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "tetto: riempito esattamente (1048576 B) entra" "$(curl -s -F "files[]=@$SBX/pieno.bin;filename=pieno.bin" "$B/api.php?action=upload&t=$PT&path=")" '"saved":1'
+has "tetto esaurito: la pagina pubblica lo dice" "$(curl -s "$B/share.php?t=$PT")" 'esaurito'
+hasnt "tetto esaurito: niente upload nella pagina" "$(curl -s "$B/share.php?t=$PT")" 'share-upload.js'
+has "tetto esaurito: anche 10 B → 507" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$SBX/dieci.txt;filename=d.txt" "$B/api.php?action=upload&t=$PT&path=")" '507'
+# tetto 0 = nessun tetto proprio del link (resta la quota del creatore)
+D0=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=cassetta --data-urlencode ttl=86400 --data-urlencode mode=edit --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create")
+L0=$(printf '%s' "$D0" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "tetto 0: 1048576 B passano senza tetto proprio" "$(curl -s -F "files[]=@$G;filename=libero.bin" "$B/api.php?action=upload&t=$L0&path=")" '"saved":1'
+hasnt "tetto 0: la pagina non parla di spazio caricabile" "$(curl -s "$B/share.php?t=$L0")" 'Spazio ancora caricabile'
+has "link sola-lettura: nessun tetto registrato" "$(curl -s -b $JAR "$B/api.php?action=share_list" | tr ',' '\n' | grep -A2 "\"token\":\"$TOKF\"" | tr '\n' ',')" '"token":"'"$TOKF"'"'
+# revoca: il link smette di accettare upload
+has "revoca del link modificabile" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$DT "$B/api.php?action=share_revoke")" '"ok":true'
+has "dopo la revoca: upload → 404" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=tardi.bin" "$B/api.php?action=upload&t=$DT&path=")" '404'
+
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
 has "settings_get (admin)" "$SG" '"ok":true'
@@ -326,7 +406,7 @@ has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."
