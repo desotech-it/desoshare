@@ -118,6 +118,47 @@ function share_link_writable(array $s): bool {
     $creator = find_user((string) ($s['created_by'] ?? ''));
     return (bool) ($creator && ((($creator['role'] ?? '') === 'admin') || (($creator['permission'] ?? '') === 'write')));
 }
+// ─── Tetto di caricamento di un link 'edit' di cartella ──────────────────────
+// Oltre alla quota del creatore, ogni link ha il SUO spazio caricabile
+// ('upload_limit', byte; 0 = nessun tetto proprio) e un contatore dei byte
+// ricevuti ('uploaded'), così chi ha il link non può «caricare il mondo». Il
+// contatore è LORDO (le sovrascritture contano): il tetto serve contro l'abuso,
+// non a misurare lo spazio occupato. Prenotazione ATOMICA sotto lock — controllo
+// e incremento insieme — così due upload concorrenti non lo sforano.
+function share_upload_reserve(string $token, int $bytes): bool {
+    $ok = false;
+    with_json_lock(shares_file(), function (array $d) use ($token, $bytes, &$ok) {
+        foreach ($d['shares'] ?? [] as $i => $s) {
+            if (($s['token'] ?? '') !== $token) continue;
+            $limit = (int) ($s['upload_limit'] ?? 0);
+            $used = (int) ($s['uploaded'] ?? 0);
+            if ($limit > 0 && $used + $bytes > $limit) return null;   // sfora: niente scrittura
+            $d['shares'][$i]['uploaded'] = $used + $bytes;
+            $ok = true;
+            return $d;
+        }
+        return null;   // share sparita (revocata nel frattempo)
+    });
+    return $ok;
+}
+// Restituisce i byte prenotati da un upload poi fallito (mai sotto zero).
+function share_upload_release(string $token, int $bytes): void {
+    if ($bytes <= 0) return;
+    with_json_lock(shares_file(), function (array $d) use ($token, $bytes) {
+        foreach ($d['shares'] ?? [] as $i => $s) {
+            if (($s['token'] ?? '') !== $token) continue;
+            $d['shares'][$i]['uploaded'] = max(0, (int) ($s['uploaded'] ?? 0) - $bytes);
+            return $d;
+        }
+        return null;
+    });
+}
+// Spazio ancora caricabile via link; null = il link non ha un tetto proprio.
+function share_upload_remaining(array $s): ?int {
+    $limit = (int) ($s['upload_limit'] ?? 0);
+    if ($limit <= 0) return null;
+    return max(0, $limit - (int) ($s['uploaded'] ?? 0));
+}
 // URL pubblico assoluto della condivisione. Con uno slug personalizzato usa la
 // forma "bella" /c/<slug> (vedi la RewriteRule in .htaccess); altrimenti il token.
 function share_url(array $share): string {

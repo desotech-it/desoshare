@@ -404,7 +404,15 @@
     <select id="sh_mode">
       <option value="view">Sola lettura</option>
       <option value="edit">${isDir ? "Modificabile (chiunque abbia il link può caricare file nella cartella)" : "Modificabile (chiunque abbia il link co-edita)"}</option>
-    </select>` : ""}
+    </select>
+    ${isDir ? `<div id="sh_limit_wrap" style="display:none"><label style="margin-top:10px">Spazio caricabile tramite il link <span class="muted" style="font-weight:400">(oltre vale la tua quota)</span></label>
+    <select id="sh_limit">
+      <option value="100">100 MB</option>
+      <option value="500">500 MB</option>
+      <option value="1024" selected>1 GB</option>
+      <option value="5120">5 GB</option>
+      <option value="0">Nessun tetto (solo la mia quota)</option>
+    </select></div>` : ""}` : ""}
     <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
     <div style="display:flex;align-items:center;gap:3px;font-size:13px">
       <span class="muted" style="white-space:nowrap">/d/</span>
@@ -422,17 +430,25 @@
     };
     slugEl.oninput = updHint;
     updHint();
+    if (isDir) {
+      const modeEl = $("#sh_mode", modalBg), limWrap = $("#sh_limit_wrap", modalBg);
+      modeEl.onchange = () => {
+        limWrap.style.display = modeEl.value === "edit" ? "" : "none";
+      };
+    }
     $("#sh_create", modalBg).onclick = guardSubmit($("#sh_create", modalBg), async () => {
       const ttl = $("#sh_ttl", modalBg).value;
       const mode = canEdit ? $("#sh_mode", modalBg).value : "view";
-      const r = await apiPost("share_create", { path: rel, ttl, mode, slug: slugEl.value });
+      const limitMb = isDir && mode === "edit" ? $("#sh_limit", modalBg).value : "";
+      const r = await apiPost("share_create", { path: rel, ttl, mode, slug: slugEl.value, upload_limit_mb: limitMb });
       if (!r.ok) {
         hintEl.textContent = r.error || "Errore";
         hintEl.style.color = "var(--danger, #c0392b)";
         return;
       }
       const when = new Date(r.expires_at * 1e3).toLocaleString("it-IT");
-      $("#sh_result", modalBg).innerHTML = `<label>Link pubblico (${mode === "edit" ? "modificabile" : "sola lettura"}) — scade il ${esc(when)}</label>
+      const cap = isDir && mode === "edit" ? Number(limitMb) > 0 ? `, fino a ${fmtBytes(Number(limitMb) * 1048576)}` : ", nessun tetto" : "";
+      $("#sh_result", modalBg).innerHTML = `<label>Link pubblico (${mode === "edit" ? "modificabile" + cap : "sola lettura"}) — scade il ${esc(when)}</label>
       <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
       <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
       const inp = $("#sh_url", modalBg);
@@ -451,7 +467,7 @@
       return;
     }
     const body = r.shares.length ? `<table class="utable"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${r.shares.map((s) => `<tr data-exp="${s.expires_at}">
-      <td><i class="ti ${s.type === "dir" ? "ti-folder" : "ti-file"}"></i> ${esc(s.name)}${s.mode === "edit" ? ' <span class="muted" style="font-size:11px">· modificabile</span>' : ""}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ""}</td>
+      <td><i class="ti ${s.type === "dir" ? "ti-folder" : "ti-file"}"></i> ${esc(s.name)}${s.mode === "edit" ? ` <span class="muted" style="font-size:11px">· modificabile${s.type === "dir" ? " · caricati " + fmtBytes(s.uploaded || 0) + (s.upload_limit > 0 ? " / " + fmtBytes(s.upload_limit) : "") : ""}</span>` : ""}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ""}</td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>

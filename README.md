@@ -51,7 +51,8 @@ Versione: **0.24.0** · stato: in sviluppo (0.x.x)
   modalità **modificabile** una nota si co-edita in tempo reale e una **cartella
   accetta upload**: chiunque abbia il link può caricare file (anche in
   sottocartelle, anche trascinandoli), che finiscono nello spazio e nella quota
-  di chi ha creato il link. Si può dare al link un **indirizzo personalizzato**
+  di chi ha creato il link, entro un **tetto di caricamento proprio del link**
+  (default 1 GB) oltre alla scadenza. Si può dare al link un **indirizzo personalizzato**
   facile da digitare (`…/d/relazione-2026`) invece del token casuale.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
