@@ -4,8 +4,9 @@ import { apiGet, apiPost } from './net.js';
 import { toast, esc, isTextFile, copyText, fmtDuration, slugify } from './util.js';
 import { openModal, guardSubmit } from './modal.js';
 
-export function shareDialog(rel, name) {
-  const canEdit = isTextFile(name);
+export function shareDialog(rel, name, isDir = false) {
+  // Modificabile: nota → co-editing; cartella → chi ha il link può caricare file.
+  const canEdit = isDir || isTextFile(name);
   const defSlug = slugify(name.replace(/\.[^.]+$/, ''));          // nome senza estensione → slug
   const base = location.origin + location.pathname.replace(/\/[^/]*$/, '');
   openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
@@ -19,7 +20,7 @@ export function shareDialog(rel, name) {
     ${canEdit ? `<label style="margin-top:10px">Accesso</label>
     <select id="sh_mode">
       <option value="view">Sola lettura</option>
-      <option value="edit">Modificabile (chiunque abbia il link co-edita)</option>
+      <option value="edit">${isDir ? 'Modificabile (chiunque abbia il link può caricare file nella cartella)' : 'Modificabile (chiunque abbia il link co-edita)'}</option>
     </select>` : ''}
     <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
     <div style="display:flex;align-items:center;gap:3px;font-size:13px">

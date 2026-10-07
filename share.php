@@ -1,6 +1,7 @@
 <?php
-// Pagina PUBBLICA di condivisione (nessun login). Sola lettura, confinata
-// all'elemento condiviso e valida fino alla scadenza del token.
+// Pagina PUBBLICA di condivisione (nessun login), confinata all'elemento
+// condiviso e valida fino alla scadenza del token. Sola lettura, salvo i link
+// 'edit': nota → editor collaborativo, cartella → upload di file consentito.
 require_once __DIR__ . '/lib.php';
 
 $token = $_GET['t'] ?? '';
@@ -161,6 +162,7 @@ function share_editor_page(array $s, string $abs): void {
 function share_folder_page(array $s, string $dir, string $p): void {
     share_head('Condivisione');
     $tok = urlencode($s['token']);
+    $writable = share_link_writable($s);   // link 'edit' di cartella: chi lo ha può caricare file qui
     $items = [];
     foreach (storage()->listDir($dir) as $e) {
         $items[] = ['name' => $e['name'], 'dir' => ($e['type'] === 'dir'), 'size' => (int) ($e['size'] ?? 0)];
@@ -179,13 +181,20 @@ function share_folder_page(array $s, string $dir, string $p): void {
     $zipHref = 'share.php?t=' . $tok . '&p=' . urlencode($p) . '&zip=1';
     $zipManUrl = 'share.php?t=' . $tok . '&p=' . urlencode($p) . '&zipmanifest=1';
     $jszipV = (string) @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js');
+    $upV = (string) @filemtime(PUBLIC_DIR . '/assets/share-upload.js');
     echo '<div class="share-wrap">'
        . '<header class="topbar"><div class="brand"><img src="assets/desolabs-icon.png" class="brand-logo" alt=""> ' . h(APP_NAME) . '</div>'
-       . '<a class="btn btn-primary" id="zipAll" href="' . h($zipHref) . '"><i class="ti ti-file-zip"></i> Scarica tutto (ZIP)</a></header>'
+       . '<div class="topbar-right">'
+       . ($writable ? '<label class="btn btn-primary" for="shUpInput"><i class="ti ti-upload"></i> Carica file</label><input type="file" id="shUpInput" multiple hidden>' : '')
+       . '<a class="btn' . ($writable ? '' : ' btn-primary') . '" id="zipAll" href="' . h($zipHref) . '"><i class="ti ti-file-zip"></i> Scarica tutto (ZIP)</a></div></header>'
        . '<div class="crumbs">' . $crumbs . '</div>'
-       . share_expiry_html($s)
-       . '<div class="listing">';
-    if (!$items) echo '<div class="empty"><i class="ti ti-folder-open"></i> Cartella vuota</div>';
+       . share_expiry_html($s);
+    if ($writable) {
+        echo '<p class="share-mode muted"><i class="ti ti-pencil"></i> Link modificabile: chi lo possiede può caricare file in questa cartella (anche trascinandoli qui).</p>'
+           . '<div id="shUp" class="share-up"></div>';
+    }
+    echo '<div class="listing">';
+    if (!$items) echo '<div class="empty"><i class="ti ti-folder-open"></i> Cartella vuota' . ($writable ? ' — trascina qui i file o usa «Carica file»' : '') . '</div>';
     foreach ($items as $it) {
         $sub = ($p !== '' ? $p . '/' : '') . $it['name'];
         if ($it['dir']) {
@@ -218,5 +227,11 @@ function share_folder_page(array $s, string $dir, string $p): void {
        . 'return clientZip(m).then(function(){btn.innerHTML=lbl;}).catch(function(){btn.innerHTML=lbl;location.href=srv;});'
        . '}).catch(function(){location.href=srv;});});'
        . '})();</script>';
+    // Upload via link: stesso protocollo a blocchi dell'app, autenticato dal token
+    // (vedi assets/share-upload.js e upload_ctx in api_upload.php).
+    if ($writable) {
+        echo '<script src="assets/share-upload.js?v=' . h($upV) . '"></script>'
+           . '<script>ShareUpload.mount({token:' . json_encode($s['token']) . ',path:' . json_encode($p) . ',input:"#shUpInput",list:"#shUp"});</script>';
+    }
     share_footer();
 }

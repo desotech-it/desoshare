@@ -91,18 +91,32 @@ function share_find(string $id): ?array {
     }
     return null;
 }
-// Risolve un sotto-percorso LOGICO dentro una condivisione, confinato alla sua radice.
-function share_resolve(array $s, string $p): ?string {
+// Confina un sotto-percorso LOGICO dentro la condivisione SENZA richiederne
+// l'esistenza (gli upload via link possono creare sottocartelle): null su traversal.
+function share_join(array $s, string $p): ?string {
     $base = share_base($s);
     $segs = [];
-    foreach (explode('/', str_replace('\\', '/', (string) $p)) as $seg) {
+    foreach (explode('/', str_replace('\\', '/', $p)) as $seg) {
         if ($seg === '' || $seg === '.') continue;
         if ($seg === '..') return null;            // nessun traversal fuori dalla condivisione
         $segs[] = $seg;
     }
     $sub = implode('/', $segs);
-    $full = $base === '' ? $sub : ($sub === '' ? $base : $base . '/' . $sub);
-    return storage()->typeOf($full) !== false ? $full : null;
+    return $base === '' ? $sub : ($sub === '' ? $base : $base . '/' . $sub);
+}
+// Risolve un sotto-percorso LOGICO dentro una condivisione, confinato alla sua radice.
+function share_resolve(array $s, string $p): ?string {
+    $full = share_join($s, (string) $p);
+    return ($full !== null && storage()->typeOf($full) !== false) ? $full : null;
+}
+// Un link 'edit' su una CARTELLA permette a chiunque lo abbia di caricare file al
+// suo interno. Scrive A NOME del creatore: se a questi è stato tolto il permesso
+// di scrittura (o è stato rimosso), il link degrada a sola lettura — stessa
+// regola delle note condivise (vedi note_context).
+function share_link_writable(array $s): bool {
+    if (($s['type'] ?? '') !== 'dir' || (($s['mode'] ?? 'view') !== 'edit')) return false;
+    $creator = find_user((string) ($s['created_by'] ?? ''));
+    return (bool) ($creator && ((($creator['role'] ?? '') === 'admin') || (($creator['permission'] ?? '') === 'write')));
 }
 // URL pubblico assoluto della condivisione. Con uno slug personalizzato usa la
 // forma "bella" /c/<slug> (vedi la RewriteRule in .htaccess); altrimenti il token.

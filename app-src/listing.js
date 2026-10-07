@@ -71,7 +71,7 @@ export function renderRows() {
     row.querySelector('.ti-download').onclick = () => {
       if (isDir) startZip([rel]); else window.location = 'api.php?action=download&path=' + encodeURIComponent(rel);
     };
-    row.querySelector('.ti-share').onclick = () => shareDialog(rel, it.name);
+    row.querySelector('.ti-share').onclick = () => shareDialog(rel, it.name, isDir);
     if (CAN_WRITE) {
       row.querySelector('.ti-pencil').onclick = () => renameDialog(it.name, rel);
       row.querySelector('.ti-trash').onclick = () => deleteDialog([rel], it.name);
