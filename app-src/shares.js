@@ -63,6 +63,10 @@ export function shareDialog(rel, name, isDir = false) {
     $('#sh_result', modalBg).innerHTML = `<label>Link pubblico (${mode === 'edit' ? 'modificabile' + cap : 'sola lettura'}) — scade il ${esc(when)}</label>
       <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
       <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
+    // Link creato: il dialog resta come riepilogo (un altro clic darebbe 409 o un secondo link).
+    modalBg.querySelectorAll('#sh_ttl, #sh_mode, #sh_limit, #sh_slug').forEach(el => { el.disabled = true; });
+    $('#sh_create', modalBg).remove();
+    modalBg.querySelector('.modal-actions .btn').classList.add('btn-primary');
     const inp = $('#sh_url', modalBg); inp.focus(); inp.select();
     $('#sh_copy', modalBg).onclick = () => { copyText(r.url); toast('Link copiato'); };
   });
