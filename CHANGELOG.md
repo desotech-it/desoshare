@@ -6,6 +6,28 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.24.1] - 2026-10-08
+
+### Corretto
+- **Cestino e rinomina tagliati nell'elenco file**: la colonna «Azioni» era larga
+  96px ma le icone di una riga occupano fino a 145px, e l'elenco ha
+  `overflow: hidden`: il cestino (e sulle note anche la matita) finiva fuori vista
+  su ogni riga. Ora la colonna è di 140px, le icone sono disposte con flex
+  (gli spazi del markup non contano più) e sotto i 640px di larghezza le colonne
+  «Dimensione» e «Modificato» si nascondono, così le azioni restano raggiungibili
+  anche da telefono. [assets/app.css]
+- **«Crea link» cliccabile due volte**: dopo la creazione il pulsante tornava
+  attivo e un secondo clic rispondeva «Indirizzo già in uso» o, senza indirizzo
+  personalizzato, creava un secondo link. Ora il dialog resta come riepilogo con
+  il solo «Chiudi». [app-src/shares.js]
+
+### Test
+- `tests/listing_smoke.mjs`: in Chromium, a 1440, 1084 e 390 px, verifica che le
+  icone azione di ogni riga siano dentro l'elenco, che i cestini siano allineati e
+  che la barra di selezione sia visibile. Fuori CI (serve il browser).
+- `tests/js_smoke.mjs`: dialog Condividi, errore 409 con pulsante ancora attivo e
+  riepilogo senza «Crea link» dopo la creazione.
+
 ## [0.24.0] - 2026-10-07
 
 ### Aggiunto

@@ -94,7 +94,8 @@ body {
 
 /* ─── Listing ───────────────────────────────────────────────────────────── */
 .listing { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.list-head, .row { display: grid; grid-template-columns: 36px 1fr 110px 120px 96px; align-items: center; gap: 8px; padding: 9px 14px; }
+/* Colonna azioni: fino a 5 icone da 17px con 12px di spazio = 133px. */
+.list-head, .row { display: grid; grid-template-columns: 36px 1fr 110px 120px 140px; align-items: center; gap: 8px; padding: 9px 14px; }
 .list-head { font-size: 12px; color: var(--tertiary); border-bottom: 1px solid var(--border); }
 .col-size { text-align: right; } .col-act { text-align: right; }
 .row { border-bottom: 1px solid var(--border); font-size: 13px; }
@@ -110,8 +111,8 @@ body {
 .name.clickable .label:hover { color: var(--primary); text-decoration: underline; }
 .size { text-align: right; color: var(--tertiary); }
 .date { color: var(--muted); }
-.acts { text-align: right; white-space: nowrap; }
-.acts .ti { font-size: 17px; color: var(--muted); cursor: pointer; margin-left: 12px; }
+.acts { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.acts .ti { font-size: 17px; color: var(--muted); cursor: pointer; }
 .acts .ti:hover { color: var(--text); }
 .row:hover .acts .ti { color: var(--text); }                 /* icone più evidenti al passaggio sulla riga */
 .acts .ti-trash { color: #c98a8a; }                          /* il cestino si distingue già a riposo */
@@ -186,6 +187,10 @@ body.dragging .dropzone-hint { display: flex; }
 .grid2 .fld label { margin: 0 0 4px; }
 .grid2 .fld input { width: 100%; box-sizing: border-box; }
 @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .list-head, .row { grid-template-columns: 36px 1fr 140px; }
+  .size, .date, .col-size, .col-date { display: none; }
+}
 details.adv { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 details.adv summary { cursor: pointer; font-size: 12px; color: var(--primary); user-select: none; list-style: none; padding: 2px 0; }
 details.adv summary::-webkit-details-marker { display: none; }
