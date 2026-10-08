@@ -536,9 +536,9 @@ async function runShareCreate() {
       const data = {}; opts.body.forEach((v, k) => { data[k] = v; });
       lastPost = { action, data };
     }
-    const body = action === 'share_create'
-      ? { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/d/mia-foto', expires_at: exp }
-      : listResponse;
+    const body = action !== 'share_create' ? listResponse
+      : lastPost.data.slug === 'foto' ? { ok: false, error: 'Indirizzo già in uso, scegline un altro' }
+      : { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/d/mia-foto', expires_at: exp };
     return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   };
   let loadError = null;
@@ -553,10 +553,19 @@ async function runShareCreate() {
   (slugEl && slugEl.value === 'foto') ? ok('campo slug precompilato col nome file (foto)') : bad(`slug precompilato errato (${slugEl && slugEl.value})`);
   const hint = doc.getElementById('sh_slughint');
   (hint && /\/d\/foto$/.test(hint.textContent)) ? ok('anteprima URL live (/d/foto)') : bad(`anteprima errata (${hint && hint.textContent})`);
+  doc.getElementById('sh_create').onclick();                                    // slug già preso → 409
+  await new Promise(r => setTimeout(r, 20));
+  const btnAfterErr = doc.getElementById('sh_create');
+  (btnAfterErr && !btnAfterErr.disabled && /già in uso/.test(hint.textContent) && !doc.getElementById('sh_url'))
+    ? ok('errore: «Crea link» resta attivo e l\'errore è mostrato') : bad(`dopo errore: bottone=${btnAfterErr && !btnAfterErr.disabled}, hint=${hint.textContent}`);
   slugEl.value = 'mia-foto'; slugEl.oninput();
   doc.getElementById('sh_create').onclick();
   await new Promise(r => setTimeout(r, 20));
   if (loadError) { bad('errore share-create: ' + loadError.message); return; }
+  const fieldsOff = ['sh_ttl', 'sh_slug'].every(id => doc.getElementById(id).disabled);
+  const closeBtn = doc.querySelector('#modalBg .modal-actions .btn');
+  (!doc.getElementById('sh_create') && fieldsOff && closeBtn && closeBtn.classList.contains('btn-primary') && /Chiudi/.test(closeBtn.textContent))
+    ? ok('dopo la creazione resta solo «Chiudi» (niente secondo invio)') : bad(`dopo creazione: crea=${!!doc.getElementById('sh_create')}, campi bloccati=${fieldsOff}`);
   (lastPost && lastPost.action === 'share_create' && lastPost.data.slug === 'mia-foto')
     ? ok('create invia lo slug scelto (mia-foto)') : bad(`slug non inviato (${JSON.stringify(lastPost && lastPost.data)})`);
   const urlEl = doc.getElementById('sh_url');
