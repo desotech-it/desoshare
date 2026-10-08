@@ -2,8 +2,8 @@
 
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
-fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs` e
-`share_upload_smoke.mjs` (servono un browser).
+fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs`,
+`share_upload_smoke.mjs` e `listing_smoke.mjs` (servono un browser).
 
 ## 1. Test API (PHP) — `api_test.sh`
 Avvia un'istanza **isolata** con `php -S` (non tocca la produzione) e verifica
@@ -76,3 +76,19 @@ node tests/share_upload_smoke.mjs
 ```
 
 > Richiede Playwright + Chromium: fuori dalla CI, come `editor_smoke.mjs`.
+
+## Smoke del layout dell'elenco — `listing_smoke.mjs`
+Carica `assets/app.css` e `assets/app.js` in **Chromium** con il markup di
+`render_app()` e un elenco simulato (cartella, note, file con nomi lunghi), a 1440,
+1084 e 390 px di larghezza. Verifica che su ogni riga tutte le icone azione, cestino
+compreso, siano dentro l'elenco, che i cestini siano allineati e che con una
+selezione la barra «Elimina» sia nella finestra. Serve perché un'icona tagliata da
+`overflow: hidden` non produce errori e jsdom non calcola il layout.
+
+```bash
+node tests/listing_smoke.mjs
+# atteso: "SMOKE ELENCO OK ✓"
+```
+
+> Richiede Playwright + Chromium e la rete verso il CDN del font delle icone: fuori
+> dalla CI. Esce 2 se playwright manca.

@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.24.0** · stato: in sviluppo (0.x.x)
+Versione: **0.24.1** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
