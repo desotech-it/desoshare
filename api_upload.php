@@ -24,16 +24,17 @@ function upload_ctx(): array {
     $rel = $_REQUEST['path'] ?? '';
     if (!is_string($rel)) $rel = '';
     if (is_string($t) && $t !== '') {
-        $s = share_find($t);
+        $s = share_lookup($t);
         if (!$s) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
         if (($s['type'] ?? '') !== 'dir') json_out(['ok' => false, 'error' => 'Questo link non è una cartella'], 400);
-        if (!share_link_writable($s)) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
+        share_require_access($s, ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST');   // PIN: sessione sbloccata (+ CSRF)
+        if (!share_can($s, 'upload')) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
         foreach (explode('/', str_replace('\\', '/', $rel)) as $seg) {
             if ($seg !== '' && $seg !== '.' && !valid_name($seg)) json_out(['ok' => false, 'error' => 'Percorso non valido'], 400);
         }
         $base = share_join($s, $rel);
         if ($base === null) json_out(['ok' => false, 'error' => 'Percorso non consentito'], 400);
-        return $ctx = ['link' => $s, 'base' => $base, 'owner' => (string) ($s['created_by'] ?? ''), 'skey' => 'share:' . $s['token']];
+        return $ctx = ['link' => $s, 'base' => $base, 'owner' => (string) ($s['created_by'] ?? ''), 'skey' => 'share:' . $s['token'], 'actor' => share_actor($s)];
     }
     $u = require_write();
     return $ctx = ['link' => null, 'base' => user_path($rel), 'owner' => (string) $u['username'], 'skey' => (string) $u['username']];
@@ -85,7 +86,8 @@ function action_upload_chunk(): void {
     if (!is_file(upload_part($uid))) {
         $repl = 0;
         $rn = basename(trim((string) ($_POST['name'] ?? '')));
-        if ($rn !== '' && valid_name($rn)) {
+        // Via link la versione sostituita finisce nel cestino (conta ancora) o il nome cambia: niente sconto.
+        if ($rn !== '' && valid_name($rn) && !$cx['link']) {
             $dest = logical_join($cx['base'], $rn);
             if (storage()->typeOf($dest) === 'file') $repl = (int) storage()->sizeOf($dest);
         }
@@ -136,13 +138,22 @@ function action_upload_finish(): void {
     // File da 0 byte: nessun blocco può esistere (upload_chunk rifiuta total<=0),
     // quindi niente .part da pretendere — si crea direttamente il file vuoto.
     if ($total === 0) {
+        if ($cx['link']) {
+            // A tetto esaurito niente upload, nemmeno da 0 byte: creerebbero file senza limite.
+            if (share_upload_remaining($cx['link']) === 0) json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
+            $r = link_store($cx, link_claim($cx['link'], $cx['base'], $name), null, $name);
+            @unlink(manifest_path($uid));
+            if (!$r['ok']) json_out(['ok' => false, 'error' => $r['error']], $r['code']);
+            audit('link_upload', $r['name'] . ' (0 B) in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
+            json_out(['ok' => true, 'name' => $r['name'], 'renamed' => $r['renamed']]);
+        }
         $dest = logical_join($cx['base'], $name);
+        if (link_name_pending($dest)) json_out(['ok' => false, 'error' => 'Un caricamento tramite link sta scrivendo questo nome: riprova tra poco'], 409);
         $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
         if (!storage()->writeFile($dest, '')) json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
         if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura/ricreazione: via il relay stantio
         usage_bump($cx['owner'], -$repl);
         @unlink(manifest_path($uid));
-        if ($cx['link']) audit('link_upload', $name . ' (0 B) in "' . ($cx['link']['name'] ?? '') . '" via link');
         json_out(['ok' => true]);
     }
 
@@ -153,8 +164,43 @@ function action_upload_finish(): void {
     if (count($m['parts']) !== $expected || (int) filesize($part) !== $total) {
         json_out(['ok' => false, 'error' => 'Trasferimento incompleto', 'have' => count($m['parts']), 'expected' => $expected], 409);
     }
+    if ($cx['link']) {
+        // Lo staging è per link, non per visitatore: due finalizzazioni dello stesso
+        // upload (due schede, due persone con lo stesso file) non devono scriverlo
+        // due volte. Chi riesce a rinominare il .part lo possiede.
+        $claimed = $part . '.fin.' . getmypid();
+        if (!@rename($part, $claimed)) json_out(['ok' => false, 'error' => 'Questo caricamento è già in finalizzazione'], 409);
+        $giveBack = function () use ($claimed, $part) { if (is_file($claimed)) @rename($claimed, $part); };   // il client può ritentare
+        // Quota del PROPRIETARIO: via link nulla viene «sostituito» gratis (la
+        // versione precedente va nel cestino e continua a contare).
+        $quota = user_quota($cx['owner']);
+        if ($quota > 0 && (usage_get($cx['owner']) + $total) > $quota) {
+            @unlink($claimed); @unlink(manifest_path($uid));
+            json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
+        }
+        $target = link_claim($cx['link'], $cx['base'], $name);
+        if (isset($target['error'])) { $giveBack(); json_out(['ok' => false, 'error' => $target['error']], $target['code']); }
+        // Tetto del LINK prenotato in modo atomico PRIMA di scrivere; restituito se la scrittura fallisce.
+        if (!share_upload_reserve($cx['link']['token'], $total)) {
+            link_upload_release($target['path']);
+            @unlink($claimed); @unlink(manifest_path($uid));
+            json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
+        }
+        $r = link_store($cx, $target, $claimed, $name);
+        if (!$r['ok']) {
+            share_upload_release($cx['link']['token'], $total);
+            $giveBack();
+            json_out(['ok' => false, 'error' => $r['error']], $r['code']);
+        }
+        usage_bump($cx['owner'], $total);
+        @unlink(manifest_path($uid));
+        upload_gc();
+        audit('link_upload', $r['name'] . ' (' . human_size($total) . ') in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
+        json_out(['ok' => true, 'name' => $r['name'], 'renamed' => $r['renamed']]);
+    }
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
     $dest = logical_join($cx['base'], $name);
+    if (link_name_pending($dest)) json_out(['ok' => false, 'error' => 'Un caricamento tramite link sta scrivendo questo nome: riprova tra poco'], 409);
     // Re-check quota del PROPRIETARIO (un altro upload può aver consumato spazio nel frattempo).
     $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
     $quota = user_quota($cx['owner']);
@@ -162,22 +208,47 @@ function action_upload_finish(): void {
         @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
         json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
     }
-    // Tetto del LINK, prenotato in modo atomico PRIMA di scrivere (due upload
-    // concorrenti non possono sforarlo entrambi); restituito se la scrittura fallisce.
-    if ($cx['link'] && !share_upload_reserve($cx['link']['token'], $total)) {
-        @unlink($part); @unlink(manifest_path($uid));
-        json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
-    }
     if (!storage()->putFromLocal($part, $dest)) {
-        if ($cx['link']) share_upload_release($cx['link']['token'], $total);
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
     if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
     usage_bump($cx['owner'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
-    if ($cx['link']) audit('link_upload', $name . ' (' . human_size($total) . ') in "' . ($cx['link']['name'] ?? '') . '" via link');
     json_out(['ok' => true]);
+}
+
+// Scrive un file caricato via link nella destinazione già prenotata da
+// link_upload_target(): la versione precedente (se il link la sostituisce) va
+// nel cestino, e il file viene registrato come caricato da QUESTO link.
+// $local: file locale da spostare nello storage; null = file vuoto.
+function link_store(array $cx, array $target, ?string $local, string $name): array {
+    if (isset($target['error'])) return ['ok' => false, 'error' => $target['error'], 'code' => $target['code']];
+    $dest = $target['path'];
+    // Rilascio della prenotazione anche se la richiesta termina a metà (json_out
+    // fa exit, che salta i blocchi finally).
+    register_shutdown_function('link_upload_release', $dest);
+    $trashed = null;
+    if ($target['replace']) {
+        $trashed = trash_move($cx['owner'], $dest, $cx['actor']);
+        if (!$trashed) { link_upload_release($dest); return ['ok' => false, 'error' => 'Impossibile spostare nel cestino la versione precedente', 'code' => 500]; }
+    }
+    $ok = $local === null ? storage()->writeFile($dest, '') : storage()->putFromLocal($local, $dest);
+    if (!$ok) {
+        link_upload_release($dest);
+        if ($trashed) {
+            $back = trash_restore($cx['owner'], $trashed['id']);   // la versione precedente torna al suo posto
+            if (!$back['ok']) {
+                audit('link_upload_error', basename($dest) . ': scrittura fallita, la versione precedente è nel cestino', $cx['actor']);
+                return ['ok' => false, 'error' => 'Impossibile salvare il file; la versione precedente è nel cestino del proprietario', 'code' => 500];
+            }
+        }
+        return ['ok' => false, 'error' => 'Impossibile finalizzare il file', 'code' => 500];
+    }
+    if (note_is_text(basename($dest))) note_state_purge_path($dest);   // il relay non rappresenta più il file
+    link_file_record($cx['link'], $dest);
+    link_upload_release($dest);
+    return ['ok' => true, 'name' => basename($dest), 'renamed' => basename($dest) !== $name];
 }
 
 // ─── Manifest dei blocchi ricevuti (resume con invii paralleli) ──────────────

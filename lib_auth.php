@@ -54,8 +54,14 @@ function csrf_check(): void {
 
 // ─── Anti brute-force del login locale (conteggio per IP, file con lock) ──────
 function login_attempts_file(): string { return DATA_DIR . '/login_attempts.json'; }
+// IPv6: un client dispone di solito di un intero /64; contare per indirizzo
+// permetterebbe di aggirare i limiti cambiando IP a ogni raffica.
 function login_throttle_key(): string {
-    return preg_replace('/[^A-Za-z0-9.:_-]/', '', (string) ($_SERVER['REMOTE_ADDR'] ?? 'cli'));
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'cli');
+    if (str_contains($ip, ':') && ($bin = @inet_pton($ip)) !== false && strlen($bin) === 16) {
+        return bin2hex(substr($bin, 0, 8)) . '::/64';
+    }
+    return preg_replace('/[^A-Za-z0-9.:_-]/', '', $ip);
 }
 function login_locked(): bool {
     $e = json_read(login_attempts_file())[login_throttle_key()] ?? null;

@@ -3,6 +3,7 @@
 // ─── File: elenco ────────────────────────────────────────────────────────────
 function action_list(): void {
     require_login();
+    trash_gc();   // scadenza del cestino, opportunistica (al più una volta l'ora)
     $rel = clean_logical($_GET['path'] ?? '');
     $dir = logical_join(user_home(), $rel);            // percorso assoluto nello storage (sandbox utente)
     if ($rel === '') {                                  // la home dell'utente esiste sempre (auto-riparazione)
@@ -47,7 +48,7 @@ function action_newfile(): void {
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
+    if (storage()->typeOf($target) !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     $content = (string) ($_POST['content'] ?? '');
     quota_check(strlen($content));
     note_state_purge_path($target);   // relay stantio di un omonimo cancellato in passato
@@ -71,12 +72,32 @@ function action_upload(): void {
         if (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) $batchBytes += (int) filesize((string) $tmp[$i]);
     }
     quota_check_user($cx['owner'], $batchBytes);
+    // A tetto esaurito niente upload via link, nemmeno di file vuoti.
+    if ($cx['link'] && share_upload_remaining($cx['link']) === 0) json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
     // Tetto del LINK: prenotazione atomica del batch; i byte dei file poi non salvati vengono restituiti.
     if ($cx['link'] && $batchBytes > 0 && !share_upload_reserve($cx['link']['token'], $batchBytes)) {
         $rem = share_upload_remaining($cx['link']);
         json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito' . ($rem !== null ? ' (restano ' . human_size($rem) . ')' : '')], 507);
     }
     $saved = 0; $savedBytes = 0; $errors = []; $lost = 0;
+    if ($cx['link']) {
+        // Via link: nomi prenotati (collisioni → «nome (n)»), sostituzioni nel cestino.
+        $stored = [];
+        for ($i = 0; $i < count($names); $i++) {
+            $n = basename((string) $names[$i]);
+            $counted = (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) ? (int) filesize((string) $tmp[$i]) : 0;
+            if (!valid_name($n)) { $errors[] = "$n: nome non valido"; $lost += $counted; continue; }
+            if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
+            if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
+            $r = link_store($cx, link_claim($cx['link'], $dir, $n), (string) $tmp[$i], $n);   // errori per file, mai uscite a metà lotto
+            if (!$r['ok']) { $errors[] = "$n: " . $r['error']; $lost += $counted; continue; }
+            $saved++; $savedBytes += $counted; $stored[] = $r['name'];
+        }
+        if ($savedBytes > 0) usage_bump($cx['owner'], $savedBytes);
+        if ($lost > 0) share_upload_release($cx['link']['token'], $lost);
+        if ($saved) audit('link_upload', $saved . ' file (' . human_size($savedBytes) . ') in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
+        json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors, 'names' => $stored]);
+    }
     for ($i = 0; $i < count($names); $i++) {
         $n = basename((string) $names[$i]);
         $counted = (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) ? (int) filesize((string) $tmp[$i]) : 0;   // byte già conteggiati nel batch
@@ -84,14 +105,13 @@ function action_upload(): void {
         if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
         if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
         $sz = $counted;
+        if (link_name_pending(logical_join($dir, $n))) { $errors[] = "$n: un caricamento tramite link sta scrivendo questo nome, riprova tra poco"; continue; }
         $repl = (storage()->typeOf(logical_join($dir, $n)) === 'file') ? storage()->sizeOf(logical_join($dir, $n)) : 0;
         if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; $lost += $counted; continue; }
         if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
         $saved++; $savedBytes += $sz - $repl;
     }
     if ($savedBytes !== 0) usage_bump($cx['owner'], $savedBytes);
-    if ($cx['link'] && $lost > 0) share_upload_release($cx['link']['token'], $lost);
-    if ($cx['link'] && $saved) audit('link_upload', $saved . ' file (' . human_size($savedBytes) . ') in "' . ($cx['link']['name'] ?? '') . '" via link');
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
 }
 
@@ -120,22 +140,7 @@ function action_delete(): void {
             $deleted++; $freed += $sz;
         } else $errors[] = "$rel: impossibile eliminare";
     }
-    // Revoca le share degli elementi eliminati (e dei loro discendenti): un link
-    // «morto» non deve risorgere servendo un futuro file omonimo a chi lo aveva
-    // (stesso principio del cleanup di user_delete).
-    if (!empty($removedPaths)) {
-        with_json_lock(shares_file(), function (array $sd) use ($removedPaths) {
-            $shares = $sd['shares'] ?? [];
-            $keep = array_values(array_filter($shares, function ($s) use ($removedPaths) {
-                $p = (string) ($s['path'] ?? '');
-                foreach ($removedPaths as $rp) if ($p === $rp || str_starts_with($p, $rp . '/')) return false;
-                return true;
-            }));
-            if (count($keep) === count($shares)) return null;
-            $sd['shares'] = $keep;
-            return $sd;
-        });
-    }
+    shares_revoke_under($removedPaths);
     if ($freed > 0) usage_bump((string) $_SESSION['username'], -$freed);
     json_out(['ok' => true, 'deleted' => $deleted, 'errors' => $errors]);
 }
@@ -152,29 +157,14 @@ function action_rename(): void {
     if ($ftype === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
     $target = logical_join($parent, $newName);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
+    if (storage()->typeOf($target) !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
     // Lo stato collaborativo segue il percorso: si elimina quello del vecchio nome
     // (l'albero va listato PRIMA della rinomina) e l'eventuale relay stantio già
     // presente alla destinazione (file omonimo cancellato in passato).
     if ($ftype === 'dir') note_state_purge_tree($from); else note_state_purge_path($from);
     note_state_purge_path($target);
     if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
-    // Le condivisioni che puntano all'elemento (o a suoi discendenti) seguono il
-    // nuovo percorso: altrimenti restano orfane e shares_prune le elimina.
-    with_json_lock(shares_file(), function (array $sd) use ($from, $target) {
-        // NB: niente foreach-by-ref su `$sd['shares'] ?? []`: PHP itererebbe una
-        // COPIA temporanea scartando le modifiche in silenzio.
-        $shares = $sd['shares'] ?? [];
-        $touched = false;
-        foreach ($shares as $i => $s) {
-            $p = (string) ($s['path'] ?? '');
-            if ($p === $from) { $shares[$i]['path'] = $target; $shares[$i]['name'] = basename($target); $touched = true; }
-            elseif (str_starts_with($p, $from . '/')) { $shares[$i]['path'] = $target . substr($p, strlen($from)); $touched = true; }
-        }
-        if (!$touched) return null;
-        $sd['shares'] = $shares;
-        return $sd;
-    });
+    shares_follow_rename($from, $target);
     json_out(['ok' => true]);
 }
 

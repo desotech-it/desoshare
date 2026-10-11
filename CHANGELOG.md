@@ -6,6 +6,45 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.25.0] - 2026-10-11
+
+### Aggiunto
+- **Link nominativi**: una cartella (o un file) può avere più link, ognuno con il
+  nome di chi lo riceve («a chi lo dai»), livello, scadenza, tetto e PIN propri.
+  Revocarne uno toglie l'accesso solo a quella persona; il registro attività
+  attribuisce ogni operazione al link che l'ha fatta (`link «Avv. Bianchi»`).
+  [api_shares.php, lib_shares.php, lib_audit.php, app-src/shares.js]
+- **Livelli di accesso** per i link di cartella: Sola lettura, Caricamento,
+  Collaboratore (crea cartelle; sostituisce, rinomina ed elimina i file caricati
+  con quel link), Gestione completa (carica, crea, rinomina ed elimina tutto nella
+  cartella condivisa, tranne la cartella stessa). Un file è «del link» solo finché
+  il proprietario non lo sostituisce o rinomina. Nuove API `link_mkdir`,
+  `link_rename`, `link_delete`; pagina pubblica con le azioni consentite riga per
+  riga. [api_link.php, lib_linkfiles.php, share.php, assets/share-actions.js]
+- **Cestino**: ciò che un link elimina o sovrascrive va nel cestino del
+  proprietario (fuori dalla home, conta nella quota), recuperabile per 30 giorni
+  dal pannello Condivisioni → Cestino (ripristina, elimina definitivamente,
+  svuota). Pulizia opportunistica, senza cron. [lib_trash.php, api_trash.php,
+  app-src/trash.js]
+- **PIN facoltativo** per ogni link: la pagina lo chiede una volta per sessione;
+  le API via link richiedono la sessione sbloccata e il token CSRF. 5 PIN errati
+  in 15 minuti bloccano il link per quell'IP. [lib_shares.php, share.php]
+
+### Modificato
+- **Indirizzo dei link**: `/d/<nome>-<AAAAMMGG>-<HHMM>-<codice>` (ora di Roma,
+  codice casuale di 6 caratteri). Si sceglie solo la parte leggibile; niente più
+  «indirizzo già in uso». I link esistenti continuano a funzionare.
+- **Caricamento via link senza sovrascritture**: un nome già presente viene
+  salvato come «nome (2).ext» (prima il link «Modificabile» sostituiva in silenzio
+  anche i file del proprietario). Il nome finale è restituito da `upload_finish`
+  e mostrato nella pagina pubblica.
+- Il consumo di un utente include il suo cestino.
+
+### Sicurezza
+- **Limite ai tentativi sui link**: dopo 30 indirizzi inesistenti o scaduti in 10
+  minuti, lo stesso IP riceve 429 su ogni link finché la finestra non scade
+  (anti-enumerazione: l'indirizzo è una credenziale). [lib_shares.php]
+
 ## [0.24.1] - 2026-10-08
 
 ### Corretto

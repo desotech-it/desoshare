@@ -4,8 +4,10 @@
 // a mano (niente bundle) e nessuna suite lo esercita: js_smoke.mjs copre app.js,
 // api_test.sh copre il lato PHP degli stessi endpoint. Qui si verifica che il
 // client parli il protocollo giusto: upload_status → upload_chunk (con t, uid,
-// path, name, geometria) → upload_finish, il file vuoto senza blocchi, l'errore
-// mostrato in riga e la ricarica a fine batch.
+// path, name, geometria) → upload_finish, l'header X-CSRF con il token della pagina
+// (necessario con un link a PIN), il file vuoto senza blocchi, l'errore mostrato in
+// riga, la ricarica a fine batch e, quando il server salva con un nome nuovo
+// («nome (2).ext»), la riga «salvato come «…»» SENZA ricarica.
 //
 // Come: un server Node finto serve la pagina (markup minimo di share.php) e gli
 // endpoint api.php con il CONTRATTO del server vero, registrando le richieste.
@@ -27,10 +29,18 @@ catch (_) {
 }
 
 const TOKEN = 'abcdef0123456789abcdef0123456789';
+const CSRF = '5f3c9a0e7d1b2468ace0135792468ace';   // token della pagina (config.csrf)
 const calls = [];            // richieste ricevute dallo stub, in ordine
 const parts = new Map();     // uid → Set(index)
 let failFinishFor = 'rotto.bin';   // il server rifiuta la finalizzazione di questo nome
+const present = new Set(['sotto/esistente.txt']);   // nomi già presenti: il server non sovrascrive
 let pageLoads = 0;
+// Stesso schema del server: «nome (n).ext»; un nome col punto iniziale («.env») non ha estensione.
+function freeName(dir, name) {
+  const dot = name.lastIndexOf('.');
+  const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+  for (let n = 1, c = name; ; c = `${base} (${++n})${ext}`) if (!present.has(dir + '/' + c)) return c;
+}
 
 function parseMultipart(buf, ct) {
   const b = /boundary=(.+)$/.exec(ct)?.[1]; if (!b) return {};
@@ -52,19 +62,21 @@ const server = http.createServer((req, res) => {
     const json = (o, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (u.pathname === '/share.php') {
       pageLoads++;
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(`<!doctype html><html><body><label class="btn" for="shUpInput">Carica</label><input type="file" id="shUpInput" multiple hidden>
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><head><meta charset="utf-8"></head><body><label class="btn" for="shUpInput">Carica</label><input type="file" id="shUpInput" multiple hidden>
         <div id="shUp" class="share-up"></div><div class="listing"></div>
         <script src="assets/share-upload.js"></script>
-        <script>ShareUpload.mount({token:${JSON.stringify(TOKEN)},path:"sotto",input:"#shUpInput",list:"#shUp"});</script></body></html>`);
+        <script>ShareUpload.mount(Object.assign(${JSON.stringify({ token: TOKEN, path: 'sotto', csrf: CSRF, days: 30 })},{input:"#shUpInput",list:"#shUp"}));</script></body></html>`);
       return;
     }
-    if (u.pathname === '/assets/share-upload.js') { res.writeHead(200, { 'Content-Type': 'text/javascript' }); res.end(readFileSync(asset)); return; }
+    if (u.pathname === '/assets/share-upload.js') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }); res.end(readFileSync(asset)); return; }
     if (u.pathname !== '/api.php') { res.writeHead(404); res.end(); return; }
     const action = u.searchParams.get('action'), t = u.searchParams.get('t');
     const fields = req.headers['content-type']?.startsWith('multipart/') ? parseMultipart(body, req.headers['content-type']) : {};
-    calls.push({ action, t, ...fields });
+    calls.push({ action, t, method: req.method, csrf: req.headers['x-csrf'], ...fields });
     if (t !== TOKEN) return json({ ok: false, error: 'Link non valido o scaduto' }, 404);
+    // Come share_require_access con un link a PIN: le POST senza il token della pagina → 419.
+    if (req.method === 'POST' && req.headers['x-csrf'] !== CSRF) return json({ ok: false, error: 'Sessione scaduta' }, 419);
     if (action === 'upload_status') return json({ ok: true, parts: [...(parts.get(u.searchParams.get('uid')) || [])], chunk: 0, size: 0 });
     if (action === 'upload_chunk') {
       const set = parts.get(fields.uid) || new Set(); set.add(Number(fields.index)); parts.set(fields.uid, set);
@@ -75,7 +87,9 @@ const server = http.createServer((req, res) => {
     }
     if (action === 'upload_finish') {
       if (fields.name === failFinishFor) return json({ ok: false, error: 'Quota superata' }, 507);
-      return json({ ok: true });
+      const name = freeName(fields.path, fields.name);
+      present.add(fields.path + '/' + name);
+      return json({ ok: true, name, renamed: name !== fields.name });
     }
     json({ ok: false, error: 'azione sconosciuta' }, 400);
   });
@@ -109,9 +123,30 @@ if (!/^[a-f0-9]{16,64}$/.test(ck?.uid || '')) fails.push('uid non valido: ' + ck
 if (!calls.some(c => c.action === 'upload_status')) fails.push('nessuna upload_status (ripresa) prima dei blocchi');
 if (calls.some(c => c.t !== TOKEN)) fails.push('richiesta senza token');
 if (pageLoads < 2) fails.push('la pagina non si è ricaricata dopo il batch riuscito (caricamenti: ' + pageLoads + ')');
+const posts = calls.filter(c => c.method === 'POST');
+if (!posts.length || posts.some(c => c.csrf !== CSRF)) fails.push('header X-CSRF assente o diverso dal token della pagina: ' + JSON.stringify(posts.map(c => c.action + ':' + c.csrf)));
+if (calls.some(c => c.action === 'upload_finish' && c.csrf === undefined)) fails.push('upload_finish senza X-CSRF');
 
-// Batch 2: finalizzazione rifiutata dal server → errore in riga, NIENTE ricarica, pulsante «Aggiorna».
-const loadsBefore = pageLoads;
+// Batch 2: un nome già presente → il server salva «esistente (2).txt» → la riga lo dice,
+// NIENTE ricarica (l'utente deve poter leggere il nome), pulsante «Aggiorna elenco».
+let loadsBefore = pageLoads;
+await page.setInputFiles('#shUpInput', [
+  { name: 'esistente.txt', mimeType: 'text/plain', buffer: Buffer.from('nuova versione') },
+  { name: 'altro.txt', mimeType: 'text/plain', buffer: Buffer.from('libero') },
+]);
+await page.waitForSelector('.share-up .up-actions', { timeout: 5000 }).catch(() => fails.push('nessun pulsante «Aggiorna elenco» dopo un file rinominato'));
+const stats = await page.$$eval('.share-up .up-row', rs => rs.map(r => r.querySelector('.up-name').textContent + ' → ' + r.querySelector('.up-stat').textContent));
+const wantStats = ['esistente.txt → salvato come «esistente (2).txt»', 'altro.txt → completato'];
+if (JSON.stringify(stats) !== JSON.stringify(wantStats)) fails.push('righe del resoconto ' + JSON.stringify(stats) + ' ≠ ' + JSON.stringify(wantStats));
+const btn = await page.textContent('.share-up .up-actions button').catch(() => '');
+if (!/Aggiorna elenco/.test(btn || '')) fails.push('pulsante «Aggiorna elenco» assente: ' + JSON.stringify(btn));
+await page.waitForTimeout(400);
+if (pageLoads !== loadsBefore) fails.push('ricarica avvenuta nonostante un file salvato con un nome nuovo');
+await Promise.all([page.waitForNavigation({ timeout: 5000 }).catch(() => {}), page.click('.share-up .up-actions button').catch(() => {})]);
+if (pageLoads !== loadsBefore + 1) fails.push('«Aggiorna elenco» non ricarica la pagina');
+
+// Batch 3: finalizzazione rifiutata dal server → errore in riga, NIENTE ricarica, pulsante «Aggiorna».
+loadsBefore = pageLoads;
 await page.setInputFiles('#shUpInput', [{ name: 'rotto.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(3000, 1) }]);
 await page.waitForSelector('.share-up .up-actions', { timeout: 5000 }).catch(() => fails.push('nessun resoconto/pulsante dopo un errore'));
 const stat = await page.textContent('.share-up .up-stat').catch(() => '');
@@ -121,4 +156,4 @@ fails.push(...errs);
 
 await browser.close(); server.close();
 if (fails.length) { console.error('SMOKE UPLOAD VIA LINK FALLITO:\n- ' + fails.join('\n- ')); process.exit(1); }
-console.log('SMOKE UPLOAD VIA LINK OK ✓ protocollo a blocchi corretto (status→chunk→finish, file vuoto, token e path propagati), ricarica a fine batch, errore mostrato senza ricarica');
+console.log('SMOKE UPLOAD VIA LINK OK ✓ protocollo a blocchi corretto (status→chunk→finish, file vuoto, token, path e X-CSRF propagati), ricarica a fine batch, «salvato come «…»» ed errore mostrati senza ricarica');

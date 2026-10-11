@@ -23,7 +23,8 @@ function usage_get(string $username, bool $fresh = false): int {
     }
     $t0 = time();
     try {
-        $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir), fuori lock
+        // ricalcolo completo (LIST/scandir), fuori lock: home + cestino (vedi lib_trash.php)
+        $bytes = storage()->usageOf(user_prefix($username)) + storage()->usageOf(trash_root($username));
     } catch (RuntimeException $ex) {
         // Storage non interrogabile: MAI cacheare una somma inaffidabile. Si usa
         // l'ultimo valore noto (anche stantio); senza nemmeno quello, errore
@@ -46,6 +47,13 @@ function usage_get(string $username, bool $fresh = false): int {
 function usage_bump(string $username, int $delta): void {
     if ($delta === 0) return;
     with_json_lock(usage_file(), function (array $c) use ($username, $delta) {
+        // Cache assente o scaduta: un delta applicato a un valore ignoto (0 o
+        // stantio) verrebbe poi creduto fresco → si invalida e usage_get ricalcola.
+        if (!isset($c[$username]['ts']) || (time() - (int) $c[$username]['ts']) >= USAGE_TTL) {
+            if (!isset($c[$username])) return null;
+            unset($c[$username]);
+            return $c;
+        }
         $cur = (int) ($c[$username]['bytes'] ?? 0);
         $c[$username] = ['bytes' => max(0, $cur + $delta), 'ts' => time()];
         return $c;

@@ -3,6 +3,8 @@
 # Avvia un'istanza ISOLATA con `php -S` (nessun tocco alla produzione) e verifica
 # tutte le operazioni: CRUD, upload a chunk (singolo, parallelo/fuori ordine, ripresa),
 # cartelle, download con Range, ZIP, e i controlli di sicurezza (CSRF, permessi, traversal).
+# Link nominativi: formato dell'indirizzo, livelli (view/edit/contrib/manage), provenienza, cestino,
+# PIN, limite ai tentativi, degrado e rinomina utente (vedi le sezioni dedicate).
 # Uso:  bash tests/api_test.sh   (richiede php e openssl nel PATH)
 set -u
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,6 +20,50 @@ no(){ FAIL=$((FAIL+1)); echo "  ✗ $1 — ${2:-}"; }
 has(){ case "$2" in *"$3"*) ok "$1";; *) no "$1" "ricevuto: ${2:0:140}";; esac; }
 hasnt(){ case "$2" in *"$3"*) no "$1" "non atteso: ${2:0:140}";; *) ok "$1";; esac; }
 md5of(){ openssl dgst -md5 "$1" | sed 's/.*= //;s/.* //'; }
+
+# ─── Helper per le sezioni dei link (livelli, PIN, cestino) ──────────────────
+AD="$SBX/appdata"; ST="$SBX/storage"   # appdata e storage stanno ACCANTO a public_html (DOMAIN_DIR = $SBX)
+eq(){ [ "$2" = "$3" ] && ok "$1" || no "$1" "atteso «$3», ricevuto «${2:0:200}»"; }
+re(){ [[ "$2" =~ $3 ]] && ok "$1" || no "$1" "«${2:0:140}» non rispetta /$3/"; }
+# rq: curl nella shell CORRENTE (non in una sottoshell) → HC codice HTTP, BODY corpo, HDR intestazioni
+rq(){ HC=$(curl -s -D "$SBX/rq.hdr" -o "$SBX/rq.body" -w '%{http_code}' "$@"); BODY=$(cat "$SBX/rq.body"); HDR=$(cat "$SBX/rq.hdr"); }
+# jv JSON k1 [k2…]: valori ai percorsi a punti (es. shares.0.slug) uniti da «|»; «<assente>» se manca
+jv(){ local j=$1; shift; printf '%s' "$j" | php -r '$d=json_decode(stream_get_contents(STDIN),true);$o=[];
+foreach(array_slice($argv,1) as $p){$v=$d;foreach(explode(".",$p) as $k){if(!is_array($v)||!array_key_exists($k,$v)){$v="<assente>";break;}$v=$v[$k];}
+$o[]=is_bool($v)?($v?"true":"false"):(is_array($v)?json_encode($v,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE):(is_null($v)?"null":(string)$v));}
+echo implode("|",$o);' -- "$@"; }
+# jfind JSON lista campo valore: primo elemento di JSON[lista] con campo === valore (in JSON), vuoto se assente
+jfind(){ printf '%s' "$1" | php -r '$d=json_decode(stream_get_contents(STDIN),true);
+foreach(($d[$argv[1]]??[]) as $e) if(is_array($e)&&(string)($e[$argv[2]]??"")===$argv[3]){echo json_encode($e,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);exit;}' -- "$2" "$3" "$4"; }
+SLUG_RE='^[a-z0-9]+(-[a-z0-9]+)*-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'   # <leggibile>-AAAAMMGG-HHMM-codice
+romenow(){ php -r 'echo (new DateTime("now", new DateTimeZone("Europe/Rome")))->format("Ymd-Hi");'; }
+share_of(){ jfind "$(curl -s -b "${2:-$JAR}" "$B/api.php?action=share_list")" shares token "$1"; }   # voce di share_list per token
+mk(){ curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "path=$1" --data-urlencode "name=$2" "$B/api.php?action=mkdir" >/dev/null; }
+nf(){ curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "path=$1" --data-urlencode "name=$2" --data-urlencode "content=$3" "$B/api.php?action=newfile" >/dev/null; }
+# mkshare PERCORSO LIVELLO [argomenti curl…] → risposta di share_create (sessione admin, scadenza 24h)
+mkshare(){ local p=$1 m=$2; shift 2; curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "path=$p" --data-urlencode ttl=86400 --data-urlencode "mode=$m" "$@" "$B/api.php?action=share_create"; }
+mkf(){ printf '%s' "$2" > "$SBX/$1"; }                          # mkf NOME CONTENUTO → file locale da caricare
+# lup LINK FILE-LOCALE NOME [CARTELLA] → upload anonimo via link (files[]) → HC/BODY
+lup(){ rq -F "files[]=@$SBX/$2;filename=$3" -F "path=${4:-}" "$B/api.php?action=upload&t=$1"; }
+# lop AZIONE LINK [argomenti curl…] → operazione via link (POST) → HC/BODY
+lop(){ local a=$1 t=$2; shift 2; rq --data-urlencode "t=$t" "$@" "$B/api.php?action=$a"; }
+# lchunk LINK FILE-LOCALE NOME → upload a blocchi via link; stampa la risposta di upload_finish
+lchunk(){ local u sz; u=$(openssl rand -hex 16); sz=$(wc -c < "$SBX/$2" | tr -d ' ')
+  curl -s -F "uid=$u" -F index=0 -F offset=0 -F chunk_size=16777216 -F "total=$sz" -F path= -F "name=$3" -F "chunk=@$SBX/$2" "$B/api.php?action=upload_chunk&t=$1" >/dev/null
+  curl -s --data-urlencode "uid=$u" --data-urlencode path= --data-urlencode "name=$3" --data-urlencode "total=$sz" --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$1"; }
+own(){ curl -s -b "${2:-$JAR}" -G --data-urlencode "path=$1" "$B/api.php?action=download"; }   # contenuto visto dal proprietario
+olist(){ curl -s -b "${2:-$JAR}" -G --data-urlencode "path=$1" "$B/api.php?action=list"; }
+page(){ curl -s "$B/share.php?t=$1"; }
+# row PAGINA NOME → HTML della sola riga .share-row di quell'elemento
+row(){ printf '%s' "$1" | sed 's/<div class="share-row"/\n&/g' | grep -F "data-name=\"$2\"" | sed 's#</div>.*##'; }
+# rowhas/rowhasnt MSG PAGINA NOME MOTIVO: asserzione sulla riga, che deve esistere (niente hasnt a vuoto)
+rowhas(){ local r; r=$(row "$2" "$3"); [ -n "$r" ] && has "$1" "$r" "$4" || no "$1" "riga «$3» assente o senza «$4»"; }
+rowhasnt(){ local r; r=$(row "$2" "$3"); [ -n "$r" ] && hasnt "$1" "$r" "$4" || { [ -z "$r" ] && no "$1" "riga «$3» assente"; }; }
+trash_l(){ curl -s -b "${1:-$JAR}" "$B/api.php?action=trash_list"; }
+login(){ curl -s -c "$1" -b "$1" --data-urlencode action=login --data-urlencode "username=$2" --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf "$1")" "$B/index.php"
+  curl -s -b "$1" "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1; }   # login JAR UTENTE → stampa il CSRF
+mkuser(){ curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$1" --data-urlencode password=secret123 --data-urlencode "permission=$2" --data-urlencode role=user "${@:3}" "$B/api.php?action=user_save"; }
+formcsrf(){ printf '%s' "$1" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 
 # CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
 precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
@@ -158,16 +204,38 @@ has "token scaduto → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.
 has "revoca condivisione" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$TOK "$B/api.php?action=share_revoke")" '"ok":true'
 has "dopo revoca non accessibile (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TOK&dl=1")" '404'
 
-echo "=== Condivisioni: slug personalizzato (/d/<slug>) ==="
+echo "=== Condivisioni: indirizzo /d/<leggibile>-<AAAAMMGG>-<HHMM>-<codice> ==="
+T0=$(romenow)
 SS=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode 'slug=Relazione 2026!' "$B/api.php?action=share_create")
-has "share_create con slug personalizzato" "$SS" '"ok":true'
-has "slug normalizzato (relazione-2026)" "$SS" '"slug":"relazione-2026"'
-has "url personalizzato /d/relazione-2026" "$SS" '/d/relazione-2026'
-has "share_list espone lo slug" "$(curl -s -b $JAR "$B/api.php?action=share_list")" '"slug":"relazione-2026"'
-has "accesso PUBBLICO via slug" "$(curl -s "$B/share.php?t=relazione-2026")" 'Scarica'
-has "slug case-insensitive (200)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=Relazione-2026")" '200'
-has "slug duplicato rifiutato (409)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 --data-urlencode slug=relazione-2026 "$B/api.php?action=share_create")" 'già in uso'
-has "senza slug → link col token (share.php?t=)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 "$B/api.php?action=share_create")" 'share.php?t='
+T1=$(romenow)
+has "share_create con parte leggibile personalizzata" "$SS" '"ok":true'
+SLG=$(jv "$SS" slug); STOK=$(jv "$SS" token)
+re "slug normalizzato (relazione-2026-AAAAMMGG-HHMM-codice)" "$SLG" '^relazione-2026-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+STAMP=$(printf '%s' "$SLG" | sed -E 's/^relazione-2026-([0-9]{8}-[0-9]{4})-.*$/\1/')
+{ [ "$STAMP" = "$T0" ] || [ "$STAMP" = "$T1" ]; } && ok "slug: data e ora di Roma ($STAMP)" || no "slug: data e ora di Roma" "nello slug $STAMP, atteso $T0 o $T1"
+eq "url personalizzato /d/<slug>" "$(jv "$SS" url)" "$B/d/$SLG"
+eq "share_list espone lo slug" "$(jv "$(share_of "$STOK")" slug)" "$SLG"
+has "accesso PUBBLICO via slug" "$(curl -s "$B/share.php?t=$SLG")" 'Scarica'
+eq "slug case-insensitive (200)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$(printf '%s' "$SLG" | tr a-z A-Z)")" '200'
+eq "la sola parte leggibile NON apre il link (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=relazione-2026")" '404'
+eq "il token del link con slug resta valido (200)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$STOK")" '200'
+SS2=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 --data-urlencode 'slug=Relazione 2026!' "$B/api.php?action=share_create")
+eq "stessa parte leggibile: nessun 409, nuovo link" "$(jv "$SS2" ok)" 'true'
+SLG2=$(jv "$SS2" slug)
+re "secondo link: stesso formato" "$SLG2" '^relazione-2026-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+[ "$SLG2" != "$SLG" ] && ok "secondo link: slug diverso dal primo" || no "secondo link: slug diverso dal primo" "$SLG2"
+eq "entrambi i link funzionano" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$SLG")|$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$SLG2")" '200|200'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "token=$STOK" "$B/api.php?action=share_revoke" >/dev/null
+eq "revoca del primo: lui 404, il secondo resta 200" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$SLG")|$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$SLG2")" '404|200'
+SN=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 "$B/api.php?action=share_create")
+re "senza slug → parte leggibile = nome della cartella" "$(jv "$SN" slug)" '^docs-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+has "senza slug → url /d/docs-…" "$(jv "$SN" url)" "$B/d/docs-"
+re "file senza slug → nome senza estensione" "$(jv "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=up.bin --data-urlencode ttl=86400 "$B/api.php?action=share_create")" slug)" '^up-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+re "accenti e spazi normalizzati (citta-e-bella-…)" "$(jv "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 --data-urlencode 'slug=Città è  Bella' "$B/api.php?action=share_create")" slug)" '^citta-e-bella-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+re "solo simboli → parte leggibile «link»" "$(jv "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 --data-urlencode 'slug=!!!' "$B/api.php?action=share_create")" slug)" '^link-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+SLONG=$(jv "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=86400 --data-urlencode "slug=$(printf '%060d' 0 | tr 0 a)" "$B/api.php?action=share_create")" slug)
+re "parte leggibile lunga troncata a 42 caratteri" "$SLONG" '^a{42}-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+eq "slug lungo: al più 64 caratteri e accessibile" "$([ ${#SLONG} -le 64 ] && echo si || echo ${#SLONG})|$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$SLONG")" 'si|200'
 
 echo "=== Note (editor collaborativo, relay Yjs) ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=nota.md --data-urlencode content="riga uno" "$B/api.php?action=newfile" >/dev/null
@@ -261,7 +329,9 @@ has "mkdir inbox" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= -
 DE=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=inbox --data-urlencode ttl=86400 --data-urlencode mode=edit "$B/api.php?action=share_create")
 has "share_create cartella modificabile" "$DE" '"ok":true'
 DT=$(printf '%s' "$DE" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
-has "share_list: cartella in modalità edit" "$(curl -s -b $JAR "$B/api.php?action=share_list")" "\"token\":\"$DT\",\"slug\":\"\",\"path\":\"inbox\",\"name\":\"inbox\",\"type\":\"dir\",\"mode\":\"edit\""
+DTS=$(share_of "$DT")
+eq "share_list: cartella in modalità edit" "$(jv "$DTS" path name type mode level label has_pin)" 'inbox|inbox|dir|edit|edit||false'
+re "share_list: slug della cartella (inbox-…)" "$(jv "$DTS" slug)" '^inbox-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
 has "pagina pubblica: upload disponibile" "$(curl -s "$B/share.php?t=$DT")" 'share-upload.js'
 hasnt "pagina pubblica di un link sola-lettura: niente upload" "$(curl -s "$B/share.php?t=$TOKF")" 'share-upload.js'
 # upload semplice (files[]) SENZA cookie: il token basta
@@ -332,6 +402,570 @@ has "link sola-lettura: nessun tetto registrato" "$(curl -s -b $JAR "$B/api.php?
 # revoca: il link smette di accettare upload
 has "revoca del link modificabile" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$DT "$B/api.php?action=share_revoke")" '"ok":true'
 has "dopo la revoca: upload → 404" "$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$S;filename=tardi.bin" "$B/api.php?action=upload&t=$DT&path=")" '404'
+
+echo "=== Link nominativi: validazione di share_create ==="
+printf '{}' > "$AD/share_attempts.json"   # le sezioni precedenti fanno ricerche fallite: si riparte da zero
+SC(){ rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode ttl=86400 "$@" "$B/api.php?action=share_create"; }
+SC --data-urlencode path=docs --data-urlencode mode=boh
+eq "livello sconosciuto → 400" "$HC|$(jv "$BODY" error)" '400|Livello di accesso non valido'
+SC --data-urlencode path=up.bin --data-urlencode mode=contrib
+eq "file: livello Collaboratore rifiutato (400)" "$HC" '400'
+SC --data-urlencode path=up.bin --data-urlencode mode=manage
+eq "file: Gestione completa rifiutata (400)" "$HC" '400'
+SC --data-urlencode path=docs --data-urlencode pin=123
+eq "PIN di 3 caratteri → 400" "$HC|$(jv "$BODY" error)" '400|PIN non valido: da 4 a 64 caratteri'
+SC --data-urlencode path=docs --data-urlencode "pin=$(printf '%065d' 0)"
+eq "PIN di 65 caratteri → 400" "$HC" '400'
+SC --data-urlencode path=docs --data-urlencode $'pin=12\t34'
+eq "PIN con caratteri di controllo → 400" "$HC" '400'
+SC --data-urlencode path=docs --data-urlencode "pin=$(printf '%064d' 7)"
+eq "PIN di 64 caratteri accettato" "$HC|$(jv "$BODY" has_pin)" '200|true'
+SC --data-urlencode path=docs --data-urlencode mode=contrib --data-urlencode 'label=Avv. Bianchi — Studio'
+eq "label salvata e restituita (has_pin false di default)" "$(jv "$BODY" ok mode label has_pin)" 'true|contrib|Avv. Bianchi — Studio|false'
+eq "share_list: label, has_pin, livello, tetto di default" "$(jv "$(share_of "$(jv "$BODY" token)")" label has_pin mode level upload_limit)" 'Avv. Bianchi — Studio|false|contrib|contrib|1073741824'
+SC --data-urlencode path=docs --data-urlencode "label=$(printf '%0100d' 0)"
+eq "label oltre 80 caratteri troncata" "$(jv "$BODY" label)" "$(printf '%080d' 0)"
+SC --data-urlencode path=docs --data-urlencode $'label= Mario\tRossi\x01'
+eq "label: caratteri di controllo → spazi, estremi rifilati" "$(jv "$BODY" label)" 'Mario Rossi'
+mkdir -p "$ST/lettore/cartella-lettore"
+rq -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode path=cartella-lettore --data-urlencode ttl=86400 --data-urlencode mode=contrib "$B/api.php?action=share_create"
+eq "utente in sola lettura: link Collaboratore vietato (403)" "$HC" '403'
+
+echo "=== Compatibilità: link «vecchi» (slug senza suffisso, solo token) ==="
+mk "" compat; nf compat c.txt "compat"
+# Record scritti come dalle versioni precedenti: slug senza suffisso, mode edit, senza label/tetto; e uno solo-token.
+AD="$AD" php -r '$f=getenv("AD")."/shares.json"; $d=json_decode(file_get_contents($f),true); $now=time();
+$d["shares"][]=["token"=>"c0ffee00c0ffee00c0ffee00c0ffee00","slug"=>"vecchio-link","path"=>"admin/compat","type"=>"dir","name"=>"compat","mode"=>"edit","created_at"=>$now,"expires_at"=>$now+86400,"created_by"=>"admin"];
+$d["shares"][]=["token"=>"0123456789abcdef0123456789abcdef","path"=>"admin/compat","type"=>"dir","name"=>"compat","created_at"=>$now,"expires_at"=>$now+86400,"created_by"=>"admin"];
+file_put_contents($f,json_encode($d));'
+rq "$B/share.php?t=vecchio-link"
+eq "vecchio slug senza suffisso: pagina 200" "$HC" '200'
+has "… elenca i file" "$BODY" 'data-name="c.txt"'
+has "… si comporta da Caricamento (upload)" "$BODY" 'share-upload.js'
+hasnt "… niente «Nuova cartella»" "$BODY" 'id="shMkdir"'
+hasnt "… niente rinomina/elimina" "$BODY" 'share-actions.js'
+eq "vecchio slug case-insensitive (200)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=VECCHIO-Link")" '200'
+mkf compat.txt "nuovo contenuto compat"
+lup vecchio-link compat.txt c.txt
+eq "upload via vecchio slug: nome esistente → «c (2).txt»" "$HC|$(jv "$BODY" saved names)" '200|1|["c (2).txt"]'
+eq "… il file del proprietario resta intatto" "$(own compat/c.txt)" 'compat'
+lop link_mkdir vecchio-link --data-urlencode path= --data-urlencode name=nuova
+eq "vecchio link: link_mkdir → 403" "$HC" '403'
+lop link_delete c0ffee00c0ffee00c0ffee00c0ffee00 --data-urlencode 'paths=["c (2).txt"]'
+eq "vecchio link (via token): link_delete → 403" "$HC" '403'
+eq "share_list: vecchio record (slug, label vuota, livello edit, url /d/)" "$(jv "$(share_of c0ffee00c0ffee00c0ffee00c0ffee00)" slug label has_pin mode level upload_limit url)" "vecchio-link||false|edit|edit|0|$B/d/vecchio-link"
+eq "share_list: record solo-token (sola lettura, url share.php?t=)" "$(jv "$(share_of 0123456789abcdef0123456789abcdef)" slug mode level url)" "|view|view|$B/share.php?t=0123456789abcdef0123456789abcdef"
+rq "$B/share.php?t=0123456789abcdef0123456789abcdef"
+eq "record solo-token: pagina 200 senza upload" "$HC|$(case "$BODY" in *share-upload.js*) echo up;; *) echo noup;; esac)" '200|noup'
+grep -qF "$(printf 'link «vecchio-link»\tlink_upload')" "$AD/audit.log" && ok "audit: autore «link «vecchio-link»» (senza label vale lo slug)" || no "audit: autore link «vecchio-link»" "$(tail -3 "$AD/audit.log")"
+
+echo "=== Livelli: sola lettura (view) ==="
+mk "" lv-view; nf lv-view a.txt "contenuto a"
+VR=$(mkshare lv-view view --data-urlencode "label=Revisore"); VT=$(jv "$VR" token); VSL=$(jv "$VR" slug)
+eq "link sola lettura creato" "$(jv "$VR" ok mode label has_pin)" 'true|view|Revisore|false'
+re "… slug con la parte leggibile della cartella" "$VSL" '^lv-view-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+mkf v.txt "vietato"
+lup "$VSL" v.txt v.txt
+eq "view: upload → 403" "$HC|$(jv "$BODY" error)" '403|Permesso di sola lettura'
+rq -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=16777216 -F total=7 -F path= -F name=v.txt -F "chunk=@$SBX/v.txt" "$B/api.php?action=upload_chunk&t=$VT"
+eq "view: upload_chunk → 403" "$HC" '403'
+lop link_mkdir "$VT" --data-urlencode path= --data-urlencode name=x
+eq "view: link_mkdir → 403" "$HC" '403'
+lop link_rename "$VT" --data-urlencode from=a.txt --data-urlencode to=b.txt
+eq "view: link_rename → 403" "$HC" '403'
+lop link_delete "$VT" --data-urlencode 'paths=["a.txt"]'
+eq "view: link_delete → 403" "$HC" '403'
+eq "view: il file resta" "$(own lv-view/a.txt)" 'contenuto a'
+P=$(page "$VSL")
+has "view: la pagina elenca i file" "$P" 'data-name="a.txt"'
+hasnt "view: niente upload" "$P" 'share-upload.js'
+hasnt "view: niente «Nuova cartella»" "$P" 'id="shMkdir"'
+hasnt "view: niente icone rinomina/elimina" "$P" 'js-del'
+eq "view: share_list senza tetto di caricamento" "$(jv "$(share_of "$VT")" level upload_limit)" 'view|0'
+
+echo "=== Livelli: Caricamento (edit) ==="
+mk "" lv-edit; nf lv-edit dati.txt "dati del proprietario"
+ER=$(mkshare lv-edit edit --data-urlencode "label=Fornitore"); ET2=$(jv "$ER" token); ESL=$(jv "$ER" slug)
+mkf e1.txt "dal fornitore"
+lup "$ESL" e1.txt dati.txt
+eq "edit: nome esistente → «dati (2).txt»" "$HC|$(jv "$BODY" saved names)" '200|1|["dati (2).txt"]'
+eq "edit: il file del proprietario NON è sovrascritto" "$(own lv-edit/dati.txt)" 'dati del proprietario'
+eq "edit: la copia ha il contenuto caricato" "$(own 'lv-edit/dati (2).txt')" 'dal fornitore'
+lup "$ET2" e1.txt nuovo.txt
+eq "edit: nome libero → «nuovo.txt»" "$(jv "$BODY" names)" '["nuovo.txt"]'
+lup "$ET2" e1.txt nuovo.txt
+eq "edit: nemmeno il file caricato dal link viene sostituito → «nuovo (2).txt»" "$(jv "$BODY" names)" '["nuovo (2).txt"]'
+rq -F "files[]=@$SBX/e1.txt;filename=doppio.txt" -F "files[]=@$SBX/e1.txt;filename=doppio.txt" -F path= "$B/api.php?action=upload&t=$ET2"
+eq "edit: due omonimi nello stesso invio → nomi distinti" "$(jv "$BODY" saved names)" '2|["doppio.txt","doppio (2).txt"]'
+lup "$ET2" e1.txt .env; lup "$ET2" e1.txt .env
+eq "edit: nome che inizia col punto → «.env (2)»" "$(jv "$BODY" names)" '[".env (2)"]'
+eq "edit: upload_finish (blocchi) su nome esistente → rinominato" "$(lchunk "$ET2" e1.txt dati.txt)" '{"ok":true,"name":"dati (3).txt","renamed":true}'
+eq "edit: upload_finish su nome libero → renamed:false" "$(lchunk "$ET2" e1.txt blocchi-e.txt)" '{"ok":true,"name":"blocchi-e.txt","renamed":false}'
+eq "edit: file vuoto (finish diretto) su nome esistente → rinominato" "$(curl -s --data-urlencode uid=$(openssl rand -hex 16) --data-urlencode path= --data-urlencode name=nuovo.txt --data-urlencode total=0 --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$ET2")" '{"ok":true,"name":"nuovo (3).txt","renamed":true}'
+lop link_mkdir "$ET2" --data-urlencode path= --data-urlencode name=sotto
+eq "edit: link_mkdir → 403" "$HC" '403'
+lop link_rename "$ET2" --data-urlencode from=nuovo.txt --data-urlencode to=x.txt
+eq "edit: link_rename (anche di un file caricato dal link) → 403" "$HC" '403'
+lop link_delete "$ET2" --data-urlencode 'paths=["nuovo.txt"]'
+eq "edit: link_delete → 403" "$HC" '403'
+eq "edit: nulla nel cestino del proprietario" "$(jv "$(trash_l)" entries)" '[]'
+P=$(page "$ESL")
+has "edit: pagina con «Carica file»" "$P" 'share-upload.js'
+hasnt "edit: niente «Nuova cartella»" "$P" 'id="shMkdir"'
+hasnt "edit: niente rinomina/elimina" "$P" 'share-actions.js'
+hasnt "edit: nessuna icona elimina" "$P" 'js-del'
+
+echo "=== Livelli: Collaboratore (contrib) ==="
+mk "" lv-contrib; nf lv-contrib capo.txt "del capo"
+C1R=$(mkshare lv-contrib contrib --data-urlencode "label=Avv. Bianchi"); C1=$(jv "$C1R" token); C1S=$(jv "$C1R" slug)
+C2R=$(mkshare lv-contrib contrib --data-urlencode "label=Geom. Verdi"); C2=$(jv "$C2R" token); C2S=$(jv "$C2R" slug)
+{ [[ "$C1S" =~ ^lv-contrib- ]] && [[ "$C2S" =~ ^lv-contrib- ]] && [ "$C1S" != "$C2S" ]; } && ok "due link nominativi sulla stessa cartella: slug diversi" || no "due link sulla stessa cartella" "$C1S / $C2S"
+mkf m1.txt "prima"; mkf m2.txt "seconda versione"
+lup "$C1S" m1.txt mio.txt
+eq "contrib: carica «mio.txt»" "$HC|$(jv "$BODY" names)" '200|["mio.txt"]'
+lup "$C1S" m2.txt mio.txt
+eq "contrib: sostituisce il PROPRIO file (stesso nome)" "$(jv "$BODY" names)" '["mio.txt"]'
+eq "… contenuto aggiornato" "$(own lv-contrib/mio.txt)" 'seconda versione'
+hasnt "… nessuna copia «mio (2).txt»" "$(olist lv-contrib)" 'mio (2).txt'
+eq "… la versione sostituita è nel cestino" "$(jv "$(jfind "$(trash_l)" entries name mio.txt)" orig size by)" 'lv-contrib/mio.txt|5|link «Avv. Bianchi»'
+lup "$C1" m1.txt capo.txt
+eq "contrib: file del proprietario → «capo (2).txt»" "$(jv "$BODY" names)" '["capo (2).txt"]'
+eq "… il file del proprietario resta intatto" "$(own lv-contrib/capo.txt)" 'del capo'
+lup "$C2" m1.txt suo.txt
+lup "$C1" m2.txt suo.txt
+eq "contrib: file caricato da un ALTRO link → «suo (2).txt»" "$(jv "$BODY" names)" '["suo (2).txt"]'
+eq "… il file dell'altro link resta intatto" "$(own lv-contrib/suo.txt)" 'prima'
+eq "contrib: upload_finish (blocchi) nome nuovo" "$(lchunk "$C1" m1.txt blocco.bin)" '{"ok":true,"name":"blocco.bin","renamed":false}'
+eq "contrib: upload_finish sostituisce il proprio" "$(lchunk "$C1" m2.txt blocco.bin)" '{"ok":true,"name":"blocco.bin","renamed":false}'
+eq "contrib: upload_finish sul file di un altro link → rinominato" "$(lchunk "$C2" m1.txt blocco.bin)" '{"ok":true,"name":"blocco (2).bin","renamed":true}'
+P=$(page "$C1S")
+has "contrib: «Nuova cartella» presente" "$P" 'id="shMkdir"'
+has "contrib: script delle azioni con i giorni del cestino" "$P" '"days":30'
+rowhas "contrib: icona elimina sul proprio file" "$P" mio.txt 'js-del'
+rowhasnt "contrib: nessuna icona sul file del proprietario" "$P" capo.txt 'js-del'
+rowhasnt "contrib: nessuna icona sul file dell'altro link" "$P" suo.txt 'js-del'
+lop link_delete "$C1" --data-urlencode 'paths=["suo.txt"]'
+eq "contrib: NON elimina il file di un altro link" "$HC|$(jv "$BODY" deleted)" '200|0'
+has "… con errore esplicito" "$BODY" 'puoi eliminare solo i file caricati con questo link'
+lop link_delete "$C1" --data-urlencode 'paths=["capo.txt"]'
+eq "contrib: NON elimina il file del proprietario" "$(jv "$BODY" deleted)|$(own lv-contrib/capo.txt)" '0|del capo'
+lop link_rename "$C1" --data-urlencode from=capo.txt --data-urlencode to=preso.txt
+eq "contrib: NON rinomina il file del proprietario (403)" "$HC" '403'
+lop link_rename "$C1" --data-urlencode from=suo.txt --data-urlencode to=preso.txt
+eq "contrib: NON rinomina il file di un altro link (403)" "$HC" '403'
+lop link_mkdir "$C1" --data-urlencode path= --data-urlencode name=sotto
+eq "contrib: crea cartelle" "$HC|$BODY" '200|{"ok":true}'
+has "… visibile al proprietario" "$(olist lv-contrib)" '"name":"sotto","type":"dir"'
+lop link_mkdir "$C1" --data-urlencode path= --data-urlencode name=sotto
+eq "contrib: cartella già esistente → 409" "$HC" '409'
+lop link_mkdir "$C1S" --data-urlencode path=sotto --data-urlencode name=annidata
+eq "contrib: cartella annidata (via slug)" "$HC" '200'
+lup "$C1" m1.txt dentro.txt sotto
+eq "contrib: upload in sottocartella" "$HC|$(jv "$BODY" names)" '200|["dentro.txt"]'
+rowhas "contrib: icona elimina sul proprio file in sottocartella" "$(page "$C1&p=sotto")" dentro.txt 'js-del'
+lop link_delete "$C1" --data-urlencode 'paths=["sotto/dentro.txt"]'
+eq "contrib: elimina il proprio file in sottocartella" "$(jv "$BODY" deleted)" '1'
+lop link_mkdir "$C1" --data-urlencode path=manca --data-urlencode name=x
+eq "contrib: cartella padre inesistente → 404" "$HC" '404'
+lop link_mkdir "$C1" --data-urlencode path= --data-urlencode name=..
+eq "contrib: nome cartella «..» → 400" "$HC" '400'
+lop link_delete "$C1" --data-urlencode 'paths=["sotto"]'
+eq "contrib: NON elimina cartelle" "$(jv "$BODY" deleted)" '0'
+lop link_rename "$C1" --data-urlencode from=sotto --data-urlencode to=sopra
+eq "contrib: NON rinomina cartelle (403)" "$HC" '403'
+lop link_rename "$C1" --data-urlencode from=mio.txt --data-urlencode to=mio-rinominato.txt
+eq "contrib: rinomina il proprio file" "$HC|$BODY" '200|{"ok":true}'
+lop link_rename "$C1" --data-urlencode from=mio-rinominato.txt --data-urlencode to=capo.txt
+eq "contrib: rinomina su un nome esistente → 409" "$HC" '409'
+rowhas "contrib: dopo la PROPRIA rinomina il file resta suo (icona elimina)" "$(page "$C1")" mio-rinominato.txt 'js-del'
+lop link_delete "$C1" --data-urlencode 'paths=["mio-rinominato.txt"]'
+eq "contrib: elimina il proprio file rinominato" "$HC|$(jv "$BODY" deleted errors)" '200|1|[]'
+hasnt "… sparito dalla cartella" "$(olist lv-contrib)" '"name":"mio-rinominato.txt"'
+lop link_delete "$C2" --data-urlencode 'paths=["capo (2).txt"]'
+eq "contrib: un altro link non elimina i file del primo" "$(jv "$BODY" deleted)" '0'
+lop link_delete "$C1" --data-urlencode 'paths=["capo (2).txt","suo (2).txt","capo.txt"]'
+eq "contrib: eliminazione multipla → solo i propri" "$(jv "$BODY" deleted)" '2'
+has "… e un errore per quello altrui" "$(jv "$BODY" errors)" 'capo.txt: puoi eliminare solo'
+lop link_delete "$C1" --data-urlencode 'paths=["nessuno.txt"]'
+has "contrib: elemento inesistente → errore «non trovato»" "$(jv "$BODY" deleted errors)" '0|["nessuno.txt: non trovato"]'
+
+echo "=== Provenienza dei file caricati via link ==="
+mkf p1.txt "dal collaboratore"; mkf p2.txt "versione del proprietario, più lunga"
+lup "$C1" p1.txt prov.txt
+eq "il link collaboratore carica «prov.txt»" "$(jv "$BODY" names)" '["prov.txt"]'
+has "il proprietario sovrascrive «prov.txt» (upload di sessione)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -F path=lv-contrib -F "files[]=@$SBX/p2.txt;filename=prov.txt" "$B/api.php?action=upload")" '"saved":1'
+lop link_delete "$C1" --data-urlencode 'paths=["prov.txt"]'
+eq "dopo la sovrascrittura del proprietario il link NON lo elimina" "$(jv "$BODY" deleted)" '0'
+eq "… il file resta quello del proprietario" "$(own lv-contrib/prov.txt)" 'versione del proprietario, più lunga'
+lop link_rename "$C1" --data-urlencode from=prov.txt --data-urlencode to=ripreso.txt
+eq "… né lo rinomina (403)" "$HC" '403'
+lup "$C1" p1.txt prov.txt
+eq "… e un nuovo upload omonimo NON lo sostituisce → «prov (2).txt»" "$(jv "$BODY" names)" '["prov (2).txt"]'
+lup "$C1" p1.txt prov3.txt
+has "il proprietario rinomina «prov3.txt» → «prov3-capo.txt»" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode from=lv-contrib/prov3.txt --data-urlencode to=prov3-capo.txt "$B/api.php?action=rename")" '"ok":true'
+lop link_delete "$C1" --data-urlencode 'paths=["prov3-capo.txt"]'
+eq "dopo la rinomina del proprietario il link NON lo elimina" "$(jv "$BODY" deleted)" '0'
+lop link_rename "$C1" --data-urlencode from=prov3-capo.txt --data-urlencode to=ripreso.txt
+eq "… né lo rinomina (403)" "$HC" '403'
+rowhasnt "… e la pagina non offre azioni su di esso" "$(page "$C1")" prov3-capo.txt 'js-del'
+
+echo "=== Livelli: Gestione completa (manage) ==="
+mk "" lv-manage; nf lv-manage piano.txt "vecchio piano"; nf lv-manage bozza.txt "bozza"; mk lv-manage vecchia; nf lv-manage/vecchia x.txt "dentro"
+MR=$(mkshare lv-manage manage --data-urlencode "label=Studio Rossi"); MT=$(jv "$MR" token); MS=$(jv "$MR" slug)
+eq "link Gestione completa creato" "$(jv "$MR" ok mode label)" 'true|manage|Studio Rossi'
+mkf pn.txt "piano nuovo dal link"
+lup "$MS" pn.txt piano.txt
+eq "manage: sovrascrive il file del proprietario" "$HC|$(jv "$BODY" names)" '200|["piano.txt"]'
+eq "… contenuto nuovo" "$(own lv-manage/piano.txt)" 'piano nuovo dal link'
+TPIANO=$(jfind "$(trash_l)" entries name piano.txt); TPID=$(jv "$TPIANO" id)
+eq "… la vecchia versione è nel cestino" "$(jv "$TPIANO" orig type size by)" 'lv-manage/piano.txt|file|13|link «Studio Rossi»'
+eq "… nello storage sotto ~cestino/admin/<id>/<nome>" "$(cat "$ST/~cestino/admin/$TPID/piano.txt" 2>/dev/null)" 'vecchio piano'
+lop link_mkdir "$MT" --data-urlencode path= --data-urlencode name=nuova
+eq "manage: crea cartelle" "$HC|$BODY" '200|{"ok":true}'
+FOLT=$(jv "$(mkshare lv-manage/vecchia view)" token)
+lop link_rename "$MT" --data-urlencode from=vecchia --data-urlencode to=rinominata
+eq "manage: rinomina una cartella" "$HC|$BODY" '200|{"ok":true}'
+has "… il contenuto la segue" "$(olist lv-manage/rinominata)" '"name":"x.txt"'
+has "… il link della sottocartella segue la rinomina" "$(page "$FOLT")" 'data-name="x.txt"'
+lop link_rename "$MT" --data-urlencode from=bozza.txt --data-urlencode to=bozza-finale.txt
+eq "manage: rinomina un file del proprietario" "$HC|$(own lv-manage/bozza-finale.txt)" '200|bozza'
+lop link_rename "$MT" --data-urlencode from=bozza-finale.txt --data-urlencode to=piano.txt
+eq "manage: rinomina su un nome esistente → 409" "$HC" '409'
+lop link_rename "$MT" --data-urlencode from= --data-urlencode to=altro
+eq "manage: la radice del link non si rinomina (400)" "$HC" '400'
+lop link_rename "$MT" --data-urlencode from=bozza-finale.txt --data-urlencode to=a/b
+eq "manage: nuovo nome con «/» → 400" "$HC" '400'
+P=$(page "$MS")
+has "manage: «Nuova cartella»" "$P" 'id="shMkdir"'
+rowhas "manage: icona elimina sui file del proprietario" "$P" bozza-finale.txt 'js-del'
+rowhas "manage: icona elimina sulle cartelle" "$P" rinominata 'js-del'
+lop link_delete "$MT" --data-urlencode 'paths=["rinominata"]'
+eq "manage: elimina una cartella" "$HC|$(jv "$BODY" deleted errors)" '200|1|[]'
+hasnt "… sparita dalla cartella" "$(olist lv-manage)" '"name":"rinominata"'
+eq "… il link della sottocartella eliminata è revocato (404)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$FOLT")" '404'
+lop link_delete "$MT" --data-urlencode 'paths=[""]'
+eq "manage: la radice del link NON si elimina" "$HC|$(jv "$BODY" deleted)" '200|0'
+has "… con errore esplicito" "$BODY" 'la cartella condivisa non si può eliminare'
+lop link_delete "$MT" --data-urlencode 'paths=["."]'
+eq "manage: «.» (la radice) non si elimina" "$(jv "$BODY" deleted)" '0'
+lop link_delete "$MT" --data-urlencode 'paths=["../lv-edit/dati.txt"]'
+eq "manage: traversal «../» in link_delete → 400" "$HC" '400'
+lop link_delete "$MT" --data-urlencode 'paths=["nuova/../../lv-edit"]'
+eq "manage: traversal annidato in link_delete → 400" "$HC" '400'
+lop link_rename "$MT" --data-urlencode from=../lv-edit/dati.txt --data-urlencode to=preso.txt
+eq "manage: traversal in link_rename → 400" "$HC" '400'
+lop link_mkdir "$MT" --data-urlencode path=../ --data-urlencode name=evasa
+eq "manage: traversal in link_mkdir → 400" "$HC" '400'
+lup "$MT" pn.txt evaso.txt ../
+eq "manage: traversal nell'upload → 400" "$HC" '400'
+eq "… nulla è uscito dalla cartella del link" "$(own lv-edit/dati.txt)|$(olist '' | grep -c 'evas')" 'dati del proprietario|0'
+
+echo "=== Cestino: elenco, ripristino, purge, scadenza ==="
+TL=$(trash_l)
+eq "trash_list: conservazione di 30 giorni" "$(jv "$TL" ok days)" 'true|30'
+hasnt "trash_list non espone il percorso interno dello storage" "$TL" 'cestino'
+TMR=$(jfind "$TL" entries name mio-rinominato.txt); TMRID=$(jv "$TMR" id)
+eq "voce: file eliminato dal link «Avv. Bianchi»" "$(jv "$TMR" type size orig by)" 'file|16|lv-contrib/mio-rinominato.txt|link «Avv. Bianchi»'
+EXP=$(jv "$TMR" expires_in)
+{ [ "$EXP" -le 2592000 ] && [ "$EXP" -gt 2591000 ]; } 2>/dev/null && ok "voce: scade tra 30 giorni ($EXP s)" || no "voce: scade tra 30 giorni" "$EXP"
+[ -f "$ST/~cestino/admin/$TMRID/mio-rinominato.txt" ] && ok "voce: file in storage/~cestino/admin/<id>/" || no "voce: file in storage/~cestino/admin/<id>/" "$(ls -R "$ST/~cestino" 2>&1 | head -5)"
+TDIR=$(jfind "$TL" entries name rinominata)
+eq "voce: cartella eliminata dal link «Studio Rossi»" "$(jv "$TDIR" type orig by)" 'dir|lv-manage/rinominata|link «Studio Rossi»'
+hasnt "il cestino non compare nella home del proprietario" "$(olist '')" 'cestino'
+rq -b $JAR --data-urlencode "id=$TMRID" "$B/api.php?action=trash_restore"
+eq "trash_restore senza CSRF → 419" "$HC" '419'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$TMRID" "$B/api.php?action=trash_restore"
+eq "ripristino al percorso d'origine" "$HC|$BODY" '200|{"ok":true,"path":"lv-contrib/mio-rinominato.txt"}'
+eq "… contenuto ripristinato" "$(own lv-contrib/mio-rinominato.txt)" 'seconda versione'
+[ ! -e "$ST/~cestino/admin/$TMRID" ] && ok "… cartellina dell'id rimossa da ~cestino" || no "… cartellina dell'id rimossa da ~cestino"
+hasnt "… voce sparita dal cestino" "$(trash_l)" "$TMRID"
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$TMRID" "$B/api.php?action=trash_restore"
+eq "ripristino ripetuto → 404" "$HC" '404'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$TPID" "$B/api.php?action=trash_restore"
+eq "origine occupata → ripristino come «piano (2).txt»" "$HC|$BODY" '200|{"ok":true,"path":"lv-manage/piano (2).txt"}'
+eq "… con la vecchia versione, e l'attuale resta" "$(own 'lv-manage/piano (2).txt')|$(own lv-manage/piano.txt)" 'vecchio piano|piano nuovo dal link'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$(jv "$TDIR" id)" "$B/api.php?action=trash_restore"
+eq "ripristino di una cartella" "$HC|$(jv "$BODY" path)" '200|lv-manage/rinominata'
+has "… col suo contenuto" "$(olist lv-manage/rinominata)" '"name":"x.txt"'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id=ffffffffffffffff "$B/api.php?action=trash_restore"
+eq "ripristino di un id inesistente → 404" "$HC" '404'
+OTHER=$(jv "$(trash_l)" entries.0.id)
+hasnt "un altro utente non vede il cestino dell'admin" "$(trash_l $WJAR)" "$OTHER"
+rq -b $WJAR -H "X-CSRF: $WCSRF" --data-urlencode "id=$OTHER" "$B/api.php?action=trash_restore"
+eq "… né può ripristinarne le voci (404)" "$HC" '404'
+rq -b $WJAR -H "X-CSRF: $WCSRF" --data-urlencode "id=$OTHER" "$B/api.php?action=trash_purge"
+eq "… né eliminarle (404)" "$HC" '404'
+rq -b $RJAR -H "X-CSRF: $RCSRF" --data-urlencode all=1 "$B/api.php?action=trash_purge"
+eq "utente in sola lettura: trash_purge → 403" "$HC" '403'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode id= "$B/api.php?action=trash_purge"
+eq "trash_purge senza id né all → 400" "$HC" '400'
+PID=$(jv "$(jfind "$(trash_l)" entries name 'suo (2).txt')" id)
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$PID" "$B/api.php?action=trash_purge"
+eq "purge di una voce" "$HC|$BODY" '200|{"ok":true,"purged":1}'
+hasnt "… sparita dall'elenco" "$(trash_l)" "$PID"
+[ -n "$PID" ] && [ ! -e "$ST/~cestino/admin/$PID" ] && ok "… e dallo storage" || no "… e dallo storage" "$PID"
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$PID" "$B/api.php?action=trash_purge"
+eq "purge ripetuto → 404" "$HC" '404'
+# Scadenza: la voce viene datata a 31 giorni fa e si forza la pulizia (gc_at = 0).
+EID=$(jv "$(jfind "$(trash_l)" entries name 'capo (2).txt')" id)
+[ -n "$EID" ] && [ -f "$ST/~cestino/admin/$EID/capo (2).txt" ] && ok "voce da far scadere presente" || no "voce da far scadere presente" "$EID"
+AD="$AD" EID="$EID" php -r '$f=getenv("AD")."/trash.json"; $d=json_decode(file_get_contents($f),true);
+foreach($d["entries"] as $i=>$e) if($e["id"]===getenv("EID")) $d["entries"][$i]["at"]=time()-31*86400;
+$d["gc_at"]=0; file_put_contents($f,json_encode($d));'
+TL=$(trash_l)
+hasnt "scadenza: voce di 31 giorni fa sparita da trash_list" "$TL" "$EID"
+[ -n "$EID" ] && [ ! -e "$ST/~cestino/admin/$EID" ] && ok "scadenza: file rimosso da storage/~cestino" || no "scadenza: file rimosso da storage/~cestino"
+eq "scadenza: le voci recenti restano" "$(jv "$TL" entries | php -r 'echo implode(",", array_map(fn($e)=>$e["name"], json_decode(stream_get_contents(STDIN),true)));' | tr ',' '\n' | sort | tr '\n' ',')" 'blocco.bin,dentro.txt,mio.txt,'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode all=1 "$B/api.php?action=trash_purge"
+eq "svuota tutto" "$HC|$BODY" '200|{"ok":true,"purged":3}'
+eq "… cestino vuoto" "$(jv "$(trash_l)" entries)" '[]'
+eq "… nessuna voce in storage/~cestino/admin" "$(ls -A "$ST/~cestino/admin" 2>/dev/null | wc -l | tr -d ' ')" '0'
+for a in link_upload link_mkdir link_rename link_delete; do
+  grep -qF "$(printf 'link «Avv. Bianchi»\t%s\t' $a)" "$AD/audit.log" && ok "audit: $a con autore link «Avv. Bianchi»" || no "audit: $a con autore link «Avv. Bianchi»"
+done
+grep -qF "$(printf '\tadmin\ttrash_restore\t')" "$AD/audit.log" && ok "audit: trash_restore del proprietario" || no "audit: trash_restore del proprietario"
+grep -qF "$(printf '\tadmin\ttrash_purge\t')" "$AD/audit.log" && ok "audit: trash_purge del proprietario" || no "audit: trash_purge del proprietario"
+
+echo "=== Cestino: consumo e quota del proprietario ==="
+has "utente quotalink (quota 1 MB)" "$(mkuser quotalink write --data-urlencode quota_mb=1)" '"ok":true'
+QLJ="$SBX/qljar"; QLC=$(login "$QLJ" quotalink)
+curl -s -b $QLJ -H "X-CSRF: $QLC" --data-urlencode path= --data-urlencode name=q "$B/api.php?action=mkdir" >/dev/null
+QT=$(jv "$(curl -s -b $QLJ -H "X-CSRF: $QLC" --data-urlencode path=q --data-urlencode ttl=86400 --data-urlencode mode=contrib --data-urlencode upload_limit_mb=0 --data-urlencode "label=Esterno quota" "$B/api.php?action=share_create")" token)
+usage(){ jv "$(jfind "$(curl -s -b $JAR "$B/api.php?action=usage_list${1:+&refresh=$1}")" users username quotalink)" usage; }
+head -c 600000 /dev/urandom > "$SBX/q600.bin"
+lup "$QT" q600.bin a.bin
+eq "upload via link (600000 B)" "$HC|$(jv "$BODY" saved)" '200|1'
+eq "usage_list: consumo 600000" "$(usage quotalink)" '600000'
+lop link_delete "$QT" --data-urlencode 'paths=["a.bin"]'
+eq "eliminazione via link (nel cestino)" "$(jv "$BODY" deleted)" '1'
+eq "usage_list (ricalcolo): consumo INVARIATO dopo l'eliminazione via link" "$(usage quotalink)" '600000'
+eq "usage_list (cache): consumo invariato" "$(usage)" '600000'
+lup "$QT" q600.bin b.bin
+eq "il cestino conta nella quota: altri 600000 B → 507" "$HC|$(jv "$BODY" ok)" '507|false'
+rq -b $QLJ -H "X-CSRF: $QLC" --data-urlencode all=1 "$B/api.php?action=trash_purge"
+eq "svuota il cestino di quotalink" "$HC|$(jv "$BODY" purged)" '200|1'
+eq "usage_list (cache): consumo ridotto dopo il purge" "$(usage)" '0'
+eq "usage_list (ricalcolo): consumo ridotto dopo il purge" "$(usage quotalink)" '0'
+lup "$QT" q600.bin b.bin
+eq "dopo il purge l'upload rientra nella quota" "$HC|$(jv "$BODY" saved)" '200|1'
+
+echo "=== PIN del link ==="
+mk "" pinf; nf pinf segreto.txt "riservato"
+PR=$(mkshare pinf contrib --data-urlencode pin=1234 --data-urlencode "label=Cliente PIN"); PT=$(jv "$PR" token); PS=$(jv "$PR" slug)
+eq "link con PIN creato (has_pin)" "$(jv "$PR" ok has_pin)" 'true|true'
+eq "share_list: has_pin" "$(jv "$(share_of "$PT")" has_pin)" 'true'
+hasnt "share_list non espone l'hash del PIN" "$(curl -s -b $JAR "$B/api.php?action=share_list")" 'pin_hash'
+hasnt "share_create non espone l'hash del PIN" "$PR" 'pin_hash'
+eq "PIN salvato solo come hash" "$(AD="$AD" T="$PT" php -r '$s=null; foreach(json_decode(file_get_contents(getenv("AD")."/shares.json"),true)["shares"] as $x) if($x["token"]===getenv("T")) $s=$x;
+echo ($s && !array_key_exists("pin",$s) && password_verify("1234",(string)($s["pin_hash"]??"")) && ($s["pin_hash"]!=="1234")) ? "hash" : "in chiaro?";')" 'hash'
+PJ="$SBX/pinjar"
+rq -c $PJ -b $PJ "$B/share.php?t=$PS"
+eq "pagina senza sblocco → 401" "$HC" '401'
+has "… con il form del PIN" "$BODY" 'name="pin"'
+hasnt "… senza il contenuto della cartella" "$BODY" 'segreto.txt'
+PFC=$(formcsrf "$BODY")
+[ -n "$PFC" ] && ok "… form con token CSRF" || no "… form con token CSRF"
+rq -c $PJ -b $PJ --data-urlencode pin=1234 --data-urlencode csrf=sbagliato "$B/share.php?t=$PS"
+eq "PIN giusto ma CSRF del form errato → 403" "$HC" '403'
+rq -c $PJ -b $PJ --data-urlencode pin=0000 --data-urlencode "csrf=$PFC" "$B/share.php?t=$PS"
+eq "PIN errato → 403" "$HC" '403'
+has "… con messaggio" "$BODY" 'PIN non corretto'
+rq -c $PJ -b $PJ --data-urlencode pin=1234 --data-urlencode "csrf=$PFC" "$B/share.php?t=$PS"
+eq "PIN giusto → 303" "$HC" '303'
+has "… alla stessa URL" "$HDR" "Location: /share.php?t=$PS"
+rq -c $PJ -b $PJ "$B/share.php?t=$PS"
+eq "dopo lo sblocco: pagina 200 col contenuto" "$HC|$(case "$BODY" in *'data-name="segreto.txt"'*) echo si;; *) echo no;; esac)" '200|si'
+PCS=$(printf '%s' "$BODY" | sed -n 's/.*"csrf":"\([a-f0-9]*\)".*/\1/p' | head -1)
+[ -n "$PCS" ] && ok "… config della pagina con il CSRF" || no "… config della pagina con il CSRF"
+mkf pin.txt "via pin"
+rq -F "files[]=@$SBX/pin.txt;filename=pin.txt" -F path= "$B/api.php?action=upload&t=$PT"
+eq "API senza sblocco → 401 pin_required" "$HC|$(jv "$BODY" ok pin_required)" '401|false|true'
+rq -b $PJ -F "files[]=@$SBX/pin.txt;filename=pin.txt" -F path= "$B/api.php?action=upload&t=$PT"
+eq "API sbloccata ma senza X-CSRF → 419" "$HC" '419'
+rq -b $PJ -H "X-CSRF: $PCS" -F "files[]=@$SBX/pin.txt;filename=pin.txt" -F path= "$B/api.php?action=upload&t=$PT"
+eq "API sbloccata con X-CSRF → upload ok" "$HC|$(jv "$BODY" saved names)" '200|1|["pin.txt"]'
+rq -b $PJ "$B/api.php?action=upload_status&t=$PT&uid=$(openssl rand -hex 16)"
+eq "GET sbloccata (upload_status) senza CSRF → 200" "$HC" '200'
+rq "$B/api.php?action=upload_status&t=$PT&uid=$(openssl rand -hex 16)"
+eq "GET senza sblocco (upload_status) → 401" "$HC" '401'
+lop link_mkdir "$PS" -b $PJ --data-urlencode path= --data-urlencode name=cartella-pin
+eq "link_mkdir sbloccato senza X-CSRF → 419" "$HC" '419'
+lop link_mkdir "$PS" -b $PJ -H "X-CSRF: $PCS" --data-urlencode path= --data-urlencode name=cartella-pin
+eq "link_mkdir sbloccato con X-CSRF → ok" "$HC|$BODY" '200|{"ok":true}'
+lop link_delete "$PT" --data-urlencode 'paths=["pin.txt"]'
+eq "link_delete senza sblocco → 401" "$HC|$(jv "$BODY" pin_required)" '401|true'
+rq "$B/share.php?t=$PS&zipmanifest=1"
+eq "zipmanifest senza sblocco → 401 JSON" "$HC|$(jv "$BODY" ok pin_required)" '401|false|true'
+rq "$B/share.php?t=$PS&p=segreto.txt&dl=1"
+eq "download senza sblocco bloccato (401, form del PIN)" "$HC|$(case "$BODY" in *riservato*) echo contenuto;; *'name="pin"'*) echo form;; *) echo altro;; esac)" '401|form'
+rq "$B/share.php?t=$PS&zip=1"
+eq "ZIP senza sblocco bloccato (401)" "$HC" '401'
+eq "download dopo lo sblocco" "$(curl -s -b $PJ "$B/share.php?t=$PS&p=segreto.txt&dl=1")" 'riservato'
+rq -b $PJ "$B/share.php?t=$PS&zipmanifest=1"
+eq "zipmanifest dopo lo sblocco → 200" "$HC|$(jv "$BODY" ok)" '200|true'
+eq "ZIP dopo lo sblocco (firma PK)" "$(curl -s -b $PJ "$B/share.php?t=$PS&zip=1" | head -c2)" 'PK'
+mk "" pinlock
+LR=$(mkshare pinlock view --data-urlencode pin=5678); LT=$(jv "$LR" token); LS=$(jv "$LR" slug)
+eq "PIN anche su un link sola lettura" "$(jv "$LR" ok mode has_pin)" 'true|view|true'
+rq -b $PJ "$B/share.php?t=$LS"
+eq "lo sblocco vale per il SOLO link sbloccato (altro link → 401)" "$HC" '401'
+rq -b $PJ "$B/share.php?t=$LS&zipmanifest=1"
+eq "… anche per lo zipmanifest dell'altro link" "$HC" '401'
+LJ="$SBX/lockjar"
+rq -c $LJ -b $LJ "$B/share.php?t=$LS"; LFC=$(formcsrf "$BODY")
+codes=""
+for i in 1 2 3 4 5; do rq -c $LJ -b $LJ --data-urlencode "pin=sbagliato$i" --data-urlencode "csrf=$LFC" "$B/share.php?t=$LS"; codes="$codes$HC "; done
+eq "5 PIN errati → 403 ciascuno" "$codes" '403 403 403 403 403 '
+rq -c $LJ -b $LJ --data-urlencode pin=5678 --data-urlencode "csrf=$LFC" "$B/share.php?t=$LS"
+eq "dopo 5 errori anche il PIN giusto è rifiutato (403)" "$HC" '403'
+has "… «Troppi tentativi»" "$BODY" 'Troppi tentativi'
+rq -c $LJ -b $LJ "$B/share.php?t=$LS"
+eq "… e il link resta chiuso (401)" "$HC" '401'
+LJ2="$SBX/lockjar2"
+rq -c $LJ2 -b $LJ2 "$B/share.php?t=$LS"
+rq -c $LJ2 -b $LJ2 --data-urlencode pin=5678 --data-urlencode "csrf=$(formcsrf "$BODY")" "$B/share.php?t=$LS"
+eq "… anche da una NUOVA sessione (blocco per link+IP) → 403" "$HC" '403'
+PJ2="$SBX/pinjar2"
+rq -c $PJ2 -b $PJ2 "$B/share.php?t=$PS"
+rq -c $PJ2 -b $PJ2 --data-urlencode pin=1234 --data-urlencode "csrf=$(formcsrf "$BODY")" "$B/share.php?t=$PS"
+eq "il blocco è per link: un altro link con PIN si sblocca ancora (303)" "$HC" '303'
+# Nota condivisa con PIN
+nf "" pinnota.md "testo della nota"
+NR=$(mkshare pinnota.md edit --data-urlencode pin=abcd); NT=$(jv "$NR" token); NS=$(jv "$NR" slug)
+re "nota: slug dal nome senza estensione (pinnota-…)" "$NS" '^pinnota-[0-9]{8}-[0-9]{4}-[a-hj-km-np-z2-9]{6}$'
+rq "$B/api.php?action=note_open&t=$NT"
+eq "nota con PIN: note_open senza sblocco → 401" "$HC|$(jv "$BODY" pin_required)" '401|true'
+rq --data-urlencode "t=$NT" --data-urlencode content=x "$B/api.php?action=note_save"
+eq "nota con PIN: note_save senza sblocco → 401" "$HC" '401'
+rq --data-urlencode "t=$NT" --data-urlencode id=0000000000000000000000000000000000000000 --data-urlencode since=0 --data-urlencode client=anonClient01 "$B/api.php?action=note_sync"
+eq "nota con PIN: note_sync senza sblocco → 401" "$HC" '401'
+rq "$B/share.php?t=$NS&dl=1"
+eq "nota con PIN: download senza sblocco → 401" "$HC" '401'
+NJ="$SBX/notejar"
+rq -c $NJ -b $NJ "$B/share.php?t=$NS"
+eq "nota con PIN: pagina → 401 col form" "$HC|$(case "$BODY" in *'name="pin"'*) echo form;; *) echo no;; esac)" '401|form'
+rq -c $NJ -b $NJ --data-urlencode pin=abcd --data-urlencode "csrf=$(formcsrf "$BODY")" "$B/share.php?t=$NS"
+eq "nota: PIN giusto → 303" "$HC" '303'
+rq -b $NJ "$B/share.php?t=$NS"
+has "nota sbloccata: editor" "$BODY" 'editor-bundle.js'
+NCS=$(printf '%s' "$BODY" | sed -n 's/.*CS="\([a-f0-9]*\)".*/\1/p' | head -1)
+rq -b $NJ "$B/api.php?action=note_open&t=$NS"
+eq "nota sbloccata: note_open ok e modificabile" "$HC|$(jv "$BODY" ok editable)" '200|true|true'
+rq -b $NJ --data-urlencode "t=$NT" --data-urlencode content=modificata "$B/api.php?action=note_save"
+eq "nota sbloccata: note_save senza X-CSRF → 419" "$HC" '419'
+rq -b $NJ -H "X-CSRF: $NCS" --data-urlencode "t=$NT" --data-urlencode "content=modificata col PIN" "$B/api.php?action=note_save"
+eq "nota sbloccata: note_save con X-CSRF → ok" "$HC|$(jv "$BODY" ok)" '200|true'
+eq "… il file è aggiornato" "$(own pinnota.md)" 'modificata col PIN'
+
+echo "=== Limite ai tentativi sui link ==="
+printf '{}' > "$AD/share_attempts.json"
+codes=""
+for i in $(seq 1 24); do codes="$codes$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=inesistente-$i") "; done
+codes="$codes$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=dead00000000beef&dl=1") "   # scaduto: conta come inesistente
+eq "25 indirizzi inesistenti/scaduti → 404" "$codes" "$(printf '404 %.0s' $(seq 1 25))"
+codes=""
+for i in 1 2 3; do codes="$codes$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=inesistente-1") "; done
+eq "lo stesso indirizzo ripetuto (es. editor su link revocato) → 404, conta una volta" "$codes" '404 404 404 '
+codes=""
+for i in $(seq 26 30); do codes="$codes$(curl -s -o /dev/null -w '%{http_code}' -F "files[]=@$SBX/pin.txt;filename=x.txt" "$B/api.php?action=upload&t=inesistente-$i") "; done
+eq "anche le API con t= inesistente contano (5 × 404, totale 30)" "$codes" '404 404 404 404 404 '
+rq "$B/share.php?t=inesistente-31"
+eq "31° indirizzo inesistente → 429" "$HC" '429'
+has "… pagina «Troppi tentativi»" "$BODY" 'Troppi tentativi'
+rq "$B/share.php?t=$MS"
+eq "IP bloccato: anche un link VALIDO → 429" "$HC" '429'
+rq -F "files[]=@$SBX/pin.txt;filename=x.txt" -F path= "$B/api.php?action=upload&t=$MS"
+eq "IP bloccato: API con t= → 429 JSON" "$HC|$(jv "$BODY" ok)" '429|false'
+has "… Content-Type JSON" "$HDR" 'application/json'
+has "… messaggio" "$BODY" 'Troppi tentativi'
+rq "$B/api.php?action=note_open&t=$NT"
+eq "IP bloccato: note_open con t= → 429" "$HC" '429'
+lop link_mkdir "$MT" --data-urlencode path= --data-urlencode name=bloccata
+eq "IP bloccato: link_mkdir → 429" "$HC" '429'
+rq -b $JAR "$B/api.php?action=list&path="
+eq "il blocco riguarda solo i link: la sessione funziona" "$HC" '200'
+printf '{}' > "$AD/share_attempts.json"
+eq "stato azzerato: il link valido torna accessibile" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$MS")" '200'
+
+echo "=== Degrado: il creatore perde il permesso di scrittura ==="
+has "utente collab (scrittura)" "$(mkuser collab write)" '"ok":true'
+CJ="$SBX/cjar"; CC=$(login "$CJ" collab)
+curl -s -b $CJ -H "X-CSRF: $CC" --data-urlencode path= --data-urlencode name=cd "$B/api.php?action=mkdir" >/dev/null
+CT=$(jv "$(curl -s -b $CJ -H "X-CSRF: $CC" --data-urlencode path=cd --data-urlencode ttl=86400 --data-urlencode mode=contrib --data-urlencode "label=Esterno" "$B/api.php?action=share_create")" token)
+mkf d.txt "prima del degrado"
+lup "$CT" d.txt d.txt
+eq "link collaboratore di collab: upload ok" "$HC|$(jv "$BODY" saved)" '200|1'
+P=$(page "$CT")
+has "… pagina con «Carica file»" "$P" 'shUpInput'
+rowhas "… icona elimina sul file caricato dal link" "$P" d.txt 'js-del'
+has "utente collab declassato a sola lettura" "$(mkuser collab read --data-urlencode original=collab)" '"ok":true'
+lup "$CT" d.txt d2.txt
+eq "dopo il degrado: upload → 403" "$HC" '403'
+lchunk_code=$(curl -s -o /dev/null -w '%{http_code}' -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=16777216 -F total=17 -F path= -F name=d3.txt -F "chunk=@$SBX/d.txt" "$B/api.php?action=upload_chunk&t=$CT")
+eq "dopo il degrado: upload_chunk → 403" "$lchunk_code" '403'
+lop link_mkdir "$CT" --data-urlencode path= --data-urlencode name=x
+eq "dopo il degrado: link_mkdir → 403" "$HC" '403'
+lop link_delete "$CT" --data-urlencode 'paths=["d.txt"]'
+eq "dopo il degrado: link_delete → 403" "$HC" '403'
+lop link_rename "$CT" --data-urlencode from=d.txt --data-urlencode to=e.txt
+eq "dopo il degrado: link_rename → 403" "$HC" '403'
+rq "$B/share.php?t=$CT"
+eq "… la pagina resta consultabile" "$HC|$(case "$BODY" in *'data-name="d.txt"'*) echo si;; *) echo no;; esac)" '200|si'
+hasnt "… senza «Carica file»" "$BODY" 'shUpInput'
+hasnt "… senza «Nuova cartella»" "$BODY" 'id="shMkdir"'
+hasnt "… senza icone rinomina/elimina" "$BODY" 'js-del'
+hasnt "… senza script di upload" "$BODY" 'share-upload.js'
+hasnt "… senza script delle azioni" "$BODY" 'share-actions.js'
+eq "share_list: livello effettivo view (mode resta contrib)" "$(jv "$(share_of "$CT" "$CJ")" mode level)" 'contrib|view'
+has "scrittura restituita a collab" "$(mkuser collab write --data-urlencode original=collab)" '"ok":true'
+lup "$CT" d.txt d.txt
+eq "… il link torna operativo (sostituisce il proprio file)" "$HC|$(jv "$BODY" names)" '200|["d.txt"]'
+
+echo "=== Rinomina utente: il cestino segue il nuovo nome ==="
+has "utente vecchio (scrittura)" "$(mkuser vecchio write)" '"ok":true'
+OJ="$SBX/ojar"; OC=$(login "$OJ" vecchio)
+curl -s -b $OJ -H "X-CSRF: $OC" --data-urlencode path= --data-urlencode name=box "$B/api.php?action=mkdir" >/dev/null
+OR=$(curl -s -b $OJ -H "X-CSRF: $OC" --data-urlencode path=box --data-urlencode ttl=86400 --data-urlencode mode=manage --data-urlencode "label=Ufficio" "$B/api.php?action=share_create")
+OT=$(jv "$OR" token); OS=$(jv "$OR" slug)
+mkf doc.txt "documento"
+lup "$OT" doc.txt doc.txt
+lop link_delete "$OT" --data-urlencode 'paths=["doc.txt"]'
+eq "il link elimina doc.txt (cestino di «vecchio»)" "$(jv "$BODY" deleted)" '1'
+OID=$(jv "$(trash_l "$OJ")" entries.0.id)
+[ -f "$ST/~cestino/vecchio/$OID/doc.txt" ] && ok "… in storage/~cestino/vecchio/<id>/" || no "… in storage/~cestino/vecchio/<id>/" "$(ls -R "$ST/~cestino" 2>&1 | head -5)"
+has "admin rinomina vecchio → nuovo" "$(mkuser nuovo write --data-urlencode original=vecchio)" '"ok":true'
+[ -f "$ST/~cestino/nuovo/$OID/doc.txt" ] && ok "storage del cestino spostato sotto il nuovo nome" || no "storage del cestino spostato sotto il nuovo nome" "$(ls -R "$ST/~cestino" 2>&1 | head -8)"
+[ ! -e "$ST/~cestino/vecchio" ] && ok "nessun residuo sotto il vecchio nome" || no "nessun residuo sotto il vecchio nome"
+NJ2="$SBX/njar"; NC=$(login "$NJ2" nuovo)
+NTE=$(jfind "$(trash_l "$NJ2")" entries id "$OID")
+eq "trash_list del nuovo nome: voce presente" "$(jv "$NTE" name orig by)" 'doc.txt|box/doc.txt|link «Ufficio»'
+rq -b $NJ2 -H "X-CSRF: $NC" --data-urlencode "id=$OID" "$B/api.php?action=trash_restore"
+eq "ripristino dopo la rinomina" "$HC|$BODY" '200|{"ok":true,"path":"box/doc.txt"}'
+eq "… contenuto" "$(own box/doc.txt "$NJ2")" 'documento'
+lop link_delete "$OS" --data-urlencode 'paths=["doc.txt"]'
+eq "il link segue la rinomina: elimina di nuovo" "$(jv "$BODY" deleted)" '1'
+NID2=$(jv "$(trash_l "$NJ2")" entries.0.id)
+[ -n "$NID2" ] && [ -f "$ST/~cestino/nuovo/$NID2/doc.txt" ] && ok "… nel cestino del nuovo nome" || no "… nel cestino del nuovo nome" "$(ls -R "$ST/~cestino" 2>&1 | head -8)"
+has "eliminazione dell'utente «nuovo» con purge" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=nuovo --data-urlencode purge=1 "$B/api.php?action=user_delete")" '"purged":true'
+[ ! -e "$ST/~cestino/nuovo" ] && ok "… il suo cestino sparisce dallo storage" || no "… il suo cestino sparisce dallo storage"
+eq "… e da trash.json" "$(AD="$AD" php -r 'echo count(array_filter(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"]??[], fn($e)=>($e["owner"]??"")==="nuovo"));')" '0'
+
+echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
+CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+head -c 1048576 /dev/zero > "$SBX/onemb.bin"
+has "tetto: 1 MB caricato" "$(curl -s -F "files[]=@$SBX/onemb.bin" "$B/api.php?action=upload&t=$CF")" '"saved":1'
+has "tetto esaurito: file vuoto rifiutato (finish)" "$(curl -s --data-urlencode uid=$(openssl rand -hex 16) --data-urlencode path= --data-urlencode name=vuoto.txt --data-urlencode total=0 --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$CF")" 'esaurito'
+: > "$SBX/zero.txt"
+has "tetto esaurito: file vuoto rifiutato (upload)" "$(curl -s -F "files[]=@$SBX/zero.txt" "$B/api.php?action=upload&t=$CF")" 'esaurito'
+curl -s -F "files[]=@$SBX/onemb.bin;filename=x.bin" "$B/api.php?action=upload&t=$CF" >/dev/null
+for n in a b; do printf "$n" > "$SBX/$n.txt"; done
+MF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+curl -s -F "files[]=@$SBX/a.txt" -F "files[]=@$SBX/b.txt" "$B/api.php?action=upload&t=$MF" >/dev/null
+curl -s -F 'paths=["a.txt","b.txt"]' "$B/api.php?action=link_delete&t=$MF" >/dev/null
+TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo json_encode(array_values(array_map(fn($e)=>$e["id"], array_filter($d["entries"], fn($e)=>$e["name"]==="a.txt"))));')
+has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
+has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
 
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
@@ -406,7 +1040,7 @@ has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

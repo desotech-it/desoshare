@@ -2,8 +2,10 @@
 // Stesso protocollo a blocchi di app-src/upload.js (ripresa, blocchi paralleli,
 // ritentativi), ma autenticato dal TOKEN della condivisione (parametro t) al
 // posto di sessione+CSRF: lato server è upload_ctx() a confinare la scrittura
-// alla cartella del link. Espone window.ShareUpload.mount({token,path,input,list}).
+// alla cartella del link. Con un PIN la sessione sbloccata si accompagna all'header
+// X-CSRF. Espone window.ShareUpload.mount({token,path,csrf,input,list}).
 (function () {
+  let CSRF = '';
   const CHUNK = 16 * 1024 * 1024;   // 16 MB per blocco (come l'app)
   const CONC = 3;                   // blocchi in parallelo per file
   const MAX_RETRY = 5;
@@ -28,13 +30,14 @@
   function post(action, token, fields) {
     const fd = new FormData();
     for (const k in fields) fd.append(k, fields[k]);
-    return fetch(endpoint(action, token), { method: 'POST', body: fd }).then(r => r.json());
+    return fetch(endpoint(action, token), { method: 'POST', headers: { 'X-CSRF': CSRF }, body: fd }).then(r => r.json());
   }
 
   function sendChunk(token, uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt = 0) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', endpoint('upload_chunk', token));
+      xhr.setRequestHeader('X-CSRF', CSRF);
       xhr.upload.onprogress = e => { if (e.lengthComputable && onProg) onProg(e.loaded); };
       const retry = () => {
         if (attempt < MAX_RETRY) setTimeout(() => sendChunk(token, uid, index, offset, chunkSize, total, blob, dir, name, onProg, attempt + 1).then(resolve, reject), 800 * (attempt + 1));
@@ -61,7 +64,7 @@
     if (f.size === 0) {   // file vuoto: niente blocchi, si finalizza direttamente
       const fin = await post('upload_finish', token, { uid, path: dir, name: f.name, total: 0, chunk_size: CHUNK });
       if (!fin.ok) throw new Error(fin.error || 'finalizzazione fallita');
-      row.prog(0, 0); return;
+      row.prog(0, 0); return fin;
     }
     let chunkSize = CHUNK; const doneSet = new Set();
     try {   // ripresa: blocchi già ricevuti dal server per questo uid
@@ -90,6 +93,7 @@
     if (failed) throw failed;
     const fin = await post('upload_finish', token, { uid, path: dir, name: f.name, total: f.size, chunk_size: chunkSize });
     if (!fin.ok) throw new Error(fin.error || 'finalizzazione fallita');
+    return fin;
   }
 
   // Espande le cartelle trascinate (entry API) in una lista piatta {file, rel}.
@@ -111,6 +115,7 @@
   function mount(o) {
     const input = document.querySelector(o.input), list = document.querySelector(o.list);
     if (!input || !list) return;
+    CSRF = o.csrf || '';
     let busy = false;
     function makeRow(label) {
       const el = document.createElement('div');
@@ -120,7 +125,7 @@
       const bar = el.querySelector('.progress > div'), stat = el.querySelector('.up-stat');
       return {
         prog(done, total) { const pct = total ? Math.min(100, Math.round(done / total * 100)) : 100; bar.style.width = pct + '%'; stat.textContent = pct + '% · ' + fmtBytes(done) + ' / ' + fmtBytes(total); },
-        ok() { stat.textContent = 'completato'; stat.style.color = 'var(--ok)'; },
+        ok(as) { stat.textContent = as ? 'salvato come «' + as + '»' : 'completato'; stat.style.color = 'var(--ok)'; },
         err(m) { stat.textContent = 'errore: ' + m; stat.style.color = 'var(--danger)'; },
       };
     }
@@ -128,19 +133,23 @@
       if (!items.length) return;
       if (busy) { alert('Un caricamento è già in corso: attendi che finisca'); return; }
       busy = true; list.innerHTML = '';
-      let errors = 0;
+      let errors = 0, renamed = 0;
       // Destinazione = cartella della pagina (+ sottocartella trascinata). I file
       // vanno in sequenza; i blocchi di ciascuno in parallelo.
       for (const it of items) {
         const dir = [o.path || '', it.rel || ''].filter(Boolean).join('/');
         const row = makeRow((it.rel ? it.rel + '/' : '') + it.file.name);
-        try { await uploadOne(o.token, dir, it.file, row); row.ok(); }
+        try {
+          const fin = await uploadOne(o.token, dir, it.file, row);
+          if (fin && fin.renamed) { renamed++; row.ok(fin.name); } else row.ok();
+        }
         catch (e) { errors++; row.err(e.message || e); }
       }
       busy = false; input.value = '';
-      // Tutto bene: la pagina si ricarica e mostra i nuovi file. Con errori resta
-      // il resoconto, e un pulsante per aggiornare l'elenco quando si vuole.
-      if (!errors) { location.reload(); return; }
+      // Tutto bene: la pagina si ricarica e mostra i nuovi file. Con errori, o con
+      // file salvati con un nome nuovo (nome già presente), resta il resoconto e un
+      // pulsante per aggiornare l'elenco quando si vuole.
+      if (!errors && !renamed) { location.reload(); return; }
       const act = document.createElement('div');
       act.className = 'up-actions';
       act.innerHTML = '<button class="btn" type="button"><i class="ti ti-refresh"></i> Aggiorna elenco</button>';

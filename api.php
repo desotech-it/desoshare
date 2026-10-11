@@ -11,6 +11,8 @@ require_once __DIR__ . '/api_users.php';
 require_once __DIR__ . '/api_settings.php';
 require_once __DIR__ . '/api_shares.php';
 require_once __DIR__ . '/api_notes.php';
+require_once __DIR__ . '/api_link.php';
+require_once __DIR__ . '/api_trash.php';
 
 $action = $_REQUEST['action'] ?? '';
 
@@ -27,6 +29,7 @@ switch ($action) {
     case 'settings_get': action_settings_get(); break;
     case 'audit_list':  action_audit_list();   break;
     case 'usage_list':  action_usage_list();    break;
+    case 'trash_list':  action_trash_list();    break;
 
     // Modifiche (POST + CSRF)
     case 'settings_save': csrf_check(); action_settings_save(); break;
@@ -48,6 +51,12 @@ switch ($action) {
     case 'rename':      csrf_check(); action_rename();      break;
     case 'user_save':   csrf_check(); action_user_save();   break;
     case 'user_delete': csrf_check(); action_user_delete(); break;
+    case 'trash_restore': csrf_check(); action_trash_restore(); break;
+    case 'trash_purge':   csrf_check(); action_trash_purge();   break;
+    // Operazioni via link: credenziale = token (con PIN: sessione + CSRF, vedi link_ctx).
+    case 'link_mkdir':  action_link_mkdir();  break;
+    case 'link_rename': action_link_rename(); break;
+    case 'link_delete': action_link_delete(); break;
 
     default: json_out(['ok' => false, 'error' => 'Azione sconosciuta'], 400);
 }

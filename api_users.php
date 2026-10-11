@@ -120,6 +120,12 @@ function action_user_save(): void {
                 migration_guard_end();
                 json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
             }
+            // Il cestino (fuori dalla home) segue il nome; se non si può spostare si annulla tutto.
+            if ($terr = trash_move_owner_storage($original, $username)) {
+                if ($chkOld['type'] === 'dir') storage()->renamePath($newPfx, $oldPfx);
+                migration_guard_end();
+                json_out(['ok' => false, 'error' => $terr . ': rinomina annullata'], 500);
+            }
             $isRename = true;
         }
     }
@@ -158,6 +164,7 @@ function action_user_save(): void {
         if ($isRename && storage()->typeOf(user_prefix($username)) === 'dir') {
             storage()->renamePath(user_prefix($username), user_prefix($original));
         }
+        if ($isRename && storage()->typeOf(trash_root($username)) === 'dir') storage()->renamePath(trash_root($username), trash_root($original));
         if ($isRename) migration_guard_end();
         json_out(['ok' => false, 'error' => $err], $code);
     }
@@ -177,6 +184,7 @@ function action_user_save(): void {
             $sd['shares'] = $shares;
             return $sd;
         });
+        trash_rename_owner($original, $username);   // il cestino (storage e voci) segue il nuovo nome
         // Cache di quota: sposta la voce sul nuovo nome (il consumo non è cambiato).
         with_json_lock(usage_file(), function (array $c) use ($original, $username) {
             if (isset($c[$original])) { $c[$username] = $c[$original]; unset($c[$original]); return $c; }
@@ -229,6 +237,7 @@ function action_user_delete(): void {
     if (!empty($_POST['purge']) && $username !== '') {
         note_state_purge_tree(user_prefix($username));   // prima del delete: serve il listato (anche privacy)
         $purged = storage()->deletePath(user_prefix($username), true);
+        trash_drop_owner($username);
     }
 
     audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));

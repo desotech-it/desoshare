@@ -3,7 +3,8 @@
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
 fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs`,
-`share_upload_smoke.mjs` e `listing_smoke.mjs` (servono un browser).
+`share_upload_smoke.mjs`, `listing_smoke.mjs` e `share_levels_smoke.mjs` (servono un
+browser), `s3_links_test.sh` (serve Wasabi reale).
 
 ## 1. Test API (PHP) — `api_test.sh`
 Avvia un'istanza **isolata** con `php -S` (non tocca la produzione) e verifica
@@ -92,3 +93,26 @@ node tests/listing_smoke.mjs
 
 > Richiede Playwright + Chromium e la rete verso il CDN del font delle icone: fuori
 > dalla CI. Esce 2 se playwright manca.
+
+## Livelli dei link in browser — `share_levels_smoke.mjs`
+Avvia un'istanza **reale** con `php -S`, crea via API link di livello Caricamento,
+Collaboratore, Gestione completa e con PIN, e li usa da ospite in **Chromium**:
+nome già presente salvato come «nome (2)», icone di rinomina/eliminazione solo dove
+il server le concede, rinomina ed eliminazione via dialog, cartelle create ed
+eliminate, PIN errato e giusto, header X-CSRF, cestino del proprietario, layout a 390 px.
+
+```bash
+PATH=/percorso/php:$PATH node tests/share_levels_smoke.mjs
+# atteso: "SMOKE LIVELLI OK ✓"
+```
+
+## Link su S3 reale — `s3_links_test.sh`
+Su S3 la rinomina è una copia e la data dei file cambia: provenienza dei file
+caricati via link e cestino vanno provati sul bucket vero. Lavora con un utente di
+test dal nome univoco (`s3t-…`) e alla fine lo elimina insieme a file e cestino.
+
+```bash
+CRED=/percorso/credentials.csv bash tests/s3_links_test.sh
+# atteso: "Risultato S3: N superati, 0 falliti."
+```
+

@@ -13,6 +13,8 @@ require_once __DIR__ . '/lib_paths.php';     // clean_logical, logical_join, use
 require_once __DIR__ . '/lib_quota.php';     // quota_*, usage_*
 require_once __DIR__ . '/lib_download.php';  // stream_file, zip_*
 require_once __DIR__ . '/lib_shares.php';    // shares_*, share_*
+require_once __DIR__ . '/lib_linkfiles.php'; // link_file_* (provenienza upload via link), link_upload_target
+require_once __DIR__ . '/lib_trash.php';     // trash_* (cestino delle eliminazioni via link)
 require_once __DIR__ . '/lib_notes.php';     // note_* (relay/awareness)
 require_once __DIR__ . '/lib_audit.php';     // audit, audit_tail
 require_once __DIR__ . '/storage.php';       // StorageBackend + storage() (per ULTIMO)

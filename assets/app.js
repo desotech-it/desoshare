@@ -158,10 +158,22 @@
   }
 
   // net.js
+  async function asJson(p) {
+    let r;
+    try {
+      r = await p;
+    } catch (_) {
+      return { ok: false, error: "Connessione non riuscita: riprova" };
+    }
+    try {
+      return await r.json();
+    } catch (_) {
+      return { ok: false, error: "Errore del server (HTTP " + r.status + "): riprova" };
+    }
+  }
   async function apiGet(action, params = {}) {
     const q = new URLSearchParams({ action, ...params });
-    const r = await fetch("api.php?" + q.toString());
-    return r.json();
+    return asJson(fetch("api.php?" + q.toString()));
   }
   async function apiPost(action, data = {}) {
     const body = new FormData();
@@ -169,8 +181,7 @@
       if (Array.isArray(v)) body.append(k, JSON.stringify(v));
       else body.append(k, v);
     }
-    const r = await fetch("api.php?action=" + action, { method: "POST", headers: { "X-CSRF": CSRF }, body });
-    return r.json();
+    return asJson(fetch("api.php?action=" + action, { method: "POST", headers: { "X-CSRF": CSRF }, body }));
   }
 
   // zip.js
@@ -387,71 +398,233 @@
     };
   }
 
+  // trash.js
+  var fmtWhen = (ts) => new Date(ts * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
+  async function trashPanel() {
+    const r = await apiGet("trash_list");
+    if (!r || !r.ok) {
+      toast(r && r.error || "Errore", true);
+      return;
+    }
+    if (S.shareTimer) {
+      clearInterval(S.shareTimer);
+      S.shareTimer = null;
+    }
+    const list = Array.isArray(r.entries) ? r.entries : [];
+    const days = Math.floor(Number(r.days)) || 30;
+    const body = list.length ? `<div class="tr-scroll"><table class="utable tr-table"><thead><tr>
+      <th>Nome</th><th>Eliminato da</th><th>Quando</th><th>Scade tra</th><th class="tr-num">Dimensione</th>${CAN_WRITE ? "<th></th>" : ""}</tr></thead><tbody>${list.map((e) => `<tr data-id="${esc(e.id)}">
+      <td class="tr-name"><div><i class="ti ${iconFor({ type: e.type === "dir" ? "dir" : "file", name: String(e.name || "") })}"></i> ${esc(e.name)}</div>
+        <div class="tr-orig" title="Percorso d'origine">/${esc(e.orig || "")}</div></td>
+      <td data-l="Eliminato da">${esc(e.by || "—")}</td>
+      <td class="tr-nw" data-l="Quando">${esc(fmtWhen(e.at))}</td>
+      <td class="tr-nw" data-l="Scade tra">${e.expires_in > 0 ? esc(fmtDuration(e.expires_in)) : "a breve"}</td>
+      <td class="tr-num tr-nw" data-l="Dimensione">${esc(fmtBytes(Number(e.size) || 0))}</td>
+      ${CAN_WRITE ? `<td class="tr-act"><button class="btn tr-btn tr-restore"><i class="ti ti-arrow-back-up"></i> Ripristina</button>
+        <button class="btn btn-danger tr-btn tr-purge">Elimina definitivamente</button></td>` : ""}</tr>`).join("")}</tbody></table></div>
+  <p class="tr-note muted">Gli elementi restano qui ${days} giorni dall'eliminazione e contano nella tua quota.${CAN_WRITE ? "" : " Per ripristinarli o eliminarli serve il permesso di scrittura."}</p>` : `<p class="muted">Il cestino è vuoto. Qui finiscono per ${days} giorni gli elementi eliminati o sostituiti tramite i link.</p>`;
+    openModal(`<div class="modal tr-modal"><h3><i class="ti ti-trash"></i> Cestino</h3>${body}
+    <div class="modal-actions">${list.length && CAN_WRITE ? '<button class="btn btn-danger tr-empty-btn" id="tr_empty"><i class="ti ti-trash-x"></i> Svuota cestino</button>' : ""}
+      <button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    let busy = false;
+    const btns = () => modalBg.querySelectorAll(".tr-btn, #tr_empty");
+    const stillOpen = () => !modalBg.hidden && modalBg.querySelector(".tr-modal");
+    const act = (fn) => async () => {
+      if (busy) return;
+      busy = true;
+      btns().forEach((b) => {
+        b.disabled = true;
+      });
+      try {
+        await fn();
+      } finally {
+        busy = false;
+        btns().forEach((b) => {
+          b.disabled = false;
+        });
+      }
+    };
+    const refresh = () => stillOpen() ? trashPanel() : null;
+    modalBg.querySelectorAll("tr[data-id]").forEach((tr) => {
+      const e = list.find((x) => String(x.id) === tr.dataset.id);
+      if (!e || !CAN_WRITE) return;
+      tr.querySelector(".tr-restore").onclick = act(async () => {
+        const x = await apiPost("trash_restore", { id: e.id });
+        if (!x.ok) {
+          toast(x.error || "Errore", true);
+          await refresh();
+          return;
+        }
+        toast("Ripristinato in /" + x.path);
+        load(S.cwd);
+        await refresh();
+      });
+      tr.querySelector(".tr-purge").onclick = act(async () => {
+        if (!confirm(`Eliminare definitivamente «${e.name}»? Non si potrà più recuperare.`)) return;
+        const x = await apiPost("trash_purge", { id: e.id });
+        if (!x.ok) {
+          toast(x.error || "Errore", true);
+          await refresh();
+          return;
+        }
+        toast("Eliminato definitivamente");
+        await refresh();
+      });
+    });
+    const emptyBtn = $("#tr_empty", modalBg);
+    if (emptyBtn) emptyBtn.onclick = act(async () => {
+      const n = list.length;
+      if (!confirm(`Svuotare il cestino? ${n === 1 ? "L'elemento sarà eliminato" : n + " elementi saranno eliminati"} definitivamente.`)) return;
+      const x = await apiPost("trash_purge", { ids: JSON.stringify(list.map((v) => v.id)) });
+      if (!x.ok) {
+        toast(x.error || "Errore", true);
+        await refresh();
+        return;
+      }
+      toast("Cestino svuotato");
+      await refresh();
+    });
+  }
+
   // shares.js
+  var DIR_LEVELS = [
+    ["view", "Sola lettura", "Vede e scarica i file. Non può modificare nulla."],
+    ["edit", "Caricamento", "Può anche caricare file. Non sovrascrive niente: un nome già presente diventa «nome (2)»."],
+    ["contrib", "Collaboratore", "Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link; ciò che elimina o sostituisce finisce nel tuo cestino."],
+    ["manage", "Gestione completa", "Carica, sovrascrive, rinomina ed elimina tutto nella cartella. Ciò che elimina o sostituisce finisce nel tuo cestino. Meglio con un PIN."]
+  ];
+  var NOTE_LEVELS = [
+    ["view", "Sola lettura", "Legge e scarica la nota."],
+    ["edit", "Modificabile (co-editing)", "Modifica la nota insieme a te, in tempo reale."]
+  ];
+  var UPLOAD_LEVELS = /* @__PURE__ */ new Set(["edit", "contrib", "manage"]);
+  function levelName(mode, isDir) {
+    const l = (isDir ? DIR_LEVELS : NOTE_LEVELS).find((x) => x[0] === mode);
+    return l ? l[1].replace(/ \(co-editing\)$/, "") : "Sola lettura";
+  }
+  var READABLE_MAX = 42;
+  var readablePart = (v) => slugify(v).slice(0, READABLE_MAX).replace(/-+$/, "") || "link";
+  function slugStamp(d = /* @__PURE__ */ new Date()) {
+    const pad = (n) => String(n).padStart(2, "0");
+    try {
+      const p = {};
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Rome",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }).formatToParts(d).forEach((x) => {
+        p[x.type] = x.value;
+      });
+      if (p.year && p.minute) return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
+    } catch (_) {
+    }
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  }
+  var LIMIT_OPTS = `<option value="100">100 MB</option>
+      <option value="500">500 MB</option>
+      <option value="1024" selected>1 GB</option>
+      <option value="5120">5 GB</option>
+      <option value="0">Nessun tetto (solo la mia quota)</option>`;
   function shareDialog(rel, name, isDir = false) {
-    const canEdit = isDir || isTextFile(name);
-    const defSlug = slugify(name.replace(/\.[^.]+$/, ""));
+    const levels = !CAN_WRITE ? null : isDir ? DIR_LEVELS : isTextFile(name) ? NOTE_LEVELS : null;
+    const defName = isDir ? name : name.replace(/\.[^.]+$/, "");
+    const defSlug = slugify(defName);
     const base = location.origin + location.pathname.replace(/\/[^/]*$/, "");
-    openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
-    <label>Durata del link</label>
+    const access = levels ? `<label for="sh_mode">Accesso</label>
+    <select id="sh_mode">${levels.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join("")}</select>
+    <div id="sh_mode_help" class="sh-help"></div>
+    ${isDir ? `<div id="sh_limit_wrap" hidden><label for="sh_limit">Spazio caricabile tramite il link <span class="sh-opt">(oltre vale la tua quota)</span></label>
+    <select id="sh_limit">${LIMIT_OPTS}</select></div>` : ""}` : `<label>Accesso</label><div class="sh-fixed"><i class="ti ti-eye"></i> Sola lettura
+      <span class="muted">— ${isDir ? "vede e scarica i file" : "può scaricare il file"}</span></div>`;
+    openModal(`<div class="modal sh-modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
+    <label for="sh_label">A chi lo dai <span class="sh-opt">(facoltativo)</span></label>
+    <input type="text" id="sh_label" maxlength="80" placeholder="es. Avv. Bianchi" autocomplete="off">
+    <label for="sh_ttl">Durata del link</label>
     <select id="sh_ttl">
       <option value="3600">1 ora</option>
       <option value="86400" selected>24 ore</option>
       <option value="604800">7 giorni</option>
       <option value="2592000">30 giorni</option>
     </select>
-    ${canEdit ? `<label style="margin-top:10px">Accesso</label>
-    <select id="sh_mode">
-      <option value="view">Sola lettura</option>
-      <option value="edit">${isDir ? "Modificabile (chiunque abbia il link può caricare file nella cartella)" : "Modificabile (chiunque abbia il link co-edita)"}</option>
-    </select>
-    ${isDir ? `<div id="sh_limit_wrap" style="display:none"><label style="margin-top:10px">Spazio caricabile tramite il link <span class="muted" style="font-weight:400">(oltre vale la tua quota)</span></label>
-    <select id="sh_limit">
-      <option value="100">100 MB</option>
-      <option value="500">500 MB</option>
-      <option value="1024" selected>1 GB</option>
-      <option value="5120">5 GB</option>
-      <option value="0">Nessun tetto (solo la mia quota)</option>
-    </select></div>` : ""}` : ""}
-    <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
-    <div style="display:flex;align-items:center;gap:3px;font-size:13px">
-      <span class="muted" style="white-space:nowrap">/d/</span>
-      <input type="text" id="sh_slug" placeholder="link-casuale" value="${esc(defSlug)}" style="flex:1" autocomplete="off">
-    </div>
-    <span id="sh_slughint" class="muted" style="font-size:11px"></span>
-    <div id="sh_result" style="margin-top:12px"></div>
+    ${access}
+    <label for="sh_pin">PIN <span class="sh-opt">(facoltativo, da 4 a 64 caratteri)</span></label>
+    <input type="text" id="sh_pin" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="sh-help">Comunicalo a parte (telefono, messaggio). Senza PIN basta il link.</div>
+    <label for="sh_slug">Indirizzo del link</label>
+    <div class="sh-slug"><span class="muted">/d/</span>
+      <input type="text" id="sh_slug" value="${esc(defSlug)}" placeholder="${esc(readablePart(defName))}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+    <div id="sh_slughint" class="sh-preview"></div>
+    <div class="sh-help">Data, ora e codice casuale vengono aggiunti automaticamente: ogni link è unico e non si indovina.</div>
+    <div id="sh_err" class="sh-err" hidden></div>
+    <div id="sh_result"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button>
       <button class="btn btn-primary" id="sh_create"><i class="ti ti-link"></i> Crea link</button></div></div>`);
-    const slugEl = $("#sh_slug", modalBg), hintEl = $("#sh_slughint", modalBg);
+    const slugEl = $("#sh_slug", modalBg), hintEl = $("#sh_slughint", modalBg), errEl = $("#sh_err", modalBg);
+    const modeEl = $("#sh_mode", modalBg);
+    const showErr = (msg) => {
+      errEl.textContent = msg;
+      errEl.hidden = !msg;
+    };
     const updHint = () => {
-      hintEl.style.color = "";
-      const sl = slugify(slugEl.value);
-      hintEl.textContent = sl ? "→ " + base + "/d/" + sl : "Vuoto = link casuale non indovinabile.";
+      const r = readablePart(slugEl.value.trim() === "" ? defName : slugEl.value);
+      hintEl.textContent = "→ " + base + "/d/" + r + "-" + slugStamp() + "-xxxxxx";
     };
     slugEl.oninput = updHint;
     updHint();
-    if (isDir) {
-      const modeEl = $("#sh_mode", modalBg), limWrap = $("#sh_limit_wrap", modalBg);
+    const curMode = () => modeEl ? modeEl.value : "view";
+    const hasCap = () => isDir && UPLOAD_LEVELS.has(curMode());
+    if (modeEl) {
+      const helpEl = $("#sh_mode_help", modalBg), limWrap = $("#sh_limit_wrap", modalBg);
       modeEl.onchange = () => {
-        limWrap.style.display = modeEl.value === "edit" ? "" : "none";
+        helpEl.textContent = (levels.find((l) => l[0] === modeEl.value) || levels[0])[2];
+        if (limWrap) limWrap.hidden = !hasCap();
       };
+      modeEl.onchange();
     }
     $("#sh_create", modalBg).onclick = guardSubmit($("#sh_create", modalBg), async () => {
-      const ttl = $("#sh_ttl", modalBg).value;
-      const mode = canEdit ? $("#sh_mode", modalBg).value : "view";
-      const limitMb = isDir && mode === "edit" ? $("#sh_limit", modalBg).value : "";
-      const r = await apiPost("share_create", { path: rel, ttl, mode, slug: slugEl.value, upload_limit_mb: limitMb });
-      if (!r.ok) {
-        hintEl.textContent = r.error || "Errore";
-        hintEl.style.color = "var(--danger, #c0392b)";
+      showErr("");
+      const mode = curMode();
+      const label = $("#sh_label", modalBg).value.trim();
+      const pinEl = $("#sh_pin", modalBg);
+      const pin = pinEl.value.trim();
+      pinEl.value = pin;
+      if (pin && [...pin].length < 4) {
+        showErr("Il PIN deve avere almeno 4 caratteri (oppure lascialo vuoto).");
+        pinEl.focus();
         return;
       }
-      const when = new Date(r.expires_at * 1e3).toLocaleString("it-IT");
-      const cap = isDir && mode === "edit" ? Number(limitMb) > 0 ? `, fino a ${fmtBytes(Number(limitMb) * 1048576)}` : ", nessun tetto" : "";
-      $("#sh_result", modalBg).innerHTML = `<label>Link pubblico (${mode === "edit" ? "modificabile" + cap : "sola lettura"}) — scade il ${esc(when)}</label>
-      <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
-      <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
-      modalBg.querySelectorAll("#sh_ttl, #sh_mode, #sh_limit, #sh_slug").forEach((el) => {
+      const limitMb = hasCap() ? $("#sh_limit", modalBg).value : "";
+      const r = await apiPost("share_create", {
+        path: rel,
+        ttl: $("#sh_ttl", modalBg).value,
+        mode,
+        slug: slugEl.value.trim(),
+        label,
+        pin,
+        upload_limit_mb: limitMb
+      });
+      if (!r || !r.ok) {
+        showErr(r && r.error || "Errore nella creazione del link");
+        return;
+      }
+      const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
+      const when = new Date(r.expires_at * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
+      const cap = hasCap() ? Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : " · nessun tetto" : "";
+      $("#sh_result", modalBg).innerHTML = `<div class="sh-done">
+      <label for="sh_url">Link creato</label>
+      <div class="sh-url"><input type="text" id="sh_url" readonly value="${esc(r.url)}">
+        <button class="btn" id="sh_copy" title="Copia link"><i class="ti ti-copy"></i></button></div>
+      <dl class="sh-sum">
+        <dt>Livello</dt><dd>${esc(levelName(rMode, isDir) + cap)}</dd>
+        ${rLabel ? `<dt>Destinatario</dt><dd>${esc(rLabel)}</dd>` : ""}
+        <dt>Scade</dt><dd>${esc(when)}</dd>
+      </dl>
+      ${r.has_pin ? '<div class="sh-pinset"><i class="ti ti-lock"></i> PIN impostato: comunicalo separatamente</div>' : ""}</div>`;
+      modalBg.querySelectorAll("#sh_label, #sh_ttl, #sh_mode, #sh_limit, #sh_pin, #sh_slug").forEach((el) => {
         el.disabled = true;
       });
       $("#sh_create", modalBg).remove();
@@ -465,26 +638,46 @@
       };
     });
   }
+  function shareMeta(s, isAdmin) {
+    const isDir = s.type === "dir";
+    const mode = s.mode || "view", level = s.level || mode;
+    const parts = [];
+    if (s.label) parts.push(`per «${esc(s.label)}»`);
+    parts.push(level === mode ? esc(levelName(level, isDir)) : `${esc(levelName(level, isDir))} <span title="Chi l'ha creato non ha più il permesso di scrittura">(era ${esc(levelName(mode, isDir))})</span>`);
+    if (s.has_pin) parts.push('<i class="ti ti-lock" title="Protetto da PIN" aria-label="Protetto da PIN"></i>');
+    if (isDir && UPLOAD_LEVELS.has(mode)) {
+      const used = Number(s.uploaded) || 0, cap = Number(s.upload_limit) || 0;
+      parts.push(esc("caricati " + fmtBytes(used) + (cap > 0 ? " / " + fmtBytes(cap) : " (nessun tetto)")));
+    }
+    if (isAdmin && s.created_by) parts.push("di " + esc(s.created_by));
+    return parts.join(" · ");
+  }
   async function sharesPanel() {
-    const r = await apiGet("share_list");
+    const [r, t] = await Promise.all([apiGet("share_list"), apiGet("trash_list").catch(() => null)]);
     if (!r.ok) {
       toast(r.error || "Errore", true);
       return;
     }
-    const body = r.shares.length ? `<table class="utable"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${r.shares.map((s) => `<tr data-exp="${s.expires_at}">
-      <td><i class="ti ${s.type === "dir" ? "ti-folder" : "ti-file"}"></i> ${esc(s.name)}${s.mode === "edit" ? ` <span class="muted" style="font-size:11px">· modificabile${s.type === "dir" ? " · caricati " + fmtBytes(s.uploaded || 0) + (s.upload_limit > 0 ? " / " + fmtBytes(s.upload_limit) : "") : ""}</span>` : ""}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ""}</td>
+    const nTrash = t && t.ok && Array.isArray(t.entries) ? t.entries.length : null;
+    const body = r.shares.length ? `<div class="sh-scroll"><table class="utable sh-table"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${r.shares.map((s) => `<tr data-exp="${Number(s.expires_at) || 0}">
+      <td><div class="sh-name"><i class="ti ${iconFor({ type: s.type === "dir" ? "dir" : "file", name: String(s.name || "") })}"></i> ${esc(s.name)}</div>
+        <div class="sh-meta">${shareMeta(s, r.is_admin)}</div></td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
-        <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join("")}</tbody></table>` : '<p class="muted">Nessuna condivisione attiva.</p>';
-    openModal(`<div class="modal wide"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
-    <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+        <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nessuna condivisione attiva.</p>';
+    openModal(`<div class="modal wide sh-panel"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
+    <div class="modal-actions"><button class="btn sh-trash-btn" id="sh_trash"><i class="ti ti-trash"></i> Cestino${nTrash !== null ? ` (${nTrash})` : ""}</button>
+      <button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    $("#sh_trash", modalBg).onclick = () => trashPanel();
     modalBg.querySelectorAll("[data-url]").forEach((b) => b.onclick = () => {
       copyText(b.dataset.url);
       toast("Link copiato");
     });
     modalBg.querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
-      if (!confirm("Revocare questa condivisione? Il link smetterà di funzionare.")) return;
+      const s = r.shares.find((x2) => x2.token === b.dataset.revoke) || {};
+      const who = s.label ? ` di «${s.label}»` : "";
+      if (!confirm(`Revocare il link${who} a «${s.name || ""}»? Smetterà subito di funzionare.`)) return;
       const x = await apiPost("share_revoke", { token: b.dataset.revoke });
       if (x.ok) {
         toast("Condivisione revocata");
