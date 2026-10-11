@@ -217,7 +217,7 @@ function share_folder_page(array $s, string $dir, string $p): void {
         $rel = ($p !== '' ? trim($p, '/') . '/' : '') . $e['name'];
         // Azioni sulla riga: 'manage' tutto; 'contrib' solo i file caricati con questo
         // link e ancora identici (stessa verifica del server, lib_linkfiles.php).
-        $touch = $canAny || (!$isDir && $canOwn && link_entry_matches($ownMap[$rel] ?? null, ['size' => (int) ($e['size'] ?? 0), 'mtime' => (int) ($e['mtime'] ?? 0)]));
+        $touch = $canAny || (!$isDir && $canOwn && link_entry_matches($ownMap[$rel] ?? null, ['size' => (int) ($e['size'] ?? 0), 'mtime' => (int) ($e['mtime'] ?? 0), 'fid' => (string) ($e['fid'] ?? '')]));
         $items[] = ['name' => $e['name'], 'dir' => $isDir, 'size' => (int) ($e['size'] ?? 0), 'rel' => $rel, 'touch' => $touch];
     }
     usort($items, fn($a, $b) => $a['dir'] === $b['dir'] ? strcasecmp($a['name'], $b['name']) : ($a['dir'] ? -1 : 1));

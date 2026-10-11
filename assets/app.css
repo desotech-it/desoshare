@@ -229,6 +229,8 @@ details.adv[open] summary::before { content: "▾ "; }
 .share-acts .ic-del:hover { color: var(--danger); }
 .share-msg { font-size: 13px; text-align: center; margin: 0 0 10px; color: var(--danger); }
 @media (max-width: 560px) {
+  .share-wrap .topbar { flex-wrap: wrap; gap: 8px; }
+  .share-wrap .topbar-right { flex-wrap: wrap; gap: 8px; }
   .share-row, .share-acts-on .share-row { grid-template-columns: 1fr 84px; }
   .share-row .size { display: none; }
 }

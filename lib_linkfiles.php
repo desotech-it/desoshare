@@ -17,7 +17,7 @@ function link_parent(string $abs): string {
 function link_file_stat(string $abs): ?array {
     $name = basename($abs);
     foreach (storage()->listDir(link_parent($abs)) as $e) {
-        if ($e['name'] === $name) return $e['type'] === 'file' ? ['size' => (int) $e['size'], 'mtime' => (int) $e['mtime']] : null;
+        if ($e['name'] === $name) return $e['type'] === 'file' ? ['size' => (int) $e['size'], 'mtime' => (int) $e['mtime'], 'fid' => (string) ($e['fid'] ?? '')] : null;
     }
     return null;
 }
@@ -32,8 +32,12 @@ function link_rel(array $s, string $abs): ?string {
 function link_files_of(array $s): array {
     return json_read(linkfiles_file())['files'][(string) ($s['token'] ?? '')] ?? [];
 }
+// Dimensione e data hanno la risoluzione del secondo: una riscrittura della stessa
+// dimensione nello stesso secondo le lascerebbe uguali. L'identità della versione
+// (fid: inode in locale, ETag su S3) chiude il caso.
 function link_entry_matches($e, ?array $stat): bool {
-    return is_array($e) && $stat !== null && (int) ($e['size'] ?? -1) === $stat['size'] && (int) ($e['mtime'] ?? -1) === $stat['mtime'];
+    return is_array($e) && $stat !== null && (int) ($e['size'] ?? -1) === $stat['size'] && (int) ($e['mtime'] ?? -1) === $stat['mtime']
+        && (string) ($e['fid'] ?? '') === (string) ($stat['fid'] ?? '');
 }
 function link_file_is_own(array $s, string $abs, ?array $stat = null): bool {
     $rel = link_rel($s, $abs);
@@ -54,7 +58,7 @@ function link_file_record(array $s, string $abs): void {
     with_json_lock(linkfiles_file(), function (array $d) use ($tok, $rel, $stat, $active) {
         $files = $d['files'] ?? [];
         foreach (array_keys($files) as $t) if (!isset($active[(string) $t])) unset($files[$t]);
-        $files[$tok][$rel] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'at' => time()];
+        $files[$tok][$rel] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'fid' => $stat['fid'], 'at' => time()];
         $d['files'] = $files;
         return $d;
     });
@@ -70,7 +74,7 @@ function link_file_move(array $s, string $fromAbs, string $toAbs): void {
         if (!isset($d['files'][$tok][$from])) return null;
         $at = (int) ($d['files'][$tok][$from]['at'] ?? time());
         unset($d['files'][$tok][$from]);
-        if ($stat) $d['files'][$tok][$to] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'at' => $at];
+        if ($stat) $d['files'][$tok][$to] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'fid' => $stat['fid'], 'at' => $at];
         return $d;
     });
 }

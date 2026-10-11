@@ -81,9 +81,11 @@ function action_link_delete(): void {
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
     if (!is_array($paths)) $paths = [];
     $deleted = 0; $errors = []; $removed = [];
-    foreach (array_slice($paths, 0, 500) as $rel) {
-        if (!is_string($rel)) { $errors[] = 'percorso non valido'; continue; }
-        $abs = link_abs($s, $rel);
+    // Tutti i percorsi validati PRIMA di toccarne uno: un 400 a metà lascerebbe
+    // eliminazioni parziali dietro una risposta di errore.
+    $todo = [];
+    foreach (array_slice($paths, 0, 500) as $rel) $todo[] = [$rel, link_abs($s, $rel)];
+    foreach ($todo as [$rel, $abs]) {
         if ($abs === share_base($s)) { $errors[] = 'la cartella condivisa non si può eliminare dal link'; continue; }
         $chk = storage()->existsCheck($abs);
         if ($chk['type'] === false) { $errors[] = $chk['sure'] ? "$rel: non trovato" : "$rel: storage non raggiungibile"; continue; }

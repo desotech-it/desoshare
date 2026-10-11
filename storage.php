@@ -30,7 +30,8 @@ class LocalBackend implements StorageBackend {
         foreach (scandir($d) as $n) {
             if ($n === '.' || $n === '..') continue;
             $fp = $d . '/' . $n; $isDir = is_dir($fp);
-            $out[] = ['name' => $n, 'type' => $isDir ? 'dir' : 'file', 'size' => $isDir ? 0 : (int) (@filesize($fp) ?: 0), 'mtime' => @filemtime($fp) ?: time()];
+            // fid: identità della versione (inode: ogni scrittura passa da tmp+rename → inode nuovo).
+            $out[] = ['name' => $n, 'type' => $isDir ? 'dir' : 'file', 'size' => $isDir ? 0 : (int) (@filesize($fp) ?: 0), 'mtime' => @filemtime($fp) ?: time(), 'fid' => $isDir ? '' : (string) (@fileinode($fp) ?: '')];
         }
         return $out;
     }
@@ -260,7 +261,8 @@ class S3Backend implements StorageBackend {
                 $name = substr($k, strlen($prefix));
                 if ($name === '' || substr($name, -1) === '/') continue;
                 if (isset($byName[$name]) && $byName[$name]['type'] === 'dir') continue;   // la cartella omonima prevale
-                $byName[$name] = ['name' => $name, 'type' => 'file', 'size' => (int) $c->Size, 'mtime' => strtotime((string) $c->LastModified) ?: time()];
+                // fid: ETag (dipende dal contenuto, conservato dalla copia usata per rinominare).
+                $byName[$name] = ['name' => $name, 'type' => 'file', 'size' => (int) $c->Size, 'mtime' => strtotime((string) $c->LastModified) ?: time(), 'fid' => trim((string) $c->ETag, '"')];
             }
             $token = ((string) $xml->IsTruncated === 'true') ? (string) $xml->NextContinuationToken : null;
         } while ($token);
