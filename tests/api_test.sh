@@ -963,7 +963,7 @@ for n in a b; do printf "$n" > "$SBX/$n.txt"; done
 MF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
 curl -s -F "files[]=@$SBX/a.txt" -F "files[]=@$SBX/b.txt" "$B/api.php?action=upload&t=$MF" >/dev/null
 curl -s -F 'paths=["a.txt","b.txt"]' "$B/api.php?action=link_delete&t=$MF" >/dev/null
-TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | python3 -c 'import json,sys; print(json.dumps([e["id"] for e in json.load(sys.stdin)["entries"] if e["name"]=="a.txt"]))')
+TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo json_encode(array_values(array_map(fn($e)=>$e["id"], array_filter($d["entries"], fn($e)=>$e["name"]==="a.txt"))));')
 has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
 has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
 
