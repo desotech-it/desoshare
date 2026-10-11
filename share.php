@@ -32,6 +32,11 @@ if (!share_pin_ok($share)) {
     share_pin_page($share, $err);
     exit;
 }
+// Da qui la sessione serve solo in lettura: il token CSRF si genera ora e il file
+// di sessione si rilascia, altrimenti un download lungo bloccherebbe ogni altra
+// richiesta dello stesso browser.
+csrf_token();
+session_write_close();
 
 // Download di un file
 if (isset($_GET['dl'])) {
@@ -246,7 +251,7 @@ function share_folder_page(array $s, string $dir, string $p): void {
        . share_expiry_html($s);
     $what = [
         'edit'    => 'Puoi caricare file in questa cartella, anche trascinandoli qui. Un file con un nome già presente viene salvato con un nome nuovo.',
-        'contrib' => 'Puoi caricare file e rinominare o eliminare quelli caricati con questo link.',
+        'contrib' => 'Puoi caricare file e creare cartelle; puoi sostituire, rinominare o eliminare solo i file caricati con questo link.',
         'manage'  => 'Puoi caricare file, creare cartelle, rinominare ed eliminare qualunque elemento di questa cartella.',
     ][$level] ?? '';
     if ($exhausted) {

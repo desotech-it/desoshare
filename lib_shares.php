@@ -166,27 +166,28 @@ function share_actor(array $s): string {
 // Chi prova indirizzi a caso viene bloccato per la finestra: l'indirizzo è una
 // credenziale e non deve essere enumerabile.
 function share_attempts_file(): string { return DATA_DIR . '/share_attempts.json'; }
+function share_lookup_live_ids($e): array {
+    $now = time();
+    return is_array($e) && is_array($e['ids'] ?? null)
+        ? array_filter($e['ids'], fn($ts) => $now - (int) $ts <= SHARE_LOOKUP_WINDOW) : [];
+}
 function share_lookup_locked(): bool {
-    $e = json_read(share_attempts_file())[login_throttle_key()] ?? null;
-    if (!is_array($e) || (time() - (int) ($e['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) return false;
-    return (int) ($e['n'] ?? 0) >= SHARE_LOOKUP_MAX_FAILS;
+    return count(share_lookup_live_ids(json_read(share_attempts_file())[login_throttle_key()] ?? null)) >= SHARE_LOOKUP_MAX_FAILS;
 }
 // Si contano gli indirizzi DISTINTI: chi enumera ne prova sempre di nuovi, mentre
 // un editor di nota rimasto aperto su un link revocato ripete lo stesso a ogni
 // sincronizzazione e non deve bloccare l'IP (e i colleghi dietro lo stesso NAT).
+// Finestra davvero scorrevole: ogni indirizzo ha il suo istante e scade da solo.
 function share_lookup_fail(string $id): void {
-    $h = substr(hash('sha256', strtolower($id)), 0, 16);
+    $h = 'h' . substr(hash('sha256', strtolower($id)), 0, 16);   // prefisso: chiavi mai numeriche
     with_json_lock(share_attempts_file(), function (array $a) use ($h) {
         $k = login_throttle_key(); $now = time();
-        $e = $a[$k] ?? null;
-        if (!is_array($e) || ($now - (int) ($e['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) $e = ['ids' => [], 'ts' => $now];
-        $ids = is_array($e['ids'] ?? null) ? $e['ids'] : [];
-        if (isset($ids[$h]) && $now - (int) $e['ts'] < 60) return null;   // stesso indirizzo ripetuto: niente da aggiornare
-        $ids[$h] = 1;
-        $cap = min(SHARE_LOOKUP_MAX_FAILS + 1, 256);
-        if (count($ids) > $cap) $ids = array_slice($ids, -$cap, null, true);
-        $a[$k] = ['ids' => $ids, 'n' => count($ids), 'ts' => $now];
-        foreach ($a as $kk => $vv) if (($now - (int) ($vv['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) unset($a[$kk]);
+        $ids = share_lookup_live_ids($a[$k] ?? null);
+        if (isset($ids[$h])) return null;                  // stesso indirizzo ripetuto: conta una volta
+        $ids[$h] = $now;
+        if (count($ids) > 256) $ids = array_slice($ids, -256, null, true);
+        $a[$k] = ['ids' => $ids];
+        foreach ($a as $kk => $vv) if (!share_lookup_live_ids($vv)) unset($a[$kk]);
         return $a;
     });
 }
@@ -218,36 +219,55 @@ function share_has_pin(array $s): bool { return (string) ($s['pin_hash'] ?? '') 
 function share_pin_ok(array $s): bool {
     return !share_has_pin($s) || !empty($_SESSION['share_pin'][(string) ($s['token'] ?? '')]);
 }
+// Chiude la sessione appena verificato l'accesso: il lock del file di sessione
+// bloccherebbe ogni altra richiesta dello stesso browser (download lunghi,
+// blocchi di upload in parallelo, sincronizzazione delle note).
 function share_require_access(array $s, bool $mutating): void {
-    if (!share_has_pin($s)) return;
-    if (!share_pin_ok($s)) json_out(['ok' => false, 'error' => 'Questo link è protetto da PIN: apri il link e inseriscilo', 'pin_required' => true], 401);
-    if ($mutating) csrf_check();
-}
-function share_pin_attempts_file(): string { return DATA_DIR . '/share_pin_attempts.json'; }
-function share_pin_key(array $s): string { return substr(hash('sha256', (string) ($s['token'] ?? '') . '|' . login_throttle_key()), 0, 32); }
-function share_pin_locked(array $s): bool {
-    $e = json_read(share_pin_attempts_file())[share_pin_key($s)] ?? null;
-    if (!is_array($e) || (time() - (int) ($e['ts'] ?? 0)) > SHARE_PIN_WINDOW) return false;
-    return (int) ($e['n'] ?? 0) >= SHARE_PIN_MAX_FAILS;
-}
-// Verifica il PIN; true = sbloccato per questa sessione.
-function share_pin_try(array $s, string $pin): bool {
-    if (share_pin_locked($s)) return false;
-    if (password_verify($pin, (string) ($s['pin_hash'] ?? ''))) {
-        session_regenerate_id(true);
-        $_SESSION['share_pin'][(string) $s['token']] = true;
-        with_json_lock(share_pin_attempts_file(), function (array $a) use ($s) { unset($a[share_pin_key($s)]); return $a; });
-        return true;
+    if (share_has_pin($s)) {
+        if (!share_pin_ok($s)) json_out(['ok' => false, 'error' => 'Questo link è protetto da PIN: apri il link e inseriscilo', 'pin_required' => true], 401);
+        if ($mutating) csrf_check();
     }
-    with_json_lock(share_pin_attempts_file(), function (array $a) use ($s) {
-        $k = share_pin_key($s); $now = time();
-        $e = $a[$k] ?? null;
-        if (!is_array($e) || ($now - (int) ($e['ts'] ?? 0)) > SHARE_PIN_WINDOW) $e = ['n' => 0, 'ts' => $now];
-        $a[$k] = ['n' => (int) $e['n'] + 1, 'ts' => $now];
-        foreach ($a as $kk => $vv) if (($now - (int) ($vv['ts'] ?? 0)) > SHARE_PIN_WINDOW) unset($a[$kk]);
+    if (session_status() === PHP_SESSION_ACTIVE) session_write_close();
+}
+// Tentativi del PIN: per link+IP (SHARE_PIN_MAX_FAILS) e per link da qualunque IP
+// (SHARE_PIN_LINK_MAX_FAILS), così cambiare indirizzo non moltiplica i tentativi.
+function share_pin_attempts_file(): string { return DATA_DIR . '/share_pin_attempts.json'; }
+function share_pin_keys(array $s): array {
+    $t = (string) ($s['token'] ?? '');
+    return ['ip' => 'i' . substr(hash('sha256', $t . '|' . login_throttle_key()), 0, 32), 'link' => 'l' . substr(hash('sha256', $t), 0, 32)];
+}
+function share_pin_count($e): int {
+    return (is_array($e) && (time() - (int) ($e['ts'] ?? 0)) <= SHARE_PIN_WINDOW) ? (int) ($e['n'] ?? 0) : 0;
+}
+function share_pin_locked(array $s): bool {
+    $a = json_read(share_pin_attempts_file()); $k = share_pin_keys($s);
+    return share_pin_count($a[$k['ip']] ?? null) >= SHARE_PIN_MAX_FAILS || share_pin_count($a[$k['link']] ?? null) >= SHARE_PIN_LINK_MAX_FAILS;
+}
+// Verifica il PIN; true = sbloccato per questa sessione. Il tentativo si PRENOTA
+// sotto lock prima della verifica (lenta): richieste parallele non superano il limite.
+function share_pin_try(array $s, string $pin): bool {
+    $k = share_pin_keys($s);
+    $allowed = false;
+    with_json_lock(share_pin_attempts_file(), function (array $a) use ($k, &$allowed) {
+        $now = time();
+        foreach ($a as $kk => $vv) if (share_pin_count($vv) === 0) unset($a[$kk]);
+        $ni = share_pin_count($a[$k['ip']] ?? null); $nl = share_pin_count($a[$k['link']] ?? null);
+        if ($ni >= SHARE_PIN_MAX_FAILS || $nl >= SHARE_PIN_LINK_MAX_FAILS) return $a;
+        $a[$k['ip']] = ['n' => $ni + 1, 'ts' => $now];
+        $a[$k['link']] = ['n' => $nl + 1, 'ts' => $now];
+        $allowed = true;
         return $a;
     });
-    return false;
+    if (!$allowed || !password_verify($pin, (string) ($s['pin_hash'] ?? ''))) return false;
+    // PIN giusto: il tentativo prenotato non era un errore.
+    with_json_lock(share_pin_attempts_file(), function (array $a) use ($k) {
+        unset($a[$k['ip']]);
+        if (isset($a[$k['link']])) $a[$k['link']]['n'] = max(0, (int) $a[$k['link']]['n'] - 1);
+        return $a;
+    });
+    session_regenerate_id(true);
+    $_SESSION['share_pin'][(string) $s['token']] = true;
+    return true;
 }
 
 // Le condivisioni che puntano a un elemento rinominato (o a suoi discendenti)

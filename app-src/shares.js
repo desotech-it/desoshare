@@ -9,7 +9,7 @@ import { trashPanel } from './trash.js';
 const DIR_LEVELS = [
   ['view', 'Sola lettura', 'Vede e scarica i file. Non può modificare nulla.'],
   ['edit', 'Caricamento', 'Può anche caricare file. Non sovrascrive niente: un nome già presente diventa «nome (2)».'],
-  ['contrib', 'Collaboratore', 'Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link.'],
+  ['contrib', 'Collaboratore', 'Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link; ciò che elimina o sostituisce finisce nel tuo cestino.'],
   ['manage', 'Gestione completa', 'Carica, sovrascrive, rinomina ed elimina tutto nella cartella. Ciò che elimina o sostituisce finisce nel tuo cestino. Meglio con un PIN.'],
 ];
 const NOTE_LEVELS = [

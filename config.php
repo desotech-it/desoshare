@@ -36,6 +36,7 @@ define('SHARE_LOOKUP_MAX_FAILS', (int) (getenv('SHARE_LOOKUP_MAX_FAILS') ?: 30))
 define('SHARE_LOOKUP_WINDOW', 600);          // secondi
 define('SHARE_PIN_MAX_FAILS', 5);            // PIN errati per link e IP prima del blocco
 define('SHARE_PIN_WINDOW', 900);             // secondi
+define('SHARE_PIN_LINK_MAX_FAILS', 20);      // PIN errati per link da qualunque IP prima del blocco del link
 define('TRASH_PREFIX', '~cestino');          // radice del cestino nello storage (fuori da ogni home: '~' non è ammesso negli username)
 define('TRASH_DAYS', 30);                    // conservazione degli elementi eliminati tramite link
 

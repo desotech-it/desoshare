@@ -120,6 +120,12 @@ function action_user_save(): void {
                 migration_guard_end();
                 json_out(['ok' => false, 'error' => 'Migrazione dei file non riuscita: rinomina annullata'], 500);
             }
+            // Il cestino (fuori dalla home) segue il nome; se non si può spostare si annulla tutto.
+            if ($terr = trash_move_owner_storage($original, $username)) {
+                if ($chkOld['type'] === 'dir') storage()->renamePath($newPfx, $oldPfx);
+                migration_guard_end();
+                json_out(['ok' => false, 'error' => $terr . ': rinomina annullata'], 500);
+            }
             $isRename = true;
         }
     }
@@ -158,6 +164,7 @@ function action_user_save(): void {
         if ($isRename && storage()->typeOf(user_prefix($username)) === 'dir') {
             storage()->renamePath(user_prefix($username), user_prefix($original));
         }
+        if ($isRename && storage()->typeOf(trash_root($username)) === 'dir') storage()->renamePath(trash_root($username), trash_root($original));
         if ($isRename) migration_guard_end();
         json_out(['ok' => false, 'error' => $err], $code);
     }

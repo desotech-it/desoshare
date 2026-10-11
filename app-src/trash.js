@@ -48,7 +48,7 @@ export async function trashPanel() {
     if (!e || !CAN_WRITE) return;
     tr.querySelector('.tr-restore').onclick = act(async () => {
       const x = await apiPost('trash_restore', { id: e.id });
-      if (!x.ok) { toast(x.error || 'Errore', true); return; }
+      if (!x.ok) { toast(x.error || 'Errore', true); await refresh(); return; }
       toast('Ripristinato in /' + x.path);
       load(S.cwd);
       await refresh();
@@ -56,7 +56,7 @@ export async function trashPanel() {
     tr.querySelector('.tr-purge').onclick = act(async () => {
       if (!confirm(`Eliminare definitivamente «${e.name}»? Non si potrà più recuperare.`)) return;
       const x = await apiPost('trash_purge', { id: e.id });
-      if (!x.ok) { toast(x.error || 'Errore', true); return; }
+      if (!x.ok) { toast(x.error || 'Errore', true); await refresh(); return; }
       toast('Eliminato definitivamente');
       await refresh();
     });
@@ -65,8 +65,9 @@ export async function trashPanel() {
   if (emptyBtn) emptyBtn.onclick = act(async () => {
     const n = list.length;
     if (!confirm(`Svuotare il cestino? ${n === 1 ? 'L\'elemento sarà eliminato' : n + ' elementi saranno eliminati'} definitivamente.`)) return;
-    const x = await apiPost('trash_purge', { all: 1 });
-    if (!x.ok) { toast(x.error || 'Errore', true); return; }
+    // Solo le voci mostrate: quelle arrivate dopo l'apertura del pannello non si toccano.
+    const x = await apiPost('trash_purge', { ids: JSON.stringify(list.map(v => v.id)) });
+    if (!x.ok) { toast(x.error || 'Errore', true); await refresh(); return; }
     toast('Cestino svuotato');
     await refresh();
   });

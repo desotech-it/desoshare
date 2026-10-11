@@ -731,7 +731,7 @@ async function runTrash() {
     if (action === 'share_list') return { ok: true, shares: [], now };
     if (action === 'trash_list') return { ok: true, days: 30, entries };
     if (action === 'trash_restore') return { ok: true, path: 'patti-temp/contratto (2).pdf' };
-    if (action === 'trash_purge') { if (data.all) { const n = entries.length; entries = []; return { ok: true, purged: n }; } entries = entries.filter(e => e.id !== data.id); return { ok: true, purged: 1 }; }
+    if (action === 'trash_purge') { if (data.ids) { const ids = JSON.parse(data.ids); const n = entries.filter(e => ids.includes(e.id)).length; entries = entries.filter(e => !ids.includes(e.id)); return { ok: true, purged: n }; } entries = entries.filter(e => e.id !== data.id); return { ok: true, purged: 1 }; }
     return null;
   });
   const { doc } = env;
@@ -765,10 +765,11 @@ async function runTrash() {
   const pg = env.lastPost('trash_purge');
   (pg && pg.data.id === 'e2' && !('all' in pg.data) && /definitivamente/.test(env.confirms.at(-1))) ? ok('Elimina definitivamente → POST trash_purge id=e2 (con conferma)') : bad(`purge: ${JSON.stringify(pg)}`);
   doc.querySelectorAll('#modalBg tr[data-id]').length === 1 ? ok('elenco del cestino aggiornato') : bad('cestino non aggiornato dopo purge');
+  const shownIds = [...doc.querySelectorAll('#modalBg tr[data-id]')].map(tr => tr.dataset.id);
   doc.getElementById('tr_empty').onclick();
   await env.wait(40);
   const pa = env.lastPost('trash_purge');
-  (pa && pa.data.all === '1' && !('id' in pa.data) && /Svuotare il cestino/.test(env.confirms.at(-1))) ? ok('Svuota cestino → POST trash_purge all=1 (con conferma)') : bad(`svuota: ${JSON.stringify(pa)}`);
+  (pa && JSON.stringify(JSON.parse(pa.data.ids || 'null')) === JSON.stringify(shownIds) && !('all' in pa.data) && /Svuotare il cestino/.test(env.confirms.at(-1))) ? ok('Svuota cestino → POST trash_purge con i soli id mostrati (con conferma)') : bad(`svuota: ${JSON.stringify(pa)}`);
   const empty = doc.querySelector('#modalBg .tr-modal');
   (empty && /Il cestino è vuoto\. Qui finiscono per 30 giorni gli elementi eliminati o sostituiti tramite i link\./.test(empty.textContent) && !doc.getElementById('tr_empty'))
     ? ok('cestino vuoto: messaggio con i giorni, niente «Svuota»') : bad(`stato vuoto: ${empty && empty.textContent}`);

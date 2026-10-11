@@ -48,7 +48,7 @@ function action_newfile(): void {
     $name = trim($_POST['name'] ?? '');
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
+    if (storage()->typeOf($target) !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     $content = (string) ($_POST['content'] ?? '');
     quota_check(strlen($content));
     note_state_purge_path($target);   // relay stantio di un omonimo cancellato in passato
@@ -72,6 +72,8 @@ function action_upload(): void {
         if (($err[$i] ?? 1) === UPLOAD_ERR_OK && is_uploaded_file((string) $tmp[$i])) $batchBytes += (int) filesize((string) $tmp[$i]);
     }
     quota_check_user($cx['owner'], $batchBytes);
+    // A tetto esaurito niente upload via link, nemmeno di file vuoti.
+    if ($cx['link'] && share_upload_remaining($cx['link']) === 0) json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
     // Tetto del LINK: prenotazione atomica del batch; i byte dei file poi non salvati vengono restituiti.
     if ($cx['link'] && $batchBytes > 0 && !share_upload_reserve($cx['link']['token'], $batchBytes)) {
         $rem = share_upload_remaining($cx['link']);
@@ -87,7 +89,7 @@ function action_upload(): void {
             if (!valid_name($n)) { $errors[] = "$n: nome non valido"; $lost += $counted; continue; }
             if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
             if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
-            $r = link_store($cx, link_upload_target($cx['link'], $dir, $n), (string) $tmp[$i], $n);
+            $r = link_store($cx, link_claim($cx['link'], $dir, $n), (string) $tmp[$i], $n);   // errori per file, mai uscite a metà lotto
             if (!$r['ok']) { $errors[] = "$n: " . $r['error']; $lost += $counted; continue; }
             $saved++; $savedBytes += $counted; $stored[] = $r['name'];
         }
@@ -103,6 +105,7 @@ function action_upload(): void {
         if (($err[$i] ?? 1) !== UPLOAD_ERR_OK) { $errors[] = "$n: errore upload (" . $err[$i] . ")"; continue; }
         if (!is_uploaded_file((string) $tmp[$i])) { $errors[] = "$n: sorgente non valida"; continue; }
         $sz = $counted;
+        if (link_name_pending(logical_join($dir, $n))) { $errors[] = "$n: un caricamento tramite link sta scrivendo questo nome, riprova tra poco"; continue; }
         $repl = (storage()->typeOf(logical_join($dir, $n)) === 'file') ? storage()->sizeOf(logical_join($dir, $n)) : 0;
         if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; $lost += $counted; continue; }
         if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
@@ -154,7 +157,7 @@ function action_rename(): void {
     if ($ftype === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $parent = strpos($from, '/') === false ? '' : substr($from, 0, strrpos($from, '/'));
     $target = logical_join($parent, $newName);
-    if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
+    if (storage()->typeOf($target) !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
     // Lo stato collaborativo segue il percorso: si elimina quello del vecchio nome
     // (l'albero va listato PRIMA della rinomina) e l'eventuale relay stantio già
     // presente alla destinazione (file omonimo cancellato in passato).

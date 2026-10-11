@@ -158,10 +158,22 @@
   }
 
   // net.js
+  async function asJson(p) {
+    let r;
+    try {
+      r = await p;
+    } catch (_) {
+      return { ok: false, error: "Connessione non riuscita: riprova" };
+    }
+    try {
+      return await r.json();
+    } catch (_) {
+      return { ok: false, error: "Errore del server (HTTP " + r.status + "): riprova" };
+    }
+  }
   async function apiGet(action, params = {}) {
     const q = new URLSearchParams({ action, ...params });
-    const r = await fetch("api.php?" + q.toString());
-    return r.json();
+    return asJson(fetch("api.php?" + q.toString()));
   }
   async function apiPost(action, data = {}) {
     const body = new FormData();
@@ -169,8 +181,7 @@
       if (Array.isArray(v)) body.append(k, JSON.stringify(v));
       else body.append(k, v);
     }
-    const r = await fetch("api.php?action=" + action, { method: "POST", headers: { "X-CSRF": CSRF }, body });
-    return r.json();
+    return asJson(fetch("api.php?action=" + action, { method: "POST", headers: { "X-CSRF": CSRF }, body }));
   }
 
   // zip.js
@@ -441,6 +452,7 @@
         const x = await apiPost("trash_restore", { id: e.id });
         if (!x.ok) {
           toast(x.error || "Errore", true);
+          await refresh();
           return;
         }
         toast("Ripristinato in /" + x.path);
@@ -452,6 +464,7 @@
         const x = await apiPost("trash_purge", { id: e.id });
         if (!x.ok) {
           toast(x.error || "Errore", true);
+          await refresh();
           return;
         }
         toast("Eliminato definitivamente");
@@ -462,9 +475,10 @@
     if (emptyBtn) emptyBtn.onclick = act(async () => {
       const n = list.length;
       if (!confirm(`Svuotare il cestino? ${n === 1 ? "L'elemento sarà eliminato" : n + " elementi saranno eliminati"} definitivamente.`)) return;
-      const x = await apiPost("trash_purge", { all: 1 });
+      const x = await apiPost("trash_purge", { ids: JSON.stringify(list.map((v) => v.id)) });
       if (!x.ok) {
         toast(x.error || "Errore", true);
+        await refresh();
         return;
       }
       toast("Cestino svuotato");
@@ -476,7 +490,7 @@
   var DIR_LEVELS = [
     ["view", "Sola lettura", "Vede e scarica i file. Non può modificare nulla."],
     ["edit", "Caricamento", "Può anche caricare file. Non sovrascrive niente: un nome già presente diventa «nome (2)»."],
-    ["contrib", "Collaboratore", "Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link."],
+    ["contrib", "Collaboratore", "Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link; ciò che elimina o sostituisce finisce nel tuo cestino."],
     ["manage", "Gestione completa", "Carica, sovrascrive, rinomina ed elimina tutto nella cartella. Ciò che elimina o sostituisce finisce nel tuo cestino. Meglio con un PIN."]
   ];
   var NOTE_LEVELS = [

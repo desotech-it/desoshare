@@ -950,6 +950,23 @@ has "eliminazione dell'utente «nuovo» con purge" "$(curl -s -b $JAR -H "X-CSRF
 [ ! -e "$ST/~cestino/nuovo" ] && ok "… il suo cestino sparisce dallo storage" || no "… il suo cestino sparisce dallo storage"
 eq "… e da trash.json" "$(AD="$AD" php -r 'echo count(array_filter(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"]??[], fn($e)=>($e["owner"]??"")==="nuovo"));')" '0'
 
+echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
+CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+head -c 1048576 /dev/zero > "$SBX/onemb.bin"
+has "tetto: 1 MB caricato" "$(curl -s -F "files[]=@$SBX/onemb.bin" "$B/api.php?action=upload&t=$CF")" '"saved":1'
+has "tetto esaurito: file vuoto rifiutato (finish)" "$(curl -s --data-urlencode uid=$(openssl rand -hex 16) --data-urlencode path= --data-urlencode name=vuoto.txt --data-urlencode total=0 --data-urlencode chunk_size=16777216 "$B/api.php?action=upload_finish&t=$CF")" 'esaurito'
+: > "$SBX/zero.txt"
+has "tetto esaurito: file vuoto rifiutato (upload)" "$(curl -s -F "files[]=@$SBX/zero.txt" "$B/api.php?action=upload&t=$CF")" 'esaurito'
+curl -s -F "files[]=@$SBX/onemb.bin;filename=x.bin" "$B/api.php?action=upload&t=$CF" >/dev/null
+for n in a b; do printf "$n" > "$SBX/$n.txt"; done
+MF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+curl -s -F "files[]=@$SBX/a.txt" -F "files[]=@$SBX/b.txt" "$B/api.php?action=upload&t=$MF" >/dev/null
+curl -s -F 'paths=["a.txt","b.txt"]' "$B/api.php?action=link_delete&t=$MF" >/dev/null
+TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | python3 -c 'import json,sys; print(json.dumps([e["id"] for e in json.load(sys.stdin)["entries"] if e["name"]=="a.txt"]))')
+has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
+has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
+
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
 has "settings_get (admin)" "$SG" '"ok":true'
@@ -1023,7 +1040,7 @@ has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."
