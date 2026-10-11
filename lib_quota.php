@@ -23,7 +23,8 @@ function usage_get(string $username, bool $fresh = false): int {
     }
     $t0 = time();
     try {
-        $bytes = storage()->usageOf(user_prefix($username));   // ricalcolo completo (LIST/scandir), fuori lock
+        // ricalcolo completo (LIST/scandir), fuori lock: home + cestino (vedi lib_trash.php)
+        $bytes = storage()->usageOf(user_prefix($username)) + storage()->usageOf(trash_root($username));
     } catch (RuntimeException $ex) {
         // Storage non interrogabile: MAI cacheare una somma inaffidabile. Si usa
         // l'ultimo valore noto (anche stantio); senza nemmeno quello, errore

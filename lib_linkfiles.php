@@ -1,0 +1,140 @@
+<?php
+// lib_linkfiles.php — modulo di lib.php (incluso da lib.php nell'ordine corretto)
+// ─── Provenienza dei file caricati tramite link ──────────────────────────────
+// Per ogni link registriamo i file caricati con esso: percorso relativo alla
+// cartella condivisa, dimensione e data lette dallo storage. Un file è «del
+// link» solo se esiste ancora con la STESSA dimensione e data: se il proprietario
+// lo sostituisce, lo rinomina o lo cancella, il link perde il diritto di
+// toccarlo. È una verifica che si autoconvalida, senza agganci su ogni
+// operazione dello storage (stato indicizzato per percorso = bug di ciclo di vita).
+function linkfiles_file(): string { return DATA_DIR . '/link_files.json'; }
+
+function link_parent(string $abs): string {
+    return strpos($abs, '/') === false ? '' : substr($abs, 0, strrpos($abs, '/'));
+}
+// Dimensione e data di un FILE, dall'elenco della cartella che lo contiene (lo
+// storage non ha uno stat per singolo oggetto). null se manca o non è un file.
+function link_file_stat(string $abs): ?array {
+    $name = basename($abs);
+    foreach (storage()->listDir(link_parent($abs)) as $e) {
+        if ($e['name'] === $name) return $e['type'] === 'file' ? ['size' => (int) $e['size'], 'mtime' => (int) $e['mtime']] : null;
+    }
+    return null;
+}
+// Percorso relativo alla cartella del link; null se $abs è fuori dalla condivisione.
+function link_rel(array $s, string $abs): ?string {
+    $base = share_base($s);
+    if ($base === '') return $abs;
+    if ($abs === $base) return '';
+    return str_starts_with($abs, $base . '/') ? substr($abs, strlen($base) + 1) : null;
+}
+// Mappa rel → voce dei file caricati con questo link (per l'elenco della pagina pubblica).
+function link_files_of(array $s): array {
+    return json_read(linkfiles_file())['files'][(string) ($s['token'] ?? '')] ?? [];
+}
+function link_entry_matches($e, ?array $stat): bool {
+    return is_array($e) && $stat !== null && (int) ($e['size'] ?? -1) === $stat['size'] && (int) ($e['mtime'] ?? -1) === $stat['mtime'];
+}
+function link_file_is_own(array $s, string $abs, ?array $stat = null): bool {
+    $rel = link_rel($s, $abs);
+    if ($rel === null || $rel === '') return false;
+    $e = link_files_of($s)[$rel] ?? null;
+    if (!is_array($e)) return false;
+    return link_entry_matches($e, $stat ?? link_file_stat($abs));
+}
+// Registra $abs come caricato da questo link (dopo la scrittura nello storage).
+// Ripulisce di passaggio le voci dei link che non esistono più.
+function link_file_record(array $s, string $abs): void {
+    $rel = link_rel($s, $abs);
+    $stat = link_file_stat($abs);
+    if ($rel === null || $rel === '' || !$stat) return;
+    $tok = (string) $s['token'];
+    $active = [];
+    foreach (shares_load()['shares'] ?? [] as $x) $active[(string) ($x['token'] ?? '')] = true;
+    with_json_lock(linkfiles_file(), function (array $d) use ($tok, $rel, $stat, $active) {
+        $files = $d['files'] ?? [];
+        foreach (array_keys($files) as $t) if (!isset($active[(string) $t])) unset($files[$t]);
+        $files[$tok][$rel] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'at' => time()];
+        $d['files'] = $files;
+        return $d;
+    });
+}
+// Dopo una rinomina fatta dal link stesso: la voce segue il nuovo nome (su S3 la
+// rinomina è una copia, quindi la data cambia e va riletta).
+function link_file_move(array $s, string $fromAbs, string $toAbs): void {
+    $from = link_rel($s, $fromAbs); $to = link_rel($s, $toAbs);
+    if ($from === null || $from === '') return;
+    $stat = ($to !== null && $to !== '') ? link_file_stat($toAbs) : null;
+    $tok = (string) $s['token'];
+    with_json_lock(linkfiles_file(), function (array $d) use ($tok, $from, $to, $stat) {
+        if (!isset($d['files'][$tok][$from])) return null;
+        $at = (int) ($d['files'][$tok][$from]['at'] ?? time());
+        unset($d['files'][$tok][$from]);
+        if ($stat) $d['files'][$tok][$to] = ['size' => $stat['size'], 'mtime' => $stat['mtime'], 'at' => $at];
+        return $d;
+    });
+}
+function link_file_forget(array $s, string $abs): void {
+    $rel = link_rel($s, $abs);
+    if ($rel === null || $rel === '') return;
+    $tok = (string) $s['token'];
+    with_json_lock(linkfiles_file(), function (array $d) use ($tok, $rel) {
+        if (!isset($d['files'][$tok][$rel])) return null;
+        unset($d['files'][$tok][$rel]);
+        return $d;
+    });
+}
+
+// ─── Nomi in caricamento via link: collisioni e prenotazione ─────────────────
+// «nome (2).ext»; un nome che inizia col punto (".env") prende il suffisso in coda.
+function link_name_variant(string $name, int $n): string {
+    $dot = strrpos($name, '.');
+    if ($dot === false || $dot === 0) return $name . " ($n)";
+    return substr($name, 0, $dot) . " ($n)" . substr($name, $dot);
+}
+function link_pending(array $d): array {
+    $now = time();
+    return array_filter($d['pending'] ?? [], fn($ts) => $now - (int) $ts < 7200);   // prenotazioni orfane (processo morto) scadono
+}
+function link_name_pending(string $abs): bool {
+    return isset(link_pending(json_read(linkfiles_file()))[$abs]);
+}
+// Sceglie e PRENOTA la destinazione di un upload via link, in un'unica sezione
+// critica: due upload concorrenti con lo stesso nome non finiscono sullo stesso
+// file. Nome libero → quello. Occupato da un file che il link può sostituire
+// ('manage' sempre, 'contrib' se è suo) → sostituzione. Altrimenti il primo
+// «nome (n).ext» libero: 'edit' e 'contrib' non toccano mai i file altrui.
+// Ritorna ['path' => logico, 'replace' => bool]; va rilasciata con link_upload_release().
+function link_upload_target(array $s, string $dir, string $name): array {
+    $out = null; $err = null; $code = 409;
+    with_json_lock(linkfiles_file(), function (array $d) use ($s, $dir, $name, &$out, &$err, &$code) {
+        $pending = link_pending($d);
+        for ($n = 1; $n <= 500; $n++) {
+            $cand = logical_join($dir, $n === 1 ? $name : link_name_variant($name, $n));
+            if (isset($pending[$cand])) continue;
+            $chk = storage()->existsCheck($cand);
+            if ($chk['type'] === false && !$chk['sure']) { $err = 'Storage non verificabile in questo momento: riprova'; $code = 503; return null; }
+            if ($chk['type'] === 'dir') continue;
+            $replace = false;
+            if ($chk['type'] === 'file') {
+                if (!(share_can($s, 'any') || (share_can($s, 'own') && link_file_is_own($s, $cand)))) continue;
+                $replace = true;
+            }
+            $pending[$cand] = time();
+            $d['pending'] = $pending;
+            $out = ['path' => $cand, 'replace' => $replace];
+            return $d;
+        }
+        $err = 'Troppi file con lo stesso nome in questa cartella';
+        return null;
+    });
+    if ($err !== null) json_out(['ok' => false, 'error' => $err], $code);
+    return $out;
+}
+function link_upload_release(string $abs): void {
+    with_json_lock(linkfiles_file(), function (array $d) use ($abs) {
+        if (!isset($d['pending'][$abs])) return null;
+        unset($d['pending'][$abs]);
+        return $d;
+    });
+}

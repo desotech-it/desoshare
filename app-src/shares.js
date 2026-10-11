@@ -1,92 +1,182 @@
-// shares.js — condivisioni a scadenza: dialog di creazione e pannello attive.
-import { S, modalBg, $ } from './state.js';
+// shares.js — link nominativi a scadenza: dialog di creazione e pannello dei link attivi.
+import { S, modalBg, $, CAN_WRITE } from './state.js';
 import { apiGet, apiPost } from './net.js';
-import { toast, esc, isTextFile, copyText, fmtDuration, fmtBytes, slugify } from './util.js';
+import { toast, esc, isTextFile, copyText, fmtDuration, fmtBytes, slugify, iconFor } from './util.js';
 import { openModal, guardSubmit } from './modal.js';
+import { trashPanel } from './trash.js';
+
+// Livelli d'accesso [valore, nome, spiegazione]. Per una nota `edit` è il co-editing.
+const DIR_LEVELS = [
+  ['view', 'Sola lettura', 'Vede e scarica i file. Non può modificare nulla.'],
+  ['edit', 'Caricamento', 'Può anche caricare file. Non sovrascrive niente: un nome già presente diventa «nome (2)».'],
+  ['contrib', 'Collaboratore', 'Carica file e crea cartelle. Sostituisce, rinomina ed elimina solo ciò che ha caricato con questo link.'],
+  ['manage', 'Gestione completa', 'Carica, sovrascrive, rinomina ed elimina tutto nella cartella. Ciò che elimina o sostituisce finisce nel tuo cestino. Meglio con un PIN.'],
+];
+const NOTE_LEVELS = [
+  ['view', 'Sola lettura', 'Legge e scarica la nota.'],
+  ['edit', 'Modificabile (co-editing)', 'Modifica la nota insieme a te, in tempo reale.'],
+];
+const UPLOAD_LEVELS = new Set(['edit', 'contrib', 'manage']);   // livelli di cartella che caricano file
+
+function levelName(mode, isDir) {
+  const l = (isDir ? DIR_LEVELS : NOTE_LEVELS).find(x => x[0] === mode);
+  return l ? l[1].replace(/ \(co-editing\)$/, '') : 'Sola lettura';
+}
+
+// Parte leggibile come la produce share_slug_make(): slug troncato a 42 caratteri
+// (42 + 22 di «-AAAAMMGG-HHMM-codice» ≤ 64), «link» se resta vuota.
+const READABLE_MAX = 42;
+const readablePart = v => slugify(v).slice(0, READABLE_MAX).replace(/-+$/, '') || 'link';
+
+// Data e ora come le scrive il server nell'indirizzo (fuso di Roma, SHARE_SLUG_TZ).
+function slugStamp(d = new Date()) {
+  const pad = n => String(n).padStart(2, '0');
+  try {
+    const p = {};
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    if (p.year && p.minute) return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
+  } catch (_) { /* fuso non supportato: ora locale */ }
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+const LIMIT_OPTS = `<option value="100">100 MB</option>
+      <option value="500">500 MB</option>
+      <option value="1024" selected>1 GB</option>
+      <option value="5120">5 GB</option>
+      <option value="0">Nessun tetto (solo la mia quota)</option>`;
 
 export function shareDialog(rel, name, isDir = false) {
-  // Modificabile: nota → co-editing; cartella → chi ha il link può caricare file.
-  const canEdit = isDir || isTextFile(name);
-  const defSlug = slugify(name.replace(/\.[^.]+$/, ''));          // nome senza estensione → slug
+  // Livelli ≠ sola lettura: cartelle e note, e solo per chi ha la scrittura (il server darebbe 403).
+  const levels = !CAN_WRITE ? null : isDir ? DIR_LEVELS : isTextFile(name) ? NOTE_LEVELS : null;
+  const defName = isDir ? name : name.replace(/\.[^.]+$/, '');   // file: senza estensione (come il server)
+  const defSlug = slugify(defName);
   const base = location.origin + location.pathname.replace(/\/[^/]*$/, '');
-  openModal(`<div class="modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
-    <label>Durata del link</label>
+  const access = levels
+    ? `<label for="sh_mode">Accesso</label>
+    <select id="sh_mode">${levels.map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join('')}</select>
+    <div id="sh_mode_help" class="sh-help"></div>
+    ${isDir ? `<div id="sh_limit_wrap" hidden><label for="sh_limit">Spazio caricabile tramite il link <span class="sh-opt">(oltre vale la tua quota)</span></label>
+    <select id="sh_limit">${LIMIT_OPTS}</select></div>` : ''}`
+    : `<label>Accesso</label><div class="sh-fixed"><i class="ti ti-eye"></i> Sola lettura
+      <span class="muted">— ${isDir ? 'vede e scarica i file' : 'può scaricare il file'}</span></div>`;
+  openModal(`<div class="modal sh-modal"><h3><i class="ti ti-share"></i> Condividi "${esc(name)}"</h3>
+    <label for="sh_label">A chi lo dai <span class="sh-opt">(facoltativo)</span></label>
+    <input type="text" id="sh_label" maxlength="80" placeholder="es. Avv. Bianchi" autocomplete="off">
+    <label for="sh_ttl">Durata del link</label>
     <select id="sh_ttl">
       <option value="3600">1 ora</option>
       <option value="86400" selected>24 ore</option>
       <option value="604800">7 giorni</option>
       <option value="2592000">30 giorni</option>
     </select>
-    ${canEdit ? `<label style="margin-top:10px">Accesso</label>
-    <select id="sh_mode">
-      <option value="view">Sola lettura</option>
-      <option value="edit">${isDir ? 'Modificabile (chiunque abbia il link può caricare file nella cartella)' : 'Modificabile (chiunque abbia il link co-edita)'}</option>
-    </select>
-    ${isDir ? `<div id="sh_limit_wrap" style="display:none"><label style="margin-top:10px">Spazio caricabile tramite il link <span class="muted" style="font-weight:400">(oltre vale la tua quota)</span></label>
-    <select id="sh_limit">
-      <option value="100">100 MB</option>
-      <option value="500">500 MB</option>
-      <option value="1024" selected>1 GB</option>
-      <option value="5120">5 GB</option>
-      <option value="0">Nessun tetto (solo la mia quota)</option>
-    </select></div>` : ''}` : ''}
-    <label style="margin-top:10px">Indirizzo del link <span class="muted" style="font-weight:400">(facoltativo)</span></label>
-    <div style="display:flex;align-items:center;gap:3px;font-size:13px">
-      <span class="muted" style="white-space:nowrap">/d/</span>
-      <input type="text" id="sh_slug" placeholder="link-casuale" value="${esc(defSlug)}" style="flex:1" autocomplete="off">
-    </div>
-    <span id="sh_slughint" class="muted" style="font-size:11px"></span>
-    <div id="sh_result" style="margin-top:12px"></div>
+    ${access}
+    <label for="sh_pin">PIN <span class="sh-opt">(facoltativo, da 4 a 64 caratteri)</span></label>
+    <input type="text" id="sh_pin" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="sh-help">Comunicalo a parte (telefono, messaggio). Senza PIN basta il link.</div>
+    <label for="sh_slug">Indirizzo del link</label>
+    <div class="sh-slug"><span class="muted">/d/</span>
+      <input type="text" id="sh_slug" value="${esc(defSlug)}" placeholder="${esc(readablePart(defName))}" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+    <div id="sh_slughint" class="sh-preview"></div>
+    <div class="sh-help">Data, ora e codice casuale vengono aggiunti automaticamente: ogni link è unico e non si indovina.</div>
+    <div id="sh_err" class="sh-err" hidden></div>
+    <div id="sh_result"></div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button>
       <button class="btn btn-primary" id="sh_create"><i class="ti ti-link"></i> Crea link</button></div></div>`);
-  const slugEl = $('#sh_slug', modalBg), hintEl = $('#sh_slughint', modalBg);
+  const slugEl = $('#sh_slug', modalBg), hintEl = $('#sh_slughint', modalBg), errEl = $('#sh_err', modalBg);
+  const modeEl = $('#sh_mode', modalBg);
+  const showErr = msg => { errEl.textContent = msg; errEl.hidden = !msg; };
+  // Campo vuoto = il server usa il nome dell'elemento: l'anteprima fa lo stesso.
   const updHint = () => {
-    hintEl.style.color = '';
-    const sl = slugify(slugEl.value);
-    hintEl.textContent = sl ? '→ ' + base + '/d/' + sl : 'Vuoto = link casuale non indovinabile.';
+    const r = readablePart(slugEl.value.trim() === '' ? defName : slugEl.value);
+    hintEl.textContent = '→ ' + base + '/d/' + r + '-' + slugStamp() + '-xxxxxx';
   };
   slugEl.oninput = updHint; updHint();
-  // Il tetto di caricamento ha senso solo per una cartella modificabile.
-  if (isDir) {
-    const modeEl = $('#sh_mode', modalBg), limWrap = $('#sh_limit_wrap', modalBg);
-    modeEl.onchange = () => { limWrap.style.display = modeEl.value === 'edit' ? '' : 'none'; };
+  const curMode = () => (modeEl ? modeEl.value : 'view');
+  const hasCap = () => isDir && UPLOAD_LEVELS.has(curMode());   // il tetto vale solo se il link carica file
+  if (modeEl) {
+    const helpEl = $('#sh_mode_help', modalBg), limWrap = $('#sh_limit_wrap', modalBg);
+    modeEl.onchange = () => {
+      helpEl.textContent = (levels.find(l => l[0] === modeEl.value) || levels[0])[2];
+      if (limWrap) limWrap.hidden = !hasCap();
+    };
+    modeEl.onchange();
   }
-  // guardSubmit: un doppio click creerebbe due condivisioni (o un 409 spurio con slug)
+  // guardSubmit: un doppio click creerebbe due link.
   $('#sh_create', modalBg).onclick = guardSubmit($('#sh_create', modalBg), async () => {
-    const ttl = $('#sh_ttl', modalBg).value;
-    const mode = canEdit ? $('#sh_mode', modalBg).value : 'view';
-    const limitMb = isDir && mode === 'edit' ? $('#sh_limit', modalBg).value : '';
-    const r = await apiPost('share_create', { path: rel, ttl, mode, slug: slugEl.value, upload_limit_mb: limitMb });
-    if (!r.ok) { hintEl.textContent = r.error || 'Errore'; hintEl.style.color = 'var(--danger, #c0392b)'; return; }
-    const when = new Date(r.expires_at * 1000).toLocaleString('it-IT');
-    const cap = isDir && mode === 'edit' ? (Number(limitMb) > 0 ? `, fino a ${fmtBytes(Number(limitMb) * 1048576)}` : ', nessun tetto') : '';
-    $('#sh_result', modalBg).innerHTML = `<label>Link pubblico (${mode === 'edit' ? 'modificabile' + cap : 'sola lettura'}) — scade il ${esc(when)}</label>
-      <div style="display:flex;gap:6px"><input type="text" id="sh_url" readonly value="${esc(r.url)}" style="flex:1">
-      <button class="btn" id="sh_copy" title="Copia"><i class="ti ti-copy"></i></button></div>`;
-    // Link creato: il dialog resta come riepilogo (un altro clic darebbe 409 o un secondo link).
-    modalBg.querySelectorAll('#sh_ttl, #sh_mode, #sh_limit, #sh_slug').forEach(el => { el.disabled = true; });
+    showErr('');
+    const mode = curMode();
+    const label = $('#sh_label', modalBg).value.trim();
+    const pinEl = $('#sh_pin', modalBg);
+    // Spazi ai bordi di un PIN incollato lo renderebbero impossibile da digitare: via.
+    const pin = pinEl.value.trim(); pinEl.value = pin;
+    if (pin && [...pin].length < 4) { showErr('Il PIN deve avere almeno 4 caratteri (oppure lascialo vuoto).'); pinEl.focus(); return; }
+    const limitMb = hasCap() ? $('#sh_limit', modalBg).value : '';
+    const r = await apiPost('share_create', { path: rel, ttl: $('#sh_ttl', modalBg).value, mode, slug: slugEl.value.trim(),
+      label, pin, upload_limit_mb: limitMb });
+    if (!r || !r.ok) { showErr((r && r.error) || 'Errore nella creazione del link'); return; }
+    const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
+    const when = new Date(r.expires_at * 1000).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+    const cap = hasCap() ? (Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : ' · nessun tetto') : '';
+    $('#sh_result', modalBg).innerHTML = `<div class="sh-done">
+      <label for="sh_url">Link creato</label>
+      <div class="sh-url"><input type="text" id="sh_url" readonly value="${esc(r.url)}">
+        <button class="btn" id="sh_copy" title="Copia link"><i class="ti ti-copy"></i></button></div>
+      <dl class="sh-sum">
+        <dt>Livello</dt><dd>${esc(levelName(rMode, isDir) + cap)}</dd>
+        ${rLabel ? `<dt>Destinatario</dt><dd>${esc(rLabel)}</dd>` : ''}
+        <dt>Scade</dt><dd>${esc(when)}</dd>
+      </dl>
+      ${r.has_pin ? '<div class="sh-pinset"><i class="ti ti-lock"></i> PIN impostato: comunicalo separatamente</div>' : ''}</div>`;
+    // Link creato: il dialog resta come riepilogo (un altro clic darebbe un secondo link).
+    modalBg.querySelectorAll('#sh_label, #sh_ttl, #sh_mode, #sh_limit, #sh_pin, #sh_slug').forEach(el => { el.disabled = true; });
     $('#sh_create', modalBg).remove();
     modalBg.querySelector('.modal-actions .btn').classList.add('btn-primary');
     const inp = $('#sh_url', modalBg); inp.focus(); inp.select();
     $('#sh_copy', modalBg).onclick = () => { copyText(r.url); toast('Link copiato'); };
   });
 }
+
+// Riga secondaria di un link: destinatario, livello (effettivo), PIN, spazio usato.
+function shareMeta(s, isAdmin) {
+  const isDir = s.type === 'dir';
+  const mode = s.mode || 'view', level = s.level || mode;
+  const parts = [];
+  if (s.label) parts.push(`per «${esc(s.label)}»`);
+  parts.push(level === mode ? esc(levelName(level, isDir))
+    : `${esc(levelName(level, isDir))} <span title="Chi l'ha creato non ha più il permesso di scrittura">(era ${esc(levelName(mode, isDir))})</span>`);
+  if (s.has_pin) parts.push('<i class="ti ti-lock" title="Protetto da PIN" aria-label="Protetto da PIN"></i>');
+  if (isDir && UPLOAD_LEVELS.has(mode)) {
+    const used = Number(s.uploaded) || 0, cap = Number(s.upload_limit) || 0;
+    parts.push(esc('caricati ' + fmtBytes(used) + (cap > 0 ? ' / ' + fmtBytes(cap) : ' (nessun tetto)')));
+  }
+  if (isAdmin && s.created_by) parts.push('di ' + esc(s.created_by));
+  return parts.join(' · ');
+}
+
 export async function sharesPanel() {
-  const r = await apiGet('share_list');
+  // Il conteggio del cestino è accessorio: se fallisce il pannello si apre lo stesso.
+  const [r, t] = await Promise.all([apiGet('share_list'), apiGet('trash_list').catch(() => null)]);
   if (!r.ok) { toast(r.error || 'Errore', true); return; }
-  const body = r.shares.length ? `<table class="utable"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${
-    r.shares.map(s => `<tr data-exp="${s.expires_at}">
-      <td><i class="ti ${s.type === 'dir' ? 'ti-folder' : 'ti-file'}"></i> ${esc(s.name)}${s.mode === 'edit' ? ` <span class="muted" style="font-size:11px">· modificabile${s.type === 'dir' ? ' · caricati ' + fmtBytes(s.uploaded || 0) + (s.upload_limit > 0 ? ' / ' + fmtBytes(s.upload_limit) : '') : ''}</span>` : ''}${r.is_admin ? ` <span class="muted" style="font-size:11px">(${esc(s.created_by)})</span>` : ''}</td>
+  const nTrash = t && t.ok && Array.isArray(t.entries) ? t.entries.length : null;
+  const body = r.shares.length ? `<div class="sh-scroll"><table class="utable sh-table"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${
+    r.shares.map(s => `<tr data-exp="${Number(s.expires_at) || 0}">
+      <td><div class="sh-name"><i class="ti ${iconFor({ type: s.type === 'dir' ? 'dir' : 'file', name: String(s.name || '') })}"></i> ${esc(s.name)}</div>
+        <div class="sh-meta">${shareMeta(s, r.is_admin)}</div></td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
         <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join('')
-    }</tbody></table>` : '<p class="muted">Nessuna condivisione attiva.</p>';
-  openModal(`<div class="modal wide"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
-    <div class="modal-actions"><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    }</tbody></table></div>` : '<p class="muted">Nessuna condivisione attiva.</p>';
+  openModal(`<div class="modal wide sh-panel"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
+    <div class="modal-actions"><button class="btn sh-trash-btn" id="sh_trash"><i class="ti ti-trash"></i> Cestino${nTrash !== null ? ` (${nTrash})` : ''}</button>
+      <button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+  $('#sh_trash', modalBg).onclick = () => trashPanel();
   modalBg.querySelectorAll('[data-url]').forEach(b => b.onclick = () => { copyText(b.dataset.url); toast('Link copiato'); });
   modalBg.querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => {
-    if (!confirm('Revocare questa condivisione? Il link smetterà di funzionare.')) return;
+    const s = r.shares.find(x => x.token === b.dataset.revoke) || {};
+    const who = s.label ? ` di «${s.label}»` : '';
+    if (!confirm(`Revocare il link${who} a «${s.name || ''}»? Smetterà subito di funzionare.`)) return;
     const x = await apiPost('share_revoke', { token: b.dataset.revoke });
     if (x.ok) { toast('Condivisione revocata'); sharesPanel(); } else toast(x.error || 'Errore', true);
   });

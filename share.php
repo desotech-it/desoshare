@@ -1,17 +1,37 @@
 <?php
 // Pagina PUBBLICA di condivisione (nessun login), confinata all'elemento
-// condiviso e valida fino alla scadenza del token. Sola lettura, salvo i link
-// 'edit': nota → editor collaborativo, cartella → upload di file consentito.
+// condiviso e valida fino alla scadenza del link. Il livello del link decide cosa
+// si può fare: sola lettura, caricamento, collaboratore, gestione completa (vedi
+// share_level). Con un PIN, il link va sbloccato una volta per sessione.
 require_once __DIR__ . '/lib.php';
+boot();   // sessione: sblocco del PIN e token CSRF delle operazioni via link
 
 $token = $_GET['t'] ?? '';
 if (!is_string($token)) { share_invalid_page(); exit; }   // t[]= non deve produrre un TypeError 500
-$share = share_find($token);
+$share = share_lookup($token, false);
 if (!$share) { share_invalid_page(); exit; }
 
 $type = $share['type'] ?? 'file';
 $p = $_GET['p'] ?? '';
 if (!is_string($p)) $p = '';                              // idem per p[]=
+
+// PIN: finché il link non è sbloccato in questa sessione non si serve nulla
+// (pagina, download, ZIP, manifest), solo la richiesta del PIN.
+if (!share_pin_ok($share)) {
+    if (isset($_GET['zipmanifest'])) json_out(['ok' => false, 'error' => 'PIN richiesto', 'pin_required' => true], 401);
+    $err = '';
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        $pin = is_string($_POST['pin'] ?? null) ? $_POST['pin'] : '';
+        if (!hash_equals(csrf_token(), is_string($_POST['csrf'] ?? null) ? $_POST['csrf'] : '')) $err = 'Sessione scaduta: riprova';
+        elseif (share_pin_locked($share)) $err = 'Troppi tentativi errati: riprova tra qualche minuto';
+        elseif (share_pin_try($share, $pin)) {
+            header('Location: ' . share_self_url(), true, 303);
+            exit;
+        } else $err = share_pin_locked($share) ? 'Troppi tentativi errati: riprova tra qualche minuto' : 'PIN non corretto';
+    }
+    share_pin_page($share, $err);
+    exit;
+}
 
 // Download di un file
 if (isset($_GET['dl'])) {
@@ -114,6 +134,26 @@ function share_invalid_page(string $msg = 'Link non valido o scaduto'): void {
        . '<p class="muted">Questo link di condivisione non è più valido.</p>'
        . '</div></div></body></html>';
 }
+// URL corrente come percorso assoluto dello stesso host (form del PIN e redirect
+// dopo lo sblocco): mai un URL esterno.
+function share_self_url(): string {
+    $u = (string) ($_SERVER['REQUEST_URI'] ?? '/');
+    return (str_starts_with($u, '/') && !str_starts_with($u, '//')) ? $u : '/';
+}
+function share_pin_page(array $s, string $err): void {
+    http_response_code($err === '' ? 401 : 403);
+    share_head('Link protetto');
+    echo '<div class="auth-wrap"><form class="auth-card" method="post" action="' . h(share_self_url()) . '">'
+       . '<img src="assets/desolabs-logo.png" class="auth-logo-img" alt="DesoLabs">'
+       . '<div class="warn-ico" style="margin:0 auto 10px"><i class="ti ti-lock"></i></div>'
+       . '<h1 style="font-size:18px;text-align:center">Link protetto da PIN</h1>'
+       . '<p class="muted" style="text-align:center">Inserisci il PIN che ti è stato comunicato insieme al link.</p>'
+       . ($err !== '' ? '<div class="alert">' . h($err) . '</div>' : '')
+       . '<input type="hidden" name="csrf" value="' . h(csrf_token()) . '">'
+       . '<label for="pin">PIN</label><input type="password" id="pin" name="pin" autocomplete="off" required autofocus>'
+       . '<button class="btn btn-primary" type="submit" style="justify-content:center;width:100%;margin-top:12px"><i class="ti ti-lock-open"></i> Apri</button>'
+       . '</form></div></body></html>';
+}
 function share_file_page(array $s, string $abs): void {
     share_head('Condivisione');
     $dl = 'share.php?t=' . urlencode($s['token']) . '&dl=1';
@@ -131,7 +171,7 @@ function share_file_page(array $s, string $abs): void {
 function share_editor_page(array $s, string $abs): void {
     share_head('Nota condivisa');
     $tok = $s['token'];
-    $editable = (($s['mode'] ?? 'view') === 'edit');
+    $editable = share_level($s) === 'edit';
     $bv = (string) @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js');
     $nv = (string) @filemtime(PUBLIC_DIR . '/assets/note-editor.js');
     $dl = 'share.php?t=' . urlencode($tok) . '&dl=1';
@@ -148,9 +188,9 @@ function share_editor_page(array $s, string $abs): void {
        . '</div>'
        . '<script src="assets/note-editor.js?v=' . h($nv) . '"></script>'
        . '<script>(async function(){'
-       . 'var t=' . json_encode($tok) . ',BV=' . json_encode($bv) . ';'
+       . 'var t=' . json_encode($tok) . ',BV=' . json_encode($bv) . ',CS=' . json_encode(csrf_token()) . ';'
        . 'var host=document.getElementById("ed_host"),st=document.getElementById("ed_status"),pr=document.getElementById("ed_pres");'
-       . 'function post(a,d){var b=new FormData();b.append("t",t);for(var k in d){var v=d[k];b.append(k,Array.isArray(v)?JSON.stringify(v):v);}return fetch("api.php?action="+a,{method:"POST",body:b}).then(function(r){return r.json();});}'
+       . 'function post(a,d){var b=new FormData();b.append("t",t);for(var k in d){var v=d[k];b.append(k,Array.isArray(v)?JSON.stringify(v):v);}return fetch("api.php?action="+a,{method:"POST",headers:{"X-CSRF":CS},body:b}).then(function(r){return r.json();});}'
        . 'function reopen(){return fetch("api.php?action=note_open&t="+encodeURIComponent(t)).then(function(r){return r.json();});}'
        . 'var info=await reopen();'
        . 'if(!info.ok){host.textContent=info.error||"Errore";st.textContent="";return;}'
@@ -162,13 +202,23 @@ function share_editor_page(array $s, string $abs): void {
 function share_folder_page(array $s, string $dir, string $p): void {
     share_head('Condivisione');
     $tok = urlencode($s['token']);
-    $writable = share_link_writable($s);   // link 'edit' di cartella: chi lo ha può caricare file qui
+    $level = share_level($s);
+    $writable = share_can($s, 'upload');
     $remaining = $writable ? share_upload_remaining($s) : null;   // tetto proprio del link (null = nessuno)
     $exhausted = $writable && $remaining !== null && $remaining <= 0;
     $canUpload = $writable && !$exhausted;
+    $canMkdir = share_can($s, 'mkdir');
+    $canAny = share_can($s, 'any');
+    $canOwn = share_can($s, 'own');
+    $ownMap = $canOwn && !$canAny ? link_files_of($s) : [];
     $items = [];
     foreach (storage()->listDir($dir) as $e) {
-        $items[] = ['name' => $e['name'], 'dir' => ($e['type'] === 'dir'), 'size' => (int) ($e['size'] ?? 0)];
+        $isDir = $e['type'] === 'dir';
+        $rel = ($p !== '' ? trim($p, '/') . '/' : '') . $e['name'];
+        // Azioni sulla riga: 'manage' tutto; 'contrib' solo i file caricati con questo
+        // link e ancora identici (stessa verifica del server, lib_linkfiles.php).
+        $touch = $canAny || (!$isDir && $canOwn && link_entry_matches($ownMap[$rel] ?? null, ['size' => (int) ($e['size'] ?? 0), 'mtime' => (int) ($e['mtime'] ?? 0)]));
+        $items[] = ['name' => $e['name'], 'dir' => $isDir, 'size' => (int) ($e['size'] ?? 0), 'rel' => $rel, 'touch' => $touch];
     }
     usort($items, fn($a, $b) => $a['dir'] === $b['dir'] ? strcasecmp($a['name'], $b['name']) : ($a['dir'] ? -1 : 1));
 
@@ -185,30 +235,45 @@ function share_folder_page(array $s, string $dir, string $p): void {
     $zipManUrl = 'share.php?t=' . $tok . '&p=' . urlencode($p) . '&zipmanifest=1';
     $jszipV = (string) @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js');
     $upV = (string) @filemtime(PUBLIC_DIR . '/assets/share-upload.js');
+    $acV = (string) @filemtime(PUBLIC_DIR . '/assets/share-actions.js');
     echo '<div class="share-wrap">'
        . '<header class="topbar"><div class="brand"><img src="assets/desolabs-icon.png" class="brand-logo" alt=""> ' . h(APP_NAME) . '</div>'
        . '<div class="topbar-right">'
        . ($canUpload ? '<label class="btn btn-primary" for="shUpInput"><i class="ti ti-upload"></i> Carica file</label><input type="file" id="shUpInput" multiple hidden>' : '')
+       . ($canMkdir ? '<button class="btn" type="button" id="shMkdir"><i class="ti ti-folder-plus"></i> Nuova cartella</button>' : '')
        . '<a class="btn' . ($canUpload ? '' : ' btn-primary') . '" id="zipAll" href="' . h($zipHref) . '"><i class="ti ti-file-zip"></i> Scarica tutto (ZIP)</a></div></header>'
        . '<div class="crumbs">' . $crumbs . '</div>'
        . share_expiry_html($s);
+    $what = [
+        'edit'    => 'Puoi caricare file in questa cartella, anche trascinandoli qui. Un file con un nome già presente viene salvato con un nome nuovo.',
+        'contrib' => 'Puoi caricare file e rinominare o eliminare quelli caricati con questo link.',
+        'manage'  => 'Puoi caricare file, creare cartelle, rinominare ed eliminare qualunque elemento di questa cartella.',
+    ][$level] ?? '';
     if ($exhausted) {
         echo '<p class="share-mode muted"><i class="ti ti-lock"></i> Spazio caricabile tramite questo link esaurito: non è più possibile caricare file.</p>';
-    } elseif ($canUpload) {
-        echo '<p class="share-mode muted"><i class="ti ti-pencil"></i> Link modificabile: chi lo possiede può caricare file in questa cartella (anche trascinandoli qui).'
-           . ($remaining !== null ? ' Spazio ancora caricabile: <b>' . h(human_size($remaining)) . '</b>.' : '') . '</p>'
-           . '<div id="shUp" class="share-up"></div>';
     }
-    echo '<div class="listing">';
+    if ($what !== '' && !$exhausted) {
+        echo '<p class="share-mode muted"><i class="ti ti-pencil"></i> ' . h($what)
+           . ($canOwn ? ' Gli elementi eliminati restano recuperabili dal proprietario per ' . TRASH_DAYS . ' giorni.' : '')
+           . ($remaining !== null ? ' Spazio ancora caricabile: <b>' . h(human_size($remaining)) . '</b>.' : '') . '</p>';
+    }
+    if ($canUpload) echo '<div id="shUp" class="share-up"></div>';
+    echo '<div id="shMsg" class="share-msg" hidden></div>';
+    echo '<div class="listing' . ($canOwn ? ' share-acts-on' : '') . '">';
     if (!$items) echo '<div class="empty"><i class="ti ti-folder-open"></i> Cartella vuota' . ($canUpload ? ' — trascina qui i file o usa «Carica file»' : '') . '</div>';
     foreach ($items as $it) {
-        $sub = ($p !== '' ? $p . '/' : '') . $it['name'];
+        $acts = $it['touch']
+            ? '<button type="button" class="ic js-ren" title="Rinomina" aria-label="Rinomina"><i class="ti ti-pencil"></i></button>'
+            . '<button type="button" class="ic ic-del js-del" title="Elimina" aria-label="Elimina"><i class="ti ti-trash"></i></button>'
+            : '';
+        $data = ' data-rel="' . h($it['rel']) . '" data-name="' . h($it['name']) . '"';
         if ($it['dir']) {
-            $href = 'share.php?t=' . $tok . '&p=' . urlencode($sub);
-            echo '<div class="share-row"><a class="name clickable" href="' . h($href) . '"><i class="ti ti-folder ico-dir"></i> <span class="label">' . h($it['name']) . '</span></a><span class="size">—</span><span></span></div>';
+            $href = 'share.php?t=' . $tok . '&p=' . urlencode($it['rel']);
+            echo '<div class="share-row"' . $data . '><a class="name clickable" href="' . h($href) . '"><i class="ti ti-folder ico-dir"></i> <span class="label">' . h($it['name']) . '</span></a><span class="size">—</span><span class="share-acts">' . $acts . '</span></div>';
         } else {
-            $href = 'share.php?t=' . $tok . '&p=' . urlencode($sub) . '&dl=1';
-            echo '<div class="share-row"><span class="name"><i class="ti ti-file ico-file"></i> <span class="label">' . h($it['name']) . '</span></span><span class="size">' . h(human_size($it['size'])) . '</span><a class="dl" href="' . h($href) . '" title="Scarica"><i class="ti ti-download"></i></a></div>';
+            $href = 'share.php?t=' . $tok . '&p=' . urlencode($it['rel']) . '&dl=1';
+            echo '<div class="share-row"' . $data . '><span class="name"><i class="ti ti-file ico-file"></i> <span class="label">' . h($it['name']) . '</span></span><span class="size">' . h(human_size($it['size'])) . '</span>'
+               . '<span class="share-acts"><a class="dl" href="' . h($href) . '" title="Scarica" aria-label="Scarica"><i class="ti ti-download"></i></a>' . $acts . '</span></div>';
         }
     }
     echo '</div></div>';
@@ -235,9 +300,15 @@ function share_folder_page(array $s, string $dir, string $p): void {
        . '})();</script>';
     // Upload via link: stesso protocollo a blocchi dell'app, autenticato dal token
     // (vedi assets/share-upload.js e upload_ctx in api_upload.php).
+    $cfg = json_encode(['token' => $s['token'], 'path' => trim($p, '/'), 'csrf' => csrf_token(), 'days' => TRASH_DAYS]);
     if ($canUpload) {
         echo '<script src="assets/share-upload.js?v=' . h($upV) . '"></script>'
-           . '<script>ShareUpload.mount({token:' . json_encode($s['token']) . ',path:' . json_encode($p) . ',input:"#shUpInput",list:"#shUp"});</script>';
+           . '<script>ShareUpload.mount(Object.assign(' . $cfg . ',{input:"#shUpInput",list:"#shUp"}));</script>';
+    }
+    // Rinomina/elimina/nuova cartella via link (livelli collaboratore e gestione completa).
+    if ($canOwn) {
+        echo '<script src="assets/share-actions.js?v=' . h($acV) . '"></script>'
+           . '<script>ShareActions.mount(' . $cfg . ');</script>';
     }
     share_footer();
 }

@@ -3,16 +3,15 @@
 function note_context(bool $checkCsrf): array {
     $token = $_REQUEST['t'] ?? '';
     if ($token !== '') {
-        $share = share_find($token);
+        $share = is_string($token) ? share_lookup($token) : null;
         if (!$share || (($share['type'] ?? '') !== 'file')) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
+        share_require_access($share, $checkCsrf);   // PIN: sessione sbloccata (+ CSRF per le scritture)
         $logical = share_base($share);
         if (storage()->typeOf($logical) !== 'file' || !note_is_text(basename($logical))) json_out(['ok' => false, 'error' => 'Nota non disponibile'], 400);
         // owner = proprietario della share: la nota sta nella sua sandbox, la quota è la sua.
         // Un link 'edit' scrive A NOME del creatore: se al creatore è stato tolto il
         // permesso di scrittura (o è stato rimosso), il link degrada a sola lettura.
-        $creator = find_user((string) ($share['created_by'] ?? ''));
-        $creatorW = $creator && ((($creator['role'] ?? '') === 'admin') || (($creator['permission'] ?? '') === 'write'));
-        return ['logical' => $logical, 'editable' => (($share['mode'] ?? 'view') === 'edit') && $creatorW, 'user' => 'ospite', 'owner' => (string) ($share['created_by'] ?? '')];
+        return ['logical' => $logical, 'editable' => share_level($share) === 'edit', 'user' => 'ospite', 'owner' => (string) ($share['created_by'] ?? '')];
     }
     $u = require_login();
     if ($checkCsrf) csrf_check();

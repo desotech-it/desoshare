@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.24.1** · stato: in sviluppo (0.x.x)
+Versione: **0.25.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -46,14 +46,28 @@ Versione: **0.24.1** · stato: in sviluppo (0.x.x)
 - **Note collaborative** stile blocco note: i file di testo si aprono in un editor
   e più utenti possono modificarli **in tempo reale** (sincronizzazione tipo
   Etherpad, CRDT Yjs su relay PHP via polling, senza WebSocket né database).
-- **Condivisione con link a scadenza**: genera un link pubblico valido per una
-  durata scelta, senza login. In **sola lettura** chi ha il link scarica; in
-  modalità **modificabile** una nota si co-edita in tempo reale e una **cartella
-  accetta upload**: chiunque abbia il link può caricare file (anche in
-  sottocartelle, anche trascinandoli), che finiscono nello spazio e nella quota
-  di chi ha creato il link, entro un **tetto di caricamento proprio del link**
-  (default 1 GB) oltre alla scadenza. Si può dare al link un **indirizzo personalizzato**
-  facile da digitare (`…/d/relazione-2026`) invece del token casuale.
+- **Condivisione con link a scadenza**: genera link pubblici validi per una
+  durata scelta, senza login, pensati soprattutto per persone esterne senza
+  account: **il link è la credenziale**. Una cartella può avere **più link
+  nominativi** («a chi lo dai»), ognuno con livello, scadenza, tetto e PIN propri:
+  revocarne uno toglie l'accesso solo a quella persona, e il registro attività
+  dice quale link ha fatto cosa. Livelli:
+  - **Sola lettura**: si legge e si scarica;
+  - **Caricamento**: si caricano file (anche cartelle, anche trascinandole); un
+    nome già presente non viene sovrascritto ma salvato come «nome (2).ext». Per
+    una nota di testo, «Modificabile» = co-editing in tempo reale;
+  - **Collaboratore**: in più si creano cartelle e si sostituiscono, rinominano
+    ed eliminano **i file caricati con quel link**;
+  - **Gestione completa**: si carica, crea, rinomina ed elimina tutto dentro la
+    cartella condivisa.
+  I file caricati via link finiscono nello spazio e nella quota di chi ha creato
+  il link, entro un **tetto di caricamento proprio del link** (default 1 GB).
+  Ciò che un link elimina o sostituisce va nel **cestino** del proprietario,
+  recuperabile per 30 giorni (conta nella quota). Un **PIN** facoltativo, da
+  comunicare a parte, protegge il link anche se l'indirizzo viene inoltrato.
+  L'indirizzo ha la forma `…/d/relazione-20261011-1430-k7q2xm`: nome e ora per
+  riconoscerlo, codice casuale per renderlo univoco e non indovinabile; dopo 30
+  indirizzi inesistenti in 10 minuti lo stesso IP viene bloccato temporaneamente.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

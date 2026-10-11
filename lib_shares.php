@@ -27,6 +27,21 @@ function share_slugify(string $s): string {
     $s = trim($s, '-');
     return substr($s, 0, 64);
 }
+// Indirizzo di un nuovo link: <parte leggibile>-<AAAAMMGG>-<HHMM>-<codice>. Nome e
+// ora aiutano a riconoscerlo; il codice casuale (31^6 ≈ 887 milioni di valori) lo
+// rende univoco e NON indovinabile, perché l'indirizzo è la credenziale del link.
+const SHARE_SLUG_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';   // niente 0/o/1/l/i ambigui
+function share_slug_code(int $len = 6): string {
+    $out = '';
+    for ($i = 0; $i < $len; $i++) $out .= SHARE_SLUG_ALPHABET[random_int(0, strlen(SHARE_SLUG_ALPHABET) - 1)];
+    return $out;
+}
+function share_slug_make(string $readable): string {
+    $r = rtrim(substr(share_slugify($readable), 0, 42), '-');   // 42 + 22 di suffisso ≤ 64 (limite di share_find e .htaccess)
+    if ($r === '') $r = 'link';
+    $when = (new DateTimeImmutable('now', new DateTimeZone(SHARE_SLUG_TZ)))->format('Ymd-Hi');
+    return $r . '-' . $when . '-' . share_slug_code();
+}
 
 // Percorso LOGICO (relativo alla radice dello storage) della condivisione.
 function share_base(array $s): string {
@@ -109,15 +124,167 @@ function share_resolve(array $s, string $p): ?string {
     $full = share_join($s, (string) $p);
     return ($full !== null && storage()->typeOf($full) !== false) ? $full : null;
 }
-// Un link 'edit' su una CARTELLA permette a chiunque lo abbia di caricare file al
-// suo interno. Scrive A NOME del creatore: se a questi è stato tolto il permesso
-// di scrittura (o è stato rimosso), il link degrada a sola lettura — stessa
-// regola delle note condivise (vedi note_context).
-function share_link_writable(array $s): bool {
-    if (($s['type'] ?? '') !== 'dir' || (($s['mode'] ?? 'view') !== 'edit')) return false;
+// ─── Livelli di accesso di un link ───────────────────────────────────────────
+// 'view' sola lettura · 'edit' caricamento (nota: co-editing) · 'contrib'
+// collaboratore (carica e modifica/elimina i file caricati con QUESTO link) ·
+// 'manage' gestione completa della cartella. I livelli oltre 'view' scrivono A
+// NOME del creatore: se gli è stato tolto il permesso di scrittura (o è stato
+// rimosso) il link degrada a sola lettura, come per le note condivise.
+const SHARE_DIR_LEVELS = ['view', 'edit', 'contrib', 'manage'];
+function share_creator_can_write(array $s): bool {
     $creator = find_user((string) ($s['created_by'] ?? ''));
     return (bool) ($creator && ((($creator['role'] ?? '') === 'admin') || (($creator['permission'] ?? '') === 'write')));
 }
+function share_level(array $s): string {
+    $m = (string) ($s['mode'] ?? 'view');
+    if (!in_array($m, SHARE_DIR_LEVELS, true)) return 'view';
+    if (($s['type'] ?? '') !== 'dir' && $m !== 'edit') return 'view';
+    return ($m !== 'view' && !share_creator_can_write($s)) ? 'view' : $m;
+}
+// Capacità: 'upload' caricare · 'mkdir' creare cartelle · 'own' modificare/eliminare
+// i file caricati con questo link · 'any' modificare/eliminare qualunque elemento.
+function share_can(array $s, string $cap): bool {
+    if (($s['type'] ?? '') !== 'dir') return false;
+    $l = share_level($s);
+    return match ($cap) {
+        'upload' => in_array($l, ['edit', 'contrib', 'manage'], true),
+        'mkdir', 'own' => in_array($l, ['contrib', 'manage'], true),
+        'any' => $l === 'manage',
+        default => false,
+    };
+}
+function share_link_writable(array $s): bool { return share_can($s, 'upload'); }
+// Chi agisce tramite il link, per il registro attività.
+function share_actor(array $s): string {
+    $l = trim((string) ($s['label'] ?? ''));
+    if ($l === '') $l = (string) ($s['slug'] ?? '');
+    if ($l === '') $l = substr((string) ($s['token'] ?? ''), 0, 8);
+    return 'link «' . $l . '»';
+}
+
+// ─── Ricerca pubblica di un link, con limite ai tentativi falliti per IP ─────
+// Chi prova indirizzi a caso viene bloccato per la finestra: l'indirizzo è una
+// credenziale e non deve essere enumerabile.
+function share_attempts_file(): string { return DATA_DIR . '/share_attempts.json'; }
+function share_lookup_locked(): bool {
+    $e = json_read(share_attempts_file())[login_throttle_key()] ?? null;
+    if (!is_array($e) || (time() - (int) ($e['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) return false;
+    return (int) ($e['n'] ?? 0) >= SHARE_LOOKUP_MAX_FAILS;
+}
+// Si contano gli indirizzi DISTINTI: chi enumera ne prova sempre di nuovi, mentre
+// un editor di nota rimasto aperto su un link revocato ripete lo stesso a ogni
+// sincronizzazione e non deve bloccare l'IP (e i colleghi dietro lo stesso NAT).
+function share_lookup_fail(string $id): void {
+    $h = substr(hash('sha256', strtolower($id)), 0, 16);
+    with_json_lock(share_attempts_file(), function (array $a) use ($h) {
+        $k = login_throttle_key(); $now = time();
+        $e = $a[$k] ?? null;
+        if (!is_array($e) || ($now - (int) ($e['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) $e = ['ids' => [], 'ts' => $now];
+        $ids = is_array($e['ids'] ?? null) ? $e['ids'] : [];
+        if (isset($ids[$h]) && $now - (int) $e['ts'] < 60) return null;   // stesso indirizzo ripetuto: niente da aggiornare
+        $ids[$h] = 1;
+        $cap = min(SHARE_LOOKUP_MAX_FAILS + 1, 256);
+        if (count($ids) > $cap) $ids = array_slice($ids, -$cap, null, true);
+        $a[$k] = ['ids' => $ids, 'n' => count($ids), 'ts' => $now];
+        foreach ($a as $kk => $vv) if (($now - (int) ($vv['ts'] ?? 0)) > SHARE_LOOKUP_WINDOW) unset($a[$kk]);
+        return $a;
+    });
+}
+// $json: risposta JSON (API) oppure pagina HTML (share.php) quando l'IP è bloccato.
+function share_lookup(string $id, bool $json = true): ?array {
+    if (share_lookup_locked()) {
+        if ($json) json_out(['ok' => false, 'error' => 'Troppi tentativi con link non validi: riprova più tardi'], 429);
+        share_blocked_page('Troppi tentativi con link non validi', 'Riprova tra qualche minuto.');
+        exit;
+    }
+    $s = share_find($id);
+    if (!$s) share_lookup_fail($id);
+    return $s;
+}
+function share_blocked_page(string $title, string $msg): void {
+    http_response_code(429);
+    header('Cache-Control: no-store');
+    security_headers();
+    echo '<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+       . '<title>' . h($title) . '</title></head><body style="font-family:system-ui,sans-serif;text-align:center;padding:60px 16px">'
+       . '<h1 style="font-size:18px">' . h($title) . '</h1><p>' . h($msg) . '</p></body></html>';
+}
+
+// ─── PIN facoltativo di un link ──────────────────────────────────────────────
+// Con il PIN l'indirizzo da solo non basta: chi lo inserisce sblocca il link per
+// la SUA sessione. Da lì le richieste sono autenticate dal cookie di sessione,
+// quindi le operazioni di modifica richiedono anche il token CSRF della pagina.
+function share_has_pin(array $s): bool { return (string) ($s['pin_hash'] ?? '') !== ''; }
+function share_pin_ok(array $s): bool {
+    return !share_has_pin($s) || !empty($_SESSION['share_pin'][(string) ($s['token'] ?? '')]);
+}
+function share_require_access(array $s, bool $mutating): void {
+    if (!share_has_pin($s)) return;
+    if (!share_pin_ok($s)) json_out(['ok' => false, 'error' => 'Questo link è protetto da PIN: apri il link e inseriscilo', 'pin_required' => true], 401);
+    if ($mutating) csrf_check();
+}
+function share_pin_attempts_file(): string { return DATA_DIR . '/share_pin_attempts.json'; }
+function share_pin_key(array $s): string { return substr(hash('sha256', (string) ($s['token'] ?? '') . '|' . login_throttle_key()), 0, 32); }
+function share_pin_locked(array $s): bool {
+    $e = json_read(share_pin_attempts_file())[share_pin_key($s)] ?? null;
+    if (!is_array($e) || (time() - (int) ($e['ts'] ?? 0)) > SHARE_PIN_WINDOW) return false;
+    return (int) ($e['n'] ?? 0) >= SHARE_PIN_MAX_FAILS;
+}
+// Verifica il PIN; true = sbloccato per questa sessione.
+function share_pin_try(array $s, string $pin): bool {
+    if (share_pin_locked($s)) return false;
+    if (password_verify($pin, (string) ($s['pin_hash'] ?? ''))) {
+        session_regenerate_id(true);
+        $_SESSION['share_pin'][(string) $s['token']] = true;
+        with_json_lock(share_pin_attempts_file(), function (array $a) use ($s) { unset($a[share_pin_key($s)]); return $a; });
+        return true;
+    }
+    with_json_lock(share_pin_attempts_file(), function (array $a) use ($s) {
+        $k = share_pin_key($s); $now = time();
+        $e = $a[$k] ?? null;
+        if (!is_array($e) || ($now - (int) ($e['ts'] ?? 0)) > SHARE_PIN_WINDOW) $e = ['n' => 0, 'ts' => $now];
+        $a[$k] = ['n' => (int) $e['n'] + 1, 'ts' => $now];
+        foreach ($a as $kk => $vv) if (($now - (int) ($vv['ts'] ?? 0)) > SHARE_PIN_WINDOW) unset($a[$kk]);
+        return $a;
+    });
+    return false;
+}
+
+// Le condivisioni che puntano a un elemento rinominato (o a suoi discendenti)
+// seguono il nuovo percorso: altrimenti restano orfane e shares_prune le elimina.
+function shares_follow_rename(string $from, string $target): void {
+    with_json_lock(shares_file(), function (array $sd) use ($from, $target) {
+        // NB: niente foreach-by-ref su `$sd['shares'] ?? []`: PHP itererebbe una
+        // COPIA temporanea scartando le modifiche in silenzio.
+        $shares = $sd['shares'] ?? [];
+        $touched = false;
+        foreach ($shares as $i => $s) {
+            $p = (string) ($s['path'] ?? '');
+            if ($p === $from) { $shares[$i]['path'] = $target; $shares[$i]['name'] = basename($target); $touched = true; }
+            elseif (str_starts_with($p, $from . '/')) { $shares[$i]['path'] = $target . substr($p, strlen($from)); $touched = true; }
+        }
+        if (!$touched) return null;
+        $sd['shares'] = $shares;
+        return $sd;
+    });
+}
+// Revoca le share degli elementi eliminati (e dei loro discendenti): un link
+// «morto» non deve risorgere servendo un futuro file omonimo a chi lo aveva.
+function shares_revoke_under(array $removedPaths): void {
+    if (!$removedPaths) return;
+    with_json_lock(shares_file(), function (array $sd) use ($removedPaths) {
+        $shares = $sd['shares'] ?? [];
+        $keep = array_values(array_filter($shares, function ($s) use ($removedPaths) {
+            $p = (string) ($s['path'] ?? '');
+            foreach ($removedPaths as $rp) if ($p === $rp || str_starts_with($p, $rp . '/')) return false;
+            return true;
+        }));
+        if (count($keep) === count($shares)) return null;
+        $sd['shares'] = $keep;
+        return $sd;
+    });
+}
+
 // ─── Tetto di caricamento di un link 'edit' di cartella ──────────────────────
 // Oltre alla quota del creatore, ogni link ha il SUO spazio caricabile
 // ('upload_limit', byte; 0 = nessun tetto proprio) e un contatore dei byte

@@ -177,6 +177,7 @@ function action_user_save(): void {
             $sd['shares'] = $shares;
             return $sd;
         });
+        trash_rename_owner($original, $username);   // il cestino (storage e voci) segue il nuovo nome
         // Cache di quota: sposta la voce sul nuovo nome (il consumo non è cambiato).
         with_json_lock(usage_file(), function (array $c) use ($original, $username) {
             if (isset($c[$original])) { $c[$username] = $c[$original]; unset($c[$original]); return $c; }
@@ -229,6 +230,7 @@ function action_user_delete(): void {
     if (!empty($_POST['purge']) && $username !== '') {
         note_state_purge_tree(user_prefix($username));   // prima del delete: serve il listato (anche privacy)
         $purged = storage()->deletePath(user_prefix($username), true);
+        trash_drop_owner($username);
     }
 
     audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));

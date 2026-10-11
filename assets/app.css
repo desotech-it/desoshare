@@ -219,6 +219,19 @@ details.adv[open] summary::before { content: "▾ "; }
 .share-row a.name.clickable:hover .label { color: var(--primary); text-decoration: underline; }
 .share-row a.dl { color: var(--tertiary); text-align: right; }
 .share-row a.dl:hover { color: var(--primary); }
+.share-acts { display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.share-acts .ti { font-size: 17px; }
+/* Link con azioni (collaboratore, gestione completa): fino a 3 icone per riga. */
+.share-acts-on .share-row { grid-template-columns: 1fr 110px 84px; }
+.share-acts .ic { background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); line-height: 1; }
+.share-acts .ic:hover { color: var(--text); }
+.share-acts .ic-del { color: #c98a8a; }
+.share-acts .ic-del:hover { color: var(--danger); }
+.share-msg { font-size: 13px; text-align: center; margin: 0 0 10px; color: var(--danger); }
+@media (max-width: 560px) {
+  .share-row, .share-acts-on .share-row { grid-template-columns: 1fr 84px; }
+  .share-row .size { display: none; }
+}
 /* upload via link modificabile (pagina pubblica) */
 .share-mode { font-size: 13px; text-align: center; margin: -6px 0 10px; }
 .share-mode .ti { vertical-align: -2px; }
@@ -233,3 +246,55 @@ body.dragging .listing { outline: 2px dashed var(--primary); outline-offset: -2p
 .share-brand { text-align: center; color: var(--tertiary); font-size: 12px; margin-top: 22px;
   display: flex; align-items: center; justify-content: center; gap: 6px; }
 .share-brand img { height: 18px; }
+
+/* ─── Condivisioni e cestino (app) */
+.sh-modal { width: 440px; max-height: calc(100vh - 2rem); overflow-y: auto; }
+.modal .sh-opt { color: var(--tertiary); font-weight: 400; }
+.sh-help { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.sh-help:empty { display: none; }
+.sh-fixed { font-size: 13px; padding: 2px 0; }
+.sh-slug { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+.sh-slug .muted { white-space: nowrap; }
+.sh-slug input { flex: 1; min-width: 0; }
+.sh-preview { font: 12px/1.4 ui-monospace, Menlo, monospace; color: var(--text); margin-top: 6px; overflow-wrap: anywhere; }
+.sh-err { font-size: 13px; color: var(--danger); background: var(--danger-bg); border: 1px solid var(--danger-bd);
+  border-radius: 8px; padding: 7px 10px; margin-top: 12px; }
+.sh-done { margin-top: 14px; padding-top: 4px; border-top: 1px solid var(--border); }
+.sh-url { display: flex; gap: 6px; }
+.sh-url input { flex: 1; min-width: 0; }
+.sh-sum { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 10px 0 0; font-size: 13px; }
+.sh-sum dt { color: var(--muted); }
+.sh-sum dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sh-pinset { margin-top: 10px; font-size: 13px; color: #92400e; background: #fef3c7; border-radius: 8px; padding: 7px 10px; }
+.modal.sh-panel { width: 640px; }
+.sh-scroll, .tr-scroll { max-height: 60vh; overflow: auto; }
+.sh-table td { vertical-align: top; }
+.sh-name { display: flex; gap: 6px; align-items: baseline; overflow-wrap: anywhere; }
+.sh-name .ico-dir, .tr-name .ico-dir { color: var(--warn); }
+.sh-name .ico-file, .tr-name .ico-file { color: var(--tertiary); }
+.sh-meta { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.sh-meta .ti-lock { color: var(--text); }
+.modal-actions .sh-trash-btn, .modal-actions .tr-empty-btn { margin-right: auto; }
+.modal.tr-modal { width: 900px; }
+.tr-table th { white-space: nowrap; }
+.tr-table td { vertical-align: top; }
+.tr-name { min-width: 200px; overflow-wrap: anywhere; }
+.tr-name > div:first-child { display: flex; gap: 6px; align-items: baseline; }
+.tr-orig { font-size: 12px; color: var(--tertiary); margin-top: 2px; }
+.tr-nw { white-space: nowrap; }
+.tr-num { text-align: right; }
+.tr-act { width: 1%; }
+.tr-act .tr-btn { display: flex; justify-content: center; width: 100%; height: 28px; padding: 0 9px; font-size: 12px; }
+.tr-act .tr-btn + .tr-btn { margin-top: 6px; }
+.tr-note { font-size: 12px; margin: 10px 0 0; }
+/* Telefono: ogni voce del cestino diventa una scheda, azioni comprese (niente scroll orizzontale). */
+@media (max-width: 640px) {
+  .tr-table thead { display: none; }
+  .tr-table tr { display: block; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .tr-table td { display: block; border: 0; padding: 1px 0; white-space: normal; text-align: left; font-size: 12px; color: var(--muted); }
+  .tr-table td.tr-name { min-width: 0; font-size: 13px; color: var(--text); margin-bottom: 3px; }
+  .tr-table td[data-l]::before { content: attr(data-l) ": "; color: var(--tertiary); }
+  .tr-table td.tr-act { display: flex; gap: 8px; width: auto; margin-top: 8px; }
+  .tr-act .tr-btn { flex: 1; width: auto; }
+  .tr-act .tr-btn + .tr-btn { margin-top: 0; }
+}

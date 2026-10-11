@@ -1,9 +1,9 @@
 <?php
 // lib_audit.php — modulo di lib.php (incluso da lib.php nell'ordine corretto)
 // ─── Registro attività (audit), file append-only ─────────────────────────────
-function audit(string $action, string $detail = ''): void {
-    $u = current_user();
-    $who = $u['username'] ?? '-';
+// $who: autore esplicito (es. un link: «link «Avv. Bianchi»»); di default l'utente di sessione.
+function audit(string $action, string $detail = '', ?string $who = null): void {
+    if ($who === null) { $u = current_user(); $who = $u['username'] ?? '-'; }
     $line = date('c') . "\t" . $who . "\t" . $action . "\t" . str_replace(["\n", "\t", "\r"], ' ', $detail) . "\n";
     $f = DATA_DIR . '/audit.log';
     // Rotazione: oltre ~2 MB il log viene ruotato (1 backup) → non cresce all'infinito

@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.24.1');
+define('APP_VERSION', '0.25.0');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -26,6 +26,18 @@ define('NOTE_RELAY_MAX_BYTES', 8 * 1024 * 1024); // tetto del file di relay Yjs 
 define('USAGE_TTL', 300);                    // validità (s) del consumo in cache prima della riconciliazione
 define('QUOTA_MAX_MB', 4 * 1024 * 1024);     // tetto della quota impostabile (4 TB) — evita overflow su PHP 32-bit
 define('SHARE_UPLOAD_LIMIT_MB_DEFAULT', 1024);  // spazio caricabile via link 'edit' di cartella se non specificato (0 = solo la quota del creatore)
+
+// ─── Link di condivisione: indirizzo, PIN, tentativi, cestino ────────────────
+define('SHARE_SLUG_TZ', 'Europe/Rome');      // fuso dell'ora inserita nell'indirizzo (nome-AAAAMMGG-HHMM-codice)
+define('SHARE_LABEL_MAX', 80);               // lunghezza massima del nome del link («a chi lo dai»)
+// Indirizzi /d/ inesistenti dallo stesso IP: oltre la soglia nella finestra, blocco temporaneo
+// (anti-enumerazione). Sovrascrivibili da ambiente solo per i test automatici.
+define('SHARE_LOOKUP_MAX_FAILS', (int) (getenv('SHARE_LOOKUP_MAX_FAILS') ?: 30));
+define('SHARE_LOOKUP_WINDOW', 600);          // secondi
+define('SHARE_PIN_MAX_FAILS', 5);            // PIN errati per link e IP prima del blocco
+define('SHARE_PIN_WINDOW', 900);             // secondi
+define('TRASH_PREFIX', '~cestino');          // radice del cestino nello storage (fuori da ogni home: '~' non è ammesso negli username)
+define('TRASH_DAYS', 30);                    // conservazione degli elementi eliminati tramite link
 
 // Scadenza (s) dell'URL presigned per il download di un singolo file via link
 // pubblico: tenuta breve e comunque MAI oltre la scadenza del link di condivisione.

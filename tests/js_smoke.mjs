@@ -521,55 +521,258 @@ async function runSettingsSave() {
     ? ok('payload include local_auth_enabled') : bad('payload manca local_auth_enabled');
 }
 
-// Dialog "Condividi": campo slug precompilato col nome file, invio dello slug,
-// e URL personalizzato (/c/<slug>) mostrato nel risultato.
-async function runShareCreate() {
-  console.log('\nCaso: dialog Condividi — slug personalizzato (/d/<slug>)');
-  const dom = new JSDOM(pageHtml(true, true), { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://share.deso.tech/' });
+// Ambiente jsdom per i test di condivisioni e cestino: `respond(action, data)` dà
+// la risposta JSON; registra GET e POST (con i campi del FormData) e gli errori.
+async function shareEnv(canWrite, isAdmin, respond) {
+  const dom = new JSDOM(pageHtml(canWrite, isAdmin), { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://share.deso.tech/' });
   const win = dom.window;
   win.requestAnimationFrame = (cb) => setTimeout(cb, 0);
-  const exp = Math.floor(Date.now() / 1000) + 86400;
-  let lastPost = null;
+  win.setInterval = () => 0; win.clearInterval = () => {};   // countdown: niente timer veri
+  const env = { win, doc: win.document, gets: [], posts: [], confirms: [], confirmAnswer: true, error: null };
+  win.confirm = (m) => { env.confirms.push(m); return env.confirmAnswer; };
   win.fetch = async (url, opts) => {
     const action = (String(url).match(/action=([a-z_]+)/) || [])[1] || 'list';
+    let data = null;
     if (opts && opts.method === 'POST' && opts.body && opts.body.forEach) {
-      const data = {}; opts.body.forEach((v, k) => { data[k] = v; });
-      lastPost = { action, data };
-    }
-    const body = action !== 'share_create' ? listResponse
-      : lastPost.data.slug === 'foto' ? { ok: false, error: 'Indirizzo già in uso, scegline un altro' }
-      : { ok: true, token: 'abc', slug: 'mia-foto', url: 'https://share.deso.tech/d/mia-foto', expires_at: exp };
+      data = {}; opts.body.forEach((v, k) => { data[k] = v; });
+      env.posts.push({ action, data });
+    } else env.gets.push(action);
+    const body = (action === 'list' ? listResponse : respond(action, data)) || { ok: true };
     return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   };
-  let loadError = null;
-  win.onerror = (m, s, l, c, e) => { loadError = e || new Error(m); };
-  win.addEventListener('unhandledrejection', (e) => { loadError = e.reason; });
+  win.onerror = (m, s, l, c, e) => { env.error = e || new Error(m); };
+  win.addEventListener('unhandledrejection', (e) => { env.error = e.reason; });
   win.eval(appJs);
   await new Promise(r => setTimeout(r, 30));
-  const doc = win.document;
-  doc.querySelectorAll('#rows .row')[1].querySelector('.ti-share').onclick();   // condividi foto.jpg
-  await new Promise(r => setTimeout(r, 10));
+  env.lastPost = (a) => [...env.posts].reverse().find(p => p.action === a);
+  env.toasts = () => [...env.doc.querySelectorAll('.toast')].map(t => t.textContent);
+  env.wait = (ms = 20) => new Promise(r => setTimeout(r, ms));
+  return env;
+}
+const rowShare = (env, i) => env.doc.querySelectorAll('#rows .row')[i].querySelector('.ti-share').onclick();
+
+// Dialog «Condividi» di un file non modificabile: niente select di livello,
+// parte leggibile precompilata e anteprima con data/ora e codice, label e PIN inviati.
+async function runShareCreate() {
+  console.log('\nCaso: dialog Condividi — file (indirizzo, destinatario, PIN)');
+  const exp = Math.floor(Date.now() / 1000) + 86400;
+  const env = await shareEnv(true, true, (action, data) => {
+    if (action !== 'share_create') return null;
+    if (data.slug === 'errore') return { ok: false, error: 'PIN non valido: da 4 a 64 caratteri' };
+    return { ok: true, token: 'abc', slug: 'mia-foto-20261011-1430-k7q2xm', url: 'https://share.deso.tech/d/mia-foto-20261011-1430-k7q2xm',
+      expires_at: exp, mode: 'view', label: data.label, has_pin: data.pin !== '' };
+  });
+  const { doc } = env;
+  rowShare(env, 1);                                                             // foto.jpg
+  await env.wait(10);
   const slugEl = doc.getElementById('sh_slug');
-  (slugEl && slugEl.value === 'foto') ? ok('campo slug precompilato col nome file (foto)') : bad(`slug precompilato errato (${slugEl && slugEl.value})`);
+  (slugEl && slugEl.value === 'foto') ? ok('parte leggibile precompilata col nome senza estensione (foto)') : bad(`slug precompilato errato (${slugEl && slugEl.value})`);
   const hint = doc.getElementById('sh_slughint');
-  (hint && /\/d\/foto$/.test(hint.textContent)) ? ok('anteprima URL live (/d/foto)') : bad(`anteprima errata (${hint && hint.textContent})`);
-  doc.getElementById('sh_create').onclick();                                    // slug già preso → 409
-  await new Promise(r => setTimeout(r, 20));
-  const btnAfterErr = doc.getElementById('sh_create');
-  (btnAfterErr && !btnAfterErr.disabled && /già in uso/.test(hint.textContent) && !doc.getElementById('sh_url'))
-    ? ok('errore: «Crea link» resta attivo e l\'errore è mostrato') : bad(`dopo errore: bottone=${btnAfterErr && !btnAfterErr.disabled}, hint=${hint.textContent}`);
-  slugEl.value = 'mia-foto'; slugEl.oninput();
+  (hint && /→ https:\/\/share\.deso\.tech\/d\/foto-\d{8}-\d{4}-xxxxxx$/.test(hint.textContent))
+    ? ok('anteprima /d/foto-AAAAMMGG-HHMM-xxxxxx') : bad(`anteprima errata (${hint && hint.textContent})`);
+  /aggiunti automaticamente/.test(doc.querySelector('#modalBg .sh-modal').textContent)
+    ? ok('nota: data, ora e codice aggiunti automaticamente') : bad('manca la nota sul suffisso automatico');
+  slugEl.value = ''; slugEl.oninput();
+  /\/d\/foto-\d{8}-\d{4}-xxxxxx$/.test(hint.textContent) ? ok('campo vuoto: anteprima col nome predefinito') : bad(`anteprima a campo vuoto: ${hint.textContent}`);
+  !doc.getElementById('sh_mode') && /Sola lettura/.test(doc.querySelector('.sh-fixed') ? doc.querySelector('.sh-fixed').textContent : '')
+    ? ok('file non di testo: solo «Sola lettura», nessun select') : bad('file non di testo: select di livello presente');
+  const label = doc.getElementById('sh_label'), pin = doc.getElementById('sh_pin');
+  (label && label.maxLength === 80 && label.placeholder === 'es. Avv. Bianchi' && doc.activeElement === label)
+    ? ok('campo «A chi lo dai» (max 80, segnaposto, con il fuoco)') : bad('campo destinatario errato');
+  (pin && pin.type === 'text' && pin.getAttribute('autocomplete') === 'off' && /Comunicalo a parte/.test(doc.querySelector('#modalBg').textContent))
+    ? ok('campo PIN testo, autocomplete=off, con la nota') : bad('campo PIN errato');
+  // PIN troppo corto: errore locale, nessun POST
+  pin.value = '123';
   doc.getElementById('sh_create').onclick();
-  await new Promise(r => setTimeout(r, 20));
-  if (loadError) { bad('errore share-create: ' + loadError.message); return; }
-  const fieldsOff = ['sh_ttl', 'sh_slug'].every(id => doc.getElementById(id).disabled);
+  await env.wait();
+  const err = doc.getElementById('sh_err');
+  (!env.lastPost('share_create') && err && !err.hidden && /almeno 4/.test(err.textContent))
+    ? ok('PIN di 3 caratteri: errore senza chiamare il server') : bad(`PIN corto: post=${!!env.lastPost('share_create')}, err=${err && err.textContent}`);
+  // errore del server: mostrato, «Crea link» resta attivo
+  slugEl.value = 'errore'; pin.value = '1234';
+  doc.getElementById('sh_create').onclick();
+  await env.wait();
+  const btnAfterErr = doc.getElementById('sh_create');
+  (btnAfterErr && !btnAfterErr.disabled && /PIN non valido/.test(err.textContent) && !err.hidden && !doc.getElementById('sh_url'))
+    ? ok('errore del server mostrato, «Crea link» resta attivo') : bad(`dopo errore: bottone=${btnAfterErr && !btnAfterErr.disabled}, err=${err.textContent}`);
+  slugEl.value = 'mia-foto'; slugEl.oninput();
+  label.value = '  Avv. <b>Bianchi</b> '; pin.value = ' s3gr3t0 ';
+  doc.getElementById('sh_create').onclick();
+  await env.wait();
+  if (env.error) { bad('errore share-create: ' + env.error.message); return; }
+  const p = env.lastPost('share_create');
+  (p && p.data.path === 'foto.jpg' && p.data.ttl === '86400' && p.data.mode === 'view' && p.data.slug === 'mia-foto'
+    && p.data.label === 'Avv. <b>Bianchi</b>' && p.data.pin === 's3gr3t0' && p.data.upload_limit_mb === '')
+    ? ok('share_create invia path, ttl, mode, slug, label e pin (ripuliti)') : bad(`POST errato: ${JSON.stringify(p && p.data)}`);
+  const fieldsOff = ['sh_ttl', 'sh_slug', 'sh_label', 'sh_pin'].every(id => doc.getElementById(id).disabled);
   const closeBtn = doc.querySelector('#modalBg .modal-actions .btn');
   (!doc.getElementById('sh_create') && fieldsOff && closeBtn && closeBtn.classList.contains('btn-primary') && /Chiudi/.test(closeBtn.textContent))
-    ? ok('dopo la creazione resta solo «Chiudi» (niente secondo invio)') : bad(`dopo creazione: crea=${!!doc.getElementById('sh_create')}, campi bloccati=${fieldsOff}`);
-  (lastPost && lastPost.action === 'share_create' && lastPost.data.slug === 'mia-foto')
-    ? ok('create invia lo slug scelto (mia-foto)') : bad(`slug non inviato (${JSON.stringify(lastPost && lastPost.data)})`);
+    ? ok('dopo la creazione resta solo «Chiudi» e i campi sono bloccati') : bad(`dopo creazione: crea=${!!doc.getElementById('sh_create')}, campi bloccati=${fieldsOff}`);
   const urlEl = doc.getElementById('sh_url');
-  (urlEl && /\/d\/mia-foto$/.test(urlEl.value)) ? ok('risultato mostra URL personalizzato /d/mia-foto') : bad(`URL risultato errato (${urlEl && urlEl.value})`);
+  (urlEl && urlEl.value === 'https://share.deso.tech/d/mia-foto-20261011-1430-k7q2xm' && typeof doc.getElementById('sh_copy').onclick === 'function')
+    ? ok('risultato: URL completo con pulsante copia') : bad(`URL risultato errato (${urlEl && urlEl.value})`);
+  const res = doc.getElementById('sh_result');
+  (/Livello\s*Sola lettura/.test(res.textContent) && /Destinatario\s*Avv\. <b>Bianchi<\/b>/.test(res.textContent) && !res.querySelector('b') && /Scade/.test(res.textContent))
+    ? ok('riepilogo: livello, destinatario (con escape) e scadenza') : bad(`riepilogo errato: ${res.textContent.replace(/\s+/g, ' ')}`);
+  (/PIN impostato: comunicalo separatamente/.test(res.textContent) && !res.innerHTML.includes('s3gr3t0'))
+    ? ok('«PIN impostato» senza ripetere il PIN') : bad('avviso PIN assente o PIN ripetuto nel riepilogo');
+}
+
+// Dialog «Condividi» di una cartella: 4 livelli con spiegazione, tetto solo per i
+// livelli che caricano; mode e upload_limit_mb inviati. Nota: 2 livelli. Sola lettura: nessuno.
+async function runShareCreateDir() {
+  console.log('\nCaso: dialog Condividi — cartella (4 livelli, tetto) e nota');
+  const exp = Math.floor(Date.now() / 1000) + 604800;
+  const env = await shareEnv(true, false, (action, data) => action === 'share_create'
+    ? { ok: true, token: 't', slug: 'documenti-20261011-1430-abcdef', url: 'https://share.deso.tech/d/documenti-20261011-1430-abcdef',
+        expires_at: exp, mode: data.mode, label: data.label, has_pin: false } : null);
+  const { doc } = env;
+  rowShare(env, 0);                                                             // documenti/
+  await env.wait(10);
+  const mode = doc.getElementById('sh_mode');
+  const vals = mode ? [...mode.options].map(o => o.value).join(',') : '';
+  const names = mode ? [...mode.options].map(o => o.textContent).join(' / ') : '';
+  (vals === 'view,edit,contrib,manage' && names === 'Sola lettura / Caricamento / Collaboratore / Gestione completa')
+    ? ok('cartella: 4 livelli (' + names + ')') : bad(`livelli errati: ${vals} (${names})`);
+  (doc.getElementById('sh_slug').value === 'documenti') ? ok('parte leggibile = nome della cartella') : bad('slug cartella errato');
+  const help = doc.getElementById('sh_mode_help'), wrap = doc.getElementById('sh_limit_wrap');
+  const seen = {};
+  for (const v of ['view', 'edit', 'contrib', 'manage']) {
+    mode.value = v; mode.onchange();
+    seen[v] = { help: help.textContent, cap: !wrap.hidden };
+  }
+  (new Set(Object.values(seen).map(x => x.help)).size === 4 && Object.values(seen).every(x => x.help.length > 10) && /cestino/.test(seen.manage.help))
+    ? ok('spiegazione diversa per ogni livello') : bad(`spiegazioni: ${JSON.stringify(seen)}`);
+  (!seen.view.cap && seen.edit.cap && seen.contrib.cap && seen.manage.cap)
+    ? ok('tetto visibile solo per Caricamento/Collaboratore/Gestione completa') : bad(`tetto: ${JSON.stringify(seen)}`);
+  mode.value = 'manage'; mode.onchange();
+  doc.getElementById('sh_limit').value = '500';
+  doc.getElementById('sh_ttl').value = '604800';
+  doc.getElementById('sh_label').value = 'Studio Rossi';
+  doc.getElementById('sh_create').onclick();
+  await env.wait();
+  let p = env.lastPost('share_create');
+  (p && p.data.path === 'documenti' && p.data.mode === 'manage' && p.data.upload_limit_mb === '500' && p.data.ttl === '604800'
+    && p.data.label === 'Studio Rossi' && p.data.pin === '' && p.data.slug === 'documenti')
+    ? ok('share_create: mode=manage, tetto 500, label, pin vuoto') : bad(`POST cartella errato: ${JSON.stringify(p && p.data)}`);
+  const res = doc.getElementById('sh_result').textContent;
+  (/Gestione completa · fino a 500\.0 MB/.test(res) && /Studio Rossi/.test(res) && !/PIN impostato/.test(res) && doc.getElementById('sh_mode').disabled && doc.getElementById('sh_limit').disabled)
+    ? ok('riepilogo cartella: livello e tetto, nessun avviso PIN, campi bloccati') : bad(`riepilogo cartella: ${res.replace(/\s+/g, ' ')}`);
+  // Sola lettura: niente tetto inviato
+  env.win.closeModal();
+  rowShare(env, 0); await env.wait(10);
+  doc.getElementById('sh_create').onclick(); await env.wait();
+  p = env.lastPost('share_create');
+  (p && p.data.mode === 'view' && p.data.upload_limit_mb === '') ? ok('sola lettura: upload_limit_mb vuoto') : bad(`sola lettura: ${JSON.stringify(p && p.data)}`);
+  // Nota di testo: Sola lettura / Modificabile, niente tetto
+  env.win.closeModal();
+  rowShare(env, 2); await env.wait(10);
+  const nm = doc.getElementById('sh_mode');
+  (nm && [...nm.options].map(o => o.value).join(',') === 'view,edit' && /co-editing/.test(nm.options[1].textContent) && !doc.getElementById('sh_limit_wrap'))
+    ? ok('nota: Sola lettura / Modificabile (co-editing), senza tetto') : bad('livelli della nota errati');
+  doc.getElementById('sh_slug').value === 'nota' ? ok('nota: parte leggibile senza estensione') : bad('slug nota errato');
+  if (env.error) bad('errore: ' + env.error.message);
+  // Utente in sola lettura: nessun livello di scrittura offerto
+  const ro = await shareEnv(false, false, () => null);
+  rowShare(ro, 0); await ro.wait(10);
+  !ro.doc.getElementById('sh_mode') ? ok('utente senza scrittura: cartella solo in sola lettura') : bad('utente senza scrittura: livelli offerti');
+}
+
+// Pannello «Condivisioni attive»: destinatario, livello, lucchetto PIN, caricati/tetto,
+// livello degradato, pulsante «Cestino (N)».
+async function runSharesMeta() {
+  console.log('\nCaso: pannello Condivisioni — destinatario, livello, PIN, cestino');
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const env = await shareEnv(true, true, (action) => ({
+    share_list: { ok: true, is_admin: true, now: Math.floor(Date.now() / 1000), shares: [
+      { name: 'patti-temp', type: 'dir', mode: 'manage', level: 'manage', label: 'Avv. Bianchi', has_pin: true, token: 'tok1',
+        upload_limit: 1073741824, uploaded: 1048576, url: 'https://share.deso.tech/d/patti-temp-20261011-1430-k7q2xm', created_by: 'nicola', expires_at: exp },
+      { name: 'foto', type: 'dir', mode: 'contrib', level: 'view', label: '<img src=x onerror=alert(1)>', has_pin: false, token: 'tok2',
+        upload_limit: 0, uploaded: 0, url: 'https://share.deso.tech/d/foto-x', created_by: 'nicola', expires_at: exp },
+      { name: 'nota.md', type: 'file', mode: 'edit', level: 'edit', label: '', has_pin: false, token: 'tok3',
+        upload_limit: 0, uploaded: 0, url: 'https://share.deso.tech/d/nota-x', created_by: 'nicola', expires_at: exp },
+    ] },
+    trash_list: { ok: true, days: 30, entries: [{ id: 'a' }, { id: 'b' }] },
+  })[action]);
+  const { doc } = env;
+  doc.getElementById('btnShares').onclick();
+  await env.wait(30);
+  const metas = [...doc.querySelectorAll('#modalBg .sh-meta')];
+  const m0 = metas[0] ? metas[0].textContent : '';
+  (/per «Avv\. Bianchi»/.test(m0) && /Gestione completa/.test(m0) && metas[0].querySelector('.ti-lock') && /caricati 1\.0 MB \/ 1\.0 GB/.test(m0) && /di nicola/.test(m0))
+    ? ok('riga 1: destinatario, livello, lucchetto, caricati/tetto, autore') : bad(`riga 1: ${m0}`);
+  const m1 = metas[1] ? metas[1].textContent : '';
+  (/per «<img src=x onerror=alert\(1\)>»/.test(m1) && !doc.querySelector('#modalBg img') && /Sola lettura \(era Collaboratore\)/.test(m1)
+    && /nessun tetto/.test(m1) && !metas[1].querySelector('.ti-lock'))
+    ? ok('riga 2: destinatario con escape, livello degradato, nessun lucchetto') : bad(`riga 2: ${m1}`);
+  const m2 = metas[2] ? metas[2].textContent : '';
+  (/Modificabile/.test(m2) && !/per «/.test(m2) && !/caricati/.test(m2)) ? ok('riga 3 (nota): Modificabile, senza destinatario né caricati') : bad(`riga 3: ${m2}`);
+  const names = [...doc.querySelectorAll('#modalBg .sh-name')].map(n => n.textContent.trim());
+  names.join('|') === 'patti-temp|foto|nota.md' ? ok('nome elemento sopra la riga dei dettagli') : bad(`nomi: ${names}`);
+  const tb = doc.getElementById('sh_trash');
+  (tb && /Cestino \(2\)/.test(tb.textContent) && typeof tb.onclick === 'function') ? ok('pulsante «Cestino (2)» nella barra azioni') : bad(`pulsante cestino: ${tb && tb.textContent}`);
+  doc.querySelector('#modalBg [data-revoke="tok1"]').onclick();
+  await env.wait();
+  const rv = env.lastPost('share_revoke');
+  (rv && rv.data.token === 'tok1' && /Avv\. Bianchi/.test(env.confirms[0] || '')) ? ok('revoca: conferma col destinatario e POST del token') : bad('revoca errata');
+  if (env.error) bad('errore: ' + env.error.message);
+}
+
+// Cestino: elenco con escape, ripristino (toast + ricarica elenco), eliminazione
+// definitiva e svuotamento con conferma, stato vuoto.
+async function runTrash() {
+  console.log('\nCaso: cestino — elenco, ripristina, elimina, svuota');
+  const now = Math.floor(Date.now() / 1000);
+  let entries = [
+    { id: 'e1', name: 'contratto.pdf', type: 'file', size: 2048, orig: 'patti-temp/contratto.pdf', at: now - 3600, by: 'link «Avv. Bianchi»', expires_in: 29 * 86400 },
+    { id: 'e2', name: '<img src=x onerror=alert(1)>', type: 'dir', size: 0, orig: 'patti-temp/<b>x</b>', at: now - 60, by: 'link «a&b»', expires_in: 0 },
+  ];
+  const env = await shareEnv(true, false, (action, data) => {
+    if (action === 'share_list') return { ok: true, shares: [], now };
+    if (action === 'trash_list') return { ok: true, days: 30, entries };
+    if (action === 'trash_restore') return { ok: true, path: 'patti-temp/contratto (2).pdf' };
+    if (action === 'trash_purge') { if (data.all) { const n = entries.length; entries = []; return { ok: true, purged: n }; } entries = entries.filter(e => e.id !== data.id); return { ok: true, purged: 1 }; }
+    return null;
+  });
+  const { doc } = env;
+  doc.getElementById('btnShares').onclick();
+  await env.wait(30);
+  doc.getElementById('sh_trash').onclick();
+  await env.wait(30);
+  const rows = doc.querySelectorAll('#modalBg tr[data-id]');
+  const heads = [...doc.querySelectorAll('#modalBg .tr-table th')].map(t => t.textContent.trim()).filter(Boolean).join('|');
+  (rows.length === 2 && heads === 'Nome|Eliminato da|Quando|Scade tra|Dimensione') ? ok('cestino: 2 righe, colonne attese') : bad(`cestino: righe=${rows.length}, colonne=${heads}`);
+  const r0 = rows[0].textContent;
+  (/contratto\.pdf/.test(r0) && /\/patti-temp\/contratto\.pdf/.test(rows[0].querySelector('.tr-orig').textContent) && /link «Avv\. Bianchi»/.test(r0) && /2\.0 KB/.test(r0) && /29g/.test(r0))
+    ? ok('riga: nome, percorso d\'origine, eliminato da, scadenza, dimensione') : bad(`riga 1: ${r0.replace(/\s+/g, ' ')}`);
+  (!doc.querySelector('#modalBg img') && !doc.querySelector('#modalBg .tr-orig b') && /link «a&b»/.test(rows[1].textContent))
+    ? ok('dati del server con escape (nome, percorso, autore)') : bad('escape mancante nel cestino');
+  rows[0].querySelector('.tr-restore').onclick();
+  await env.wait(40);
+  const rs = env.lastPost('trash_restore');
+  (rs && rs.data.id === 'e1') ? ok('Ripristina → POST trash_restore id=e1') : bad(`restore: ${JSON.stringify(rs)}`);
+  env.toasts().includes('Ripristinato in /patti-temp/contratto (2).pdf') ? ok('toast «Ripristinato in …»') : bad(`toast: ${env.toasts()}`);
+  const listsAfter = env.gets.filter(a => a === 'list').length;
+  listsAfter >= 2 ? ok('dopo il ripristino l\'elenco corrente viene ricaricato') : bad(`load(S.cwd) non chiamato (list GET: ${listsAfter})`);
+  // eliminazione definitiva: con conferma rifiutata non parte nulla
+  env.confirmAnswer = false;
+  doc.querySelectorAll('#modalBg tr[data-id]')[1].querySelector('.tr-purge').onclick();
+  await env.wait();
+  !env.lastPost('trash_purge') ? ok('conferma rifiutata: nessuna eliminazione') : bad('purge partito senza conferma');
+  env.confirmAnswer = true;
+  doc.querySelectorAll('#modalBg tr[data-id]')[1].querySelector('.tr-purge').onclick();
+  await env.wait(40);
+  const pg = env.lastPost('trash_purge');
+  (pg && pg.data.id === 'e2' && !('all' in pg.data) && /definitivamente/.test(env.confirms.at(-1))) ? ok('Elimina definitivamente → POST trash_purge id=e2 (con conferma)') : bad(`purge: ${JSON.stringify(pg)}`);
+  doc.querySelectorAll('#modalBg tr[data-id]').length === 1 ? ok('elenco del cestino aggiornato') : bad('cestino non aggiornato dopo purge');
+  doc.getElementById('tr_empty').onclick();
+  await env.wait(40);
+  const pa = env.lastPost('trash_purge');
+  (pa && pa.data.all === '1' && !('id' in pa.data) && /Svuotare il cestino/.test(env.confirms.at(-1))) ? ok('Svuota cestino → POST trash_purge all=1 (con conferma)') : bad(`svuota: ${JSON.stringify(pa)}`);
+  const empty = doc.querySelector('#modalBg .tr-modal');
+  (empty && /Il cestino è vuoto\. Qui finiscono per 30 giorni gli elementi eliminati o sostituiti tramite i link\./.test(empty.textContent) && !doc.getElementById('tr_empty'))
+    ? ok('cestino vuoto: messaggio con i giorni, niente «Svuota»') : bad(`stato vuoto: ${empty && empty.textContent}`);
+  if (env.error) bad('errore: ' + env.error.message);
 }
 
 console.log('=== JS smoke test (jsdom) ===');
@@ -586,6 +789,9 @@ await runUpload();
 await runRowActions();
 await runSettingsSave();
 await runShareCreate();
+await runShareCreateDir();
+await runSharesMeta();
+await runTrash();
 
 console.log(`\n${failures === 0 ? 'TUTTI I TEST JS PASSATI ✓' : failures + ' TEST JS FALLITI ✗'}`);
 process.exit(failures === 0 ? 0 : 1);
