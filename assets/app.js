@@ -664,6 +664,7 @@
         <div class="sh-meta">${shareMeta(s, r.is_admin)}</div></td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
+        <i class="ti ti-clock-edit" data-ttl="${esc(s.token)}" title="Cambia scadenza"></i>
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
         <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nessuna condivisione attiva.</p>';
     openModal(`<div class="modal wide sh-panel"><h3><i class="ti ti-share"></i> Condivisioni attive</h3>${body}
@@ -684,6 +685,28 @@
         sharesPanel();
       } else toast(x.error || "Errore", true);
     });
+    modalBg.querySelectorAll("[data-ttl]").forEach((b) => b.onclick = () => {
+      const tr = b.closest("tr");
+      const cell = tr.querySelector(".sh-rem");
+      if (tr.dataset.editing) return;
+      tr.dataset.editing = "1";
+      cell.innerHTML = `<select class="sh-ttl"><option value="">Scade da adesso tra…</option><option value="3600">1 ora</option><option value="86400">24 ore</option><option value="604800">7 giorni</option><option value="2592000">30 giorni</option></select>`;
+      const sel = cell.querySelector("select");
+      sel.focus();
+      sel.onchange = async () => {
+        if (!sel.value) return;
+        sel.disabled = true;
+        const x = await apiPost("share_update", { token: b.dataset.ttl, ttl: sel.value });
+        if (x.ok) {
+          toast("Scadenza aggiornata");
+          sharesPanel();
+        } else {
+          toast(x.error || "Errore", true);
+          delete tr.dataset.editing;
+          sel.disabled = false;
+        }
+      };
+    });
     if (S.shareTimer) clearInterval(S.shareTimer);
     const skew = (typeof r.now === "number" ? r.now : Date.now() / 1e3) - Date.now() / 1e3;
     const tick = () => {
@@ -691,7 +714,7 @@
         const rem = tr.dataset.exp - (Date.now() / 1e3 + skew);
         const cell = tr.querySelector(".sh-rem");
         if (rem <= 0) tr.remove();
-        else if (cell) cell.textContent = "tra " + fmtDuration(rem);
+        else if (cell && !tr.dataset.editing) cell.textContent = "tra " + fmtDuration(rem);
       });
     };
     tick();

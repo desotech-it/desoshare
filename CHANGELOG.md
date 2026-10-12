@@ -6,6 +6,14 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.25.1] - 2026-10-12
+
+### Aggiunto
+- **Cambio della scadenza di un link** dal pannello Condivisioni (icona orologio):
+  1 ora, 24 ore, 7 giorni o 30 giorni da adesso, senza cambiare indirizzo. Solo il
+  creatore o un amministratore; un link già scaduto non si riattiva. Nuova API
+  `share_update` (token, ttl), tracciata nel registro. [api_shares.php, app-src/shares.js]
+
 ## [0.25.0] - 2026-10-11
 
 ### Aggiunto

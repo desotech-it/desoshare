@@ -120,6 +120,30 @@ function action_share_list(): void {
     json_out(['ok' => true, 'shares' => $out, 'now' => time(), 'is_admin' => $admin]);
 }
 
+// ─── Condivisioni: nuova scadenza (da adesso, stesse durate della creazione) ───
+function action_share_update(): void {
+    $u = require_login();
+    $token = is_string($_POST['token'] ?? null) ? $_POST['token'] : '';
+    $ttl = (int) ($_POST['ttl'] ?? 0);
+    if (!in_array($ttl, [3600, 86400, 604800, 2592000], true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
+    $admin = is_admin();
+    $found = null;
+    with_json_lock(shares_file(), function (array $d) use ($token, $ttl, $u, $admin, &$found) {
+        $now = time();
+        foreach ($d['shares'] ?? [] as $i => $s) {
+            if (($s['token'] ?? '') !== $token || ($s['expires_at'] ?? 0) <= $now) continue;   // un link scaduto non si riattiva
+            if (!$admin && ($s['created_by'] ?? '') !== $u['username']) return null;
+            $d['shares'][$i]['expires_at'] = $now + $ttl;
+            $found = $d['shares'][$i];
+            return $d;
+        }
+        return null;
+    });
+    if (!$found) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
+    audit('share_update', ($found['name'] ?? '') . ($found['label'] ?? '' ? ' per «' . $found['label'] . '»' : '') . ': scade ' . date('c', $found['expires_at']));
+    json_out(['ok' => true, 'expires_at' => $found['expires_at']]);
+}
+
 // ─── Condivisioni: revoca ────────────────────────────────────────────────────
 function action_share_revoke(): void {
     $u = require_login();

@@ -967,6 +967,17 @@ TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | php -r '$d=json_decode(s
 has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
 has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
 
+echo "=== Nuova scadenza di un link ==="
+UT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=3600 --data-urlencode mode=view "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+UR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$UT --data-urlencode ttl=2592000 "$B/api.php?action=share_update")
+has "share_update: 30 giorni" "$UR" '"ok":true'
+UE=$(echo "$UR" | sed -n 's/.*"expires_at":\([0-9]*\).*/\1/p'); NOW=$(date +%s)
+[ -n "$UE" ] && [ $((UE - NOW)) -gt 2590000 ] && ok "scadenza spostata a ~30 giorni da adesso" || no "scadenza non aggiornata" "$UR"
+has "share_list riporta la nuova scadenza" "$(curl -s -b $JAR "$B/api.php?action=share_list")" "\"expires_at\":$UE"
+has "durata non valida → 400" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/null -w '%{http_code}' --data-urlencode token=$UT --data-urlencode ttl=999 "$B/api.php?action=share_update")" '400'
+has "link inesistente → 404" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/null -w '%{http_code}' --data-urlencode token=00000000000000000000000000000000 --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '404'
+has "senza CSRF → 419" "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' --data-urlencode token=$UT --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '419'
+
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
 has "settings_get (admin)" "$SG" '"ok":true'
