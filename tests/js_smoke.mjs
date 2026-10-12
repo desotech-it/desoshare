@@ -321,8 +321,10 @@ async function runShares() {
         url: 'https://share.deso.tech/s/tok2', created_by: 'admin', expires_at: exp },
     ] },
   };
-  win.fetch = async (url) => {
+  let updPost = null;
+  win.fetch = async (url, opts) => {
     const action = (String(url).match(/action=([a-z_]+)/) || [])[1] || 'list';
+    if (action === 'share_update' && opts && opts.body && opts.body.forEach) { updPost = {}; opts.body.forEach((v, k) => { updPost[k] = v; }); }
     const body = responses[action] || { ok: true };
     return { ok: true, json: async () => body, text: async () => JSON.stringify(body) };
   };
@@ -345,6 +347,12 @@ async function runShares() {
   copy && typeof copy.onclick === 'function' ? ok('icona copia link cablata') : bad('copia link non cablata');
   const rev = doc.querySelector('#modalBg [data-revoke]');
   rev && typeof rev.onclick === 'function' ? ok('icona revoca cablata') : bad('revoca non cablata');
+  // Nuova scadenza: l'icona apre la scelta della durata nella cella «Scade».
+  doc.querySelector('#modalBg [data-ttl="tok1"]').onclick();
+  const sel = doc.querySelector('#modalBg tr[data-exp] .sh-rem select');
+  sel ? ok('cambia scadenza: scelta della durata nella cella') : bad('cambia scadenza: select assente');
+  if (sel) { sel.value = '604800'; sel.onchange(); await new Promise(r => setTimeout(r, 30)); }
+  (updPost && updPost.token === 'tok1' && updPost.ttl === '604800') ? ok('cambia scadenza → POST share_update token+ttl') : bad(`share_update errato (${JSON.stringify(updPost)})`);
   win.closeModal();   // chiusura → deve fermare il timer (stato condiviso shareTimer)
   ciCount >= 1 ? ok('closeModal ferma il timer (clearInterval)') : bad('timer non fermato alla chiusura');
 }

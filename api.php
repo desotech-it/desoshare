@@ -38,6 +38,7 @@ switch ($action) {
     case 'oidc_test':    csrf_check(); action_oidc_test();    break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
+    case 'share_update': csrf_check(); action_share_update(); break;
     case 'note_sync':    action_note_sync();    break;   // CSRF condizionale: sessione sì, token no
     case 'note_save':    action_note_save();    break;
     // Upload: CSRF condizionale come per le note — sessione sì, token di link no
