@@ -6,6 +6,20 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.26.0] - 2026-10-12
+
+### Aggiunto
+- **Anteprima dei documenti nel browser**, nell'app e nella pagina pubblica dei
+  link: PDF (PDF.js), Markdown, testo, DOCX (docx-preview), RTF (rtf.js), fogli di
+  calcolo XLSX/XLSM/XLS/ODS/CSV con un foglio per scheda (SheetJS). Clic sul nome
+  del file; per le note c'è «Modifica» verso l'editor. I .doc (Word 97-2003) non
+  hanno anteprima: si scaricano. Nessuna conversione sul server: il file si legge
+  com'è (su S3 direttamente da Wasabi, con ripiego `via=server` se il browser non
+  può). L'HTML generato dai documenti è mostrato in un iframe sandbox senza script
+  (Markdown e fogli anche ripuliti con DOMPurify); PDF.js gira senza eval. Limiti:
+  30 MB, 300 pagine, 2000 righe per foglio. [assets/preview.js,
+  assets/vendor/preview/, share.php, app-src/listing.js, lib_download.php]
+
 ## [0.25.1] - 2026-10-12
 
 ### Aggiunto

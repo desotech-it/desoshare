@@ -174,6 +174,7 @@ function action_download(): void {
     $p = user_path($_GET['path'] ?? '');
     if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     $name = basename($p);
+    if (storage_is_s3() && ($_GET['via'] ?? '') === 'server') stream_via_server($p, $name);   // ripiego dell'anteprima
     $url = storage()->downloadRedirect($p, $name);   // S3 → presigned diretto
     if ($url !== null) { header('Location: ' . $url); exit; }
     stream_file(STORAGE_DIR . '/' . $p, $name);        // locale → stream con Range
