@@ -45,9 +45,12 @@ export function renderRows() {
     row.className = 'row' + (selected.has(rel) ? ' sel' : '');
     const isDir = it.type === 'dir';
     const isText = !isDir && isTextFile(it.name);
+    // Anteprima (assets/preview.js): tutto tranne il testo semplice, che si apre nell'editor.
+    const pk = !isDir && window.Preview ? window.Preview.kindOf(it.name) : null;
+    const canPreview = pk && pk !== 'txt';
     row.innerHTML = `
       <label class="cb"><input type="checkbox" ${selected.has(rel) ? 'checked' : ''}></label>
-      <div class="name ${(isDir || isText) ? 'clickable' : ''}">
+      <div class="name ${(isDir || isText || canPreview) ? 'clickable' : ''}">
         <i class="ti ${iconFor(it)}"></i><span class="label" title="${esc(it.name)}">${esc(it.name)}</span>
       </div>
       <div class="size">${isDir ? '—' : esc(it.size_h)}</div>
@@ -65,6 +68,10 @@ export function renderRows() {
     };
     // apri cartella o nota
     if (isDir) row.querySelector('.label').onclick = () => load(rel);
+    else if (canPreview) row.querySelector('.label').onclick = () => window.Preview.open({
+      url: 'api.php?action=download&path=' + encodeURIComponent(rel), name: it.name, size: it.size,
+      onEdit: isText && CAN_WRITE ? () => openEditor(rel, it.name) : null,
+    });
     else if (isText) row.querySelector('.label').onclick = () => openEditor(rel, it.name);
     if (isText) row.querySelector('.ti-edit').onclick = () => openEditor(rel, it.name);
     // azioni

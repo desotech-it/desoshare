@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.25.1** · stato: in sviluppo (0.x.x)
+Versione: **0.26.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -68,6 +68,9 @@ Versione: **0.25.1** · stato: in sviluppo (0.x.x)
   L'indirizzo ha la forma `…/d/relazione-20261011-1430-k7q2xm`: nome e ora per
   riconoscerlo, codice casuale per renderlo univoco e non indovinabile; dopo 30
   indirizzi inesistenti in 10 minuti lo stesso IP viene bloccato temporaneamente.
+- **Anteprima dei documenti** nel browser, anche dai link pubblici: PDF,
+  Markdown, testo, Word (.docx), RTF ed Excel (.xlsx, .xls, .ods, .csv). Il server
+  non converte nulla; i .doc si scaricano.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

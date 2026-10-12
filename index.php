@@ -279,6 +279,7 @@ function render_app(array $user): void {
 
     <div class="modal-bg" id="modalBg" hidden></div>
     <script src="assets/note-editor.js?v=<?= @filemtime(PUBLIC_DIR . '/assets/note-editor.js') ?>"></script>
+    <script src="assets/preview.js?v=<?= @filemtime(PUBLIC_DIR . '/assets/preview.js') ?>"></script>
     <script src="assets/app.js?v=<?= @filemtime(PUBLIC_DIR . '/assets/app.js') ?>"></script>
     </body></html>
     <?php

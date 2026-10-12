@@ -42,6 +42,7 @@ session_write_close();
 if (isset($_GET['dl'])) {
     $target = ($type === 'file') ? share_base($share) : share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'file') { http_response_code(404); echo 'File non trovato'; exit; }
+    if (storage_is_s3() && ($_GET['via'] ?? '') === 'server') stream_via_server($target, basename($target));
     if (storage_is_s3()) {
         // Presigned a TTL breve e MAI oltre la scadenza del link: una URL già
         // emessa non sopravvive alla revoca/scadenza più di SHARE_DL_PRESIGN_TTL.
@@ -139,6 +140,13 @@ function share_invalid_page(string $msg = 'Link non valido o scaduto'): void {
        . '<p class="muted">Questo link di condivisione non è più valido.</p>'
        . '</div></div></body></html>';
 }
+// Formati con anteprima nel browser: STESSO elenco di KINDS in assets/preview.js.
+function preview_kind(string $name): bool {
+    return in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), ['pdf', 'md', 'markdown', 'txt', 'log', 'docx', 'rtf', 'xlsx', 'xlsm', 'xls', 'ods', 'csv', 'doc'], true);
+}
+function preview_script(): string {
+    return '<script src="assets/preview.js?v=' . h((string) @filemtime(PUBLIC_DIR . '/assets/preview.js')) . '"></script>';
+}
 // URL corrente come percorso assoluto dello stesso host (form del PIN e redirect
 // dopo lo sblocco): mai un URL esterno.
 function share_self_url(): string {
@@ -168,8 +176,12 @@ function share_file_page(array $s, string $abs): void {
        . '<h1 style="font-size:17px;word-break:break-all">' . h(basename($abs)) . '</h1>'
        . '<p class="muted">' . h(human_size((int) storage()->sizeOf($abs))) . '</p>'
        . share_expiry_html($s)
+       . (preview_kind(basename($abs)) ? '<button type="button" class="btn" id="pvOpen" style="justify-content:center;width:100%;margin-top:10px"><i class="ti ti-eye"></i> Anteprima</button>' : '')
        . '<a class="btn btn-primary" style="justify-content:center;width:100%;margin-top:10px" href="' . h($dl) . '"><i class="ti ti-download"></i> Scarica</a>'
        . '</div></div>';
+    if (preview_kind(basename($abs))) {
+        echo preview_script() . '<script>document.getElementById("pvOpen").onclick=function(){Preview.open({url:' . json_encode($dl) . ',name:' . json_encode(basename($abs)) . ',size:' . (int) storage()->sizeOf($abs) . '});};</script>';
+    }
     share_footer();
 }
 // Editor di una nota condivisa: collaborativo se il link è "modificabile", altrimenti sola lettura live.
@@ -277,7 +289,10 @@ function share_folder_page(array $s, string $dir, string $p): void {
             echo '<div class="share-row"' . $data . '><a class="name clickable" href="' . h($href) . '"><i class="ti ti-folder ico-dir"></i> <span class="label">' . h($it['name']) . '</span></a><span class="size">—</span><span class="share-acts">' . $acts . '</span></div>';
         } else {
             $href = 'share.php?t=' . $tok . '&p=' . urlencode($it['rel']) . '&dl=1';
-            echo '<div class="share-row"' . $data . '><span class="name"><i class="ti ti-file ico-file"></i> <span class="label">' . h($it['name']) . '</span></span><span class="size">' . h(human_size($it['size'])) . '</span>'
+            $nameHtml = preview_kind($it['name'])
+                ? '<a class="name clickable js-pv" href="' . h($href) . '" data-size="' . $it['size'] . '"><i class="ti ti-file ico-file"></i> <span class="label">' . h($it['name']) . '</span></a>'
+                : '<span class="name"><i class="ti ti-file ico-file"></i> <span class="label">' . h($it['name']) . '</span></span>';
+            echo '<div class="share-row"' . $data . '>' . $nameHtml . '<span class="size">' . h(human_size($it['size'])) . '</span>'
                . '<span class="share-acts"><a class="dl" href="' . h($href) . '" title="Scarica" aria-label="Scarica"><i class="ti ti-download"></i></a>' . $acts . '</span></div>';
         }
     }
@@ -310,6 +325,9 @@ function share_folder_page(array $s, string $dir, string $p): void {
         echo '<script src="assets/share-upload.js?v=' . h($upV) . '"></script>'
            . '<script>ShareUpload.mount(Object.assign(' . $cfg . ',{input:"#shUpInput",list:"#shUp"}));</script>';
     }
+    // Anteprima: il clic sul nome apre il visualizzatore; senza JS resta il download.
+    echo preview_script() . '<script>document.querySelectorAll(".js-pv").forEach(function(a){a.addEventListener("click",function(e){if(!window.Preview)return;e.preventDefault();'
+       . 'Preview.open({url:a.getAttribute("href"),name:a.closest(".share-row").dataset.name,size:+a.dataset.size||0});});});</script>';
     // Rinomina/elimina/nuova cartella via link (livelli collaboratore e gestione completa).
     if ($canOwn) {
         echo '<script src="assets/share-actions.js?v=' . h($acV) . '"></script>'

@@ -3,7 +3,7 @@
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
 fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs`,
-`share_upload_smoke.mjs`, `listing_smoke.mjs` e `share_levels_smoke.mjs` (servono un
+`share_upload_smoke.mjs`, `listing_smoke.mjs` `share_levels_smoke.mjs` e `preview_smoke.mjs` (servono un
 browser), `s3_links_test.sh` (serve Wasabi reale).
 
 ## 1. Test API (PHP) — `api_test.sh`
@@ -114,5 +114,17 @@ test dal nome univoco (`s3t-…`) e alla fine lo elimina insieme a file e cestin
 ```bash
 CRED=/percorso/credentials.csv bash tests/s3_links_test.sh
 # atteso: "Risultato S3: N superati, 0 falliti."
+```
+
+## Anteprima dei documenti — `preview_smoke.mjs`
+Istanza reale (`php -S`) + **Chromium**: genera un file per formato (PDF, MD, TXT,
+DOCX, RTF, XLSX con due fogli, XLS, CSV, .doc) e verifica il contenuto mostrato
+dall'anteprima nell'app e nella pagina pubblica di un link, l'iframe sandbox senza
+script e che un Markdown con `<script>`/`onerror` non esegua codice. Con
+`SHOTS=<cartella>` salva uno screenshot per anteprima.
+
+```bash
+PATH=/percorso/php:$PATH node tests/preview_smoke.mjs
+# atteso: "SMOKE ANTEPRIMA OK ✓"
 ```
 

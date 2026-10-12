@@ -1,6 +1,14 @@
 <?php
 // lib_download.php — modulo di lib.php (incluso da lib.php nell'ordine corretto)
 // ─── Streaming file con supporto HTTP Range (riusato da api.php e share.php) ──
+// Download passando dal server anche con S3: l'anteprima nel browser ripiega qui
+// (via=server) se non riesce a leggere il file direttamente da Wasabi (CORS, rete).
+function stream_via_server(string $logical, string $name): void {
+    $tmp = tempnam(sys_get_temp_dir(), 'pv');
+    register_shutdown_function(fn() => @unlink($tmp));
+    if (!storage()->fetchToLocal($logical, $tmp)) { http_response_code(502); echo 'File non disponibile'; exit; }
+    stream_file($tmp, $name);
+}
 function stream_file(string $path, string $name): void {
     $size = filesize($path);
     $fp = fopen($path, 'rb');

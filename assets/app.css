@@ -300,3 +300,21 @@ body.dragging .listing { outline: 2px dashed var(--primary); outline-offset: -2p
   .tr-act .tr-btn { flex: 1; width: auto; }
   .tr-act .tr-btn + .tr-btn { margin-top: 0; }
 }
+
+/* ─── Anteprima dei documenti (assets/preview.js) ─────────────────────── */
+.pv-overlay { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; background: #23272b; }
+.pv-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.pv-title { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.pv-msg { color: #e8eaed; text-align: center; margin: 40px 16px; }
+.pv-note { color: #c4c8cc; font-size: 12px; text-align: center; margin: 6px 12px 10px; flex: none; }
+.pv-frame { flex: 1; width: 100%; min-height: 70vh; border: 0; background: #fff; }
+.pv-text { flex: 1; margin: 0; padding: 20px; background: #fff; color: #1f2328; white-space: pre-wrap; word-break: break-word; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+.pv-pages { padding: 12px; }
+.pv-pages canvas { display: block; margin: 0 auto 12px; max-width: 100%; height: auto !important; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+.pv-sheet { flex: 1; display: flex; }
+.pv-tabs { display: flex; gap: 4px; padding: 8px 10px 0; flex-wrap: wrap; flex: none; }
+.pv-tabs button { border: 0; border-radius: 6px 6px 0 0; padding: 6px 12px; background: #3a3f45; color: #e8eaed; cursor: pointer; font: inherit; font-size: 13px; }
+.pv-tabs button.on { background: #fff; color: #1f2328; }
+@media (max-width: 560px) { .pv-head .btn { padding: 6px 8px; } .pv-dl { font-size: 0; } .pv-dl .ti { font-size: 16px; } }
+
