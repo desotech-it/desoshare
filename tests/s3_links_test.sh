@@ -52,6 +52,8 @@ has "manage: carica in sub" "$(curl -s -F path=sub -F "files[]=@$SBX/deep.txt" "
 has "manage: elimina la cartella sub" "$(curl -s -F 'paths=["sub"]' "$B/api.php?action=link_delete&t=$MT")" '"deleted":1'
 has "anteprima: download via server (ripiego senza CORS)" "$(curl -s -b $U "$B/api.php?action=download&path=docs/owner.txt&via=server")" 'ownerdata'
 has "anteprima: download pubblico via server" "$(curl -s "$B/share.php?t=$MT&p=owner.txt&dl=1&via=server")" 'ownerdata'
+curl -s -b $U -o /dev/null "$B/api.php?action=download&path=docs/owner.txt"
+has "registro: download S3 come richiesta del presigned" "$(curl -s -b $U "$B/api.php?action=access_list&event=download")" '"via":"presigned"'
 has "elenco docs" "$(names docs)" "['d.txt', 'owner (2).txt', 'owner.txt']"
 TL=$(api trash_list); echo "$TL" | python3 -c 'import json,sys; [print("   cestino:",e["name"],e["type"],e["size"],e["by"]) for e in json.load(sys.stdin)["entries"]]'
 SID=$(echo "$TL" | python3 -c 'import json,sys; print([e["id"] for e in json.load(sys.stdin)["entries"] if e["name"]=="sub"][0])')

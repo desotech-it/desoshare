@@ -73,10 +73,40 @@ function form(data) {
   return body;
 }
 const sget = async (action, data = {}) => asJson(await req('/api.php?' + new URLSearchParams({ action, ...data })));
-const spost = async (action, data = {}, body = null) =>
-  asJson(await req('/api.php?action=' + action, { method: 'POST', body: body || form(data), headers: { 'X-CSRF': CSRF } }));
-const lpost = async (action, t, data = {}, body = null) =>
-  asJson(await fetch(`${B}/api.php?action=${action}&t=${encodeURIComponent(t)}`, { method: 'POST', body: body || form(data), redirect: 'manual' }));
+// Registro degli accessi: ogni operazione riuscita che modifica i file deve
+// lasciare una riga (verificato a fine seed contro appdata/access/*.jsonl).
+let EXP = {};
+function expectAccess(action, data, r) {
+  if (!r.j || !r.j.ok) return;
+  const add = (ev, n = 1) => { EXP[ev] = (EXP[ev] || 0) + n; };
+  if (action === 'newfile' || action === 'upload_finish') add('upload');
+  else if (action === 'upload') add('upload', r.j.saved || 0);
+  else if (action === 'delete' || action === 'link_delete') add('delete', r.j.deleted || 0);
+  else if (action === 'mkdir' || action === 'link_mkdir') add('mkdir');
+  else if (action === 'rename') add('rename');
+  else if (action === 'link_rename' && String(data.to) !== String(data.from).split('/').pop()) add('rename');
+}
+const spost = async (action, data = {}, body = null) => {
+  const r = await asJson(await req('/api.php?action=' + action, { method: 'POST', body: body || form(data), headers: { 'X-CSRF': CSRF } }));
+  expectAccess(action, data, r); return r;
+};
+const lpost = async (action, t, data = {}, body = null) => {
+  const r = await asJson(await fetch(`${B}/api.php?action=${action}&t=${encodeURIComponent(t)}`, { method: 'POST', body: body || form(data), redirect: 'manual' }));
+  expectAccess(action, data, r); return r;
+};
+function checkAccessLog() {
+  const dir = join(SBX, 'appdata', 'access');
+  const got = {};
+  for (const f of readdirSync(dir).filter(n => n.endsWith('.jsonl'))) {
+    for (const line of readFileSync(join(dir, f), 'utf8').split('\n')) {
+      if (!line) continue;
+      const ev = JSON.parse(line).event; got[ev] = (got[ev] || 0) + 1;
+    }
+  }
+  for (const [ev, n] of Object.entries(EXP)) {
+    if ((got[ev] || 0) !== n) violation(`registro degli accessi: ${n} operazioni «${ev}» riuscite ma ${got[ev] || 0} righe`);
+  }
+}
 async function lpage(t, p = '') {
   const r = await fetch(`${B}/share.php?` + new URLSearchParams(p ? { t, p } : { t }), { redirect: 'manual' });
   return { status: r.status, html: await r.text() };
@@ -888,7 +918,7 @@ const WEIGHTS = {
 const failedSeeds = [];
 for (const seed of seeds) {
   await startWorld();
-  resetModel(); usedNames.length = 0; nameCounter = 0; seedFailed = false;
+  resetModel(); usedNames.length = 0; nameCounter = 0; seedFailed = false; EXP = {};
   const oplog = [];
   const rand = rng(seed);
   const ops = makeOps(rand);
@@ -905,6 +935,7 @@ for (const seed of seeds) {
     } catch (e) { violation(`eccezione durante ${op}: ${e.stack || e}`); }
     if (seedFailed) break;
   }
+  if (!seedFailed) { CUR = { seed, step: N }; checkAccessLog(); }
   if (seedFailed) {
     failedSeeds.push(seed);
     console.log(`\nSEQUENZA (seed ${seed}) che ha portato alla violazione:`);

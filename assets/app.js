@@ -486,6 +486,104 @@
     });
   }
 
+  // accesslog.js
+  var EVENTS = {
+    share_view: "Visita del link",
+    download: "Download",
+    preview: "Anteprima",
+    zip: "ZIP",
+    upload: "Caricamento",
+    delete: "Eliminazione",
+    rename: "Rinomina",
+    mkdir: "Nuova cartella",
+    login: "Accesso",
+    login_fail: "Accesso fallito",
+    share_pin_ok: "PIN corretto",
+    share_pin_fail: "PIN errato",
+    share_lookup_fail: "Link inesistente"
+  };
+  var VIA = { presigned: "richiesta a Wasabi", server: "tramite server", direct: "diretto", sso: "SSO" };
+  var when = (ts) => {
+    try {
+      return new Date(ts).toLocaleString("it-IT");
+    } catch (_) {
+      return ts;
+    }
+  };
+  var who = (a) => String(a || "-").replace(/^user:/, "").replace(/^link:/, "link «").replace(/^(link «.*)$/, "$1»").replace(/^tentativo:/, "tentativo: ");
+  function rowHtml(r) {
+    const bad = r.status && r.status !== "ok";
+    const what = (r.path ? esc(r.path) : "") + (r.to ? " → " + esc(r.to) : "") + (r.size ? ` <span class="muted">(${fmtBytes(Number(r.size) || 0)})</span>` : "");
+    return `<tr>
+    <td style="white-space:nowrap">${esc(when(r.ts))}</td>
+    <td class="${bad ? "acc-bad" : ""}">${esc(EVENTS[r.event] || r.event)}${r.via ? ` <span class="muted">· ${esc(VIA[r.via] || r.via)}</span>` : ""}</td>
+    <td class="acc-who" data-actor="${esc(r.actor || "")}">${esc(who(r.actor))}</td>
+    <td>${what || '<span class="muted">—</span>'}</td>
+    <td class="acc-ip" data-ip="${esc(r.ip || "")}" title="${esc(r.ua || "")}">${esc(r.ip || "")}</td></tr>`;
+  }
+  function accessTable(host, fixed = {}, { filters = true } = {}) {
+    host.innerHTML = (filters ? `<div class="acc-filters">
+      <input type="date" id="af_from" title="Dal"><input type="date" id="af_to" title="Al">
+      <select id="af_event"><option value="">Tutti gli eventi</option>${Object.entries(EVENTS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select>
+      <input type="text" id="af_actor" placeholder="Chi (utente o link)"><input type="text" id="af_path" placeholder="Percorso"><input type="text" id="af_ip" placeholder="IP">
+      <button class="btn" id="af_go"><i class="ti ti-search"></i> Filtra</button>
+      <a class="btn" id="af_csv"><i class="ti ti-file-spreadsheet"></i> CSV</a></div>` : "") + `<div class="acc-body"><p class="muted">Caricamento…</p></div>`;
+    const body = host.querySelector(".acc-body");
+    const val = (id) => filters && $("#" + id, host) ? $("#" + id, host).value.trim() : "";
+    const params = () => {
+      const p = { ...fixed };
+      [["from", "af_from"], ["to", "af_to"], ["event", "af_event"], ["actor", "af_actor"], ["path", "af_path"], ["ip", "af_ip"]].forEach(([k, id]) => {
+        const v = val(id);
+        if (v) p[k] = v;
+      });
+      return p;
+    };
+    let rows = [];
+    const load2 = async (cursor = "") => {
+      const r = await apiGet("access_list", { ...params(), limit: 200, ...cursor ? { cursor } : {} });
+      if (!r.ok) {
+        body.innerHTML = `<p class="acc-bad">${esc(r.error || "Errore")}</p>`;
+        return;
+      }
+      rows = cursor ? rows.concat(r.rows) : r.rows;
+      body.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` + (r.next ? '<div style="text-align:center;margin-top:8px"><button class="btn" id="af_more">Mostra altri</button></div>' : "") : '<p class="muted">Nessun accesso registrato con questi filtri.</p>';
+      if (r.next) $("#af_more", body).onclick = () => load2(r.next);
+      if (filters) {
+        body.querySelectorAll("[data-ip]").forEach((td) => td.onclick = () => {
+          $("#af_ip", host).value = td.dataset.ip;
+          load2();
+        });
+        body.querySelectorAll("[data-actor]").forEach((td) => td.onclick = () => {
+          $("#af_actor", host).value = td.dataset.actor.replace(/^(user|link):/, "");
+          load2();
+        });
+      }
+    };
+    if (filters) {
+      $("#af_go", host).onclick = () => load2();
+      $("#af_csv", host).onclick = () => {
+        location.href = "api.php?" + new URLSearchParams({ action: "access_export", ...params() });
+      };
+    }
+    load2();
+  }
+  async function shareAccessPanel(s, back) {
+    const r = await apiGet("access_list", { token: String(s.token).slice(0, 8), limit: 500 });
+    const rows = r.ok ? r.rows : [];
+    const n = (ev) => rows.filter((x) => x.event === ev).length;
+    const ips = new Set(rows.map((x) => x.ip)).size;
+    openModal(`<div class="modal wide"><h3><i class="ti ti-activity"></i> Accessi al link${s.label ? " di «" + esc(s.label) + "»" : ""}</h3>
+    <p class="muted" style="margin-top:-6px">${esc(s.name)} · ultimi ${rows.length} eventi</p>
+    ${r.ok ? `<div class="acc-sum"><span><b>${n("share_view")}</b>visite</span><span><b>${n("download") + n("zip")}</b>download</span><span><b>${n("preview")}</b>anteprime</span><span><b>${n("upload")}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : "—"}</b>ultimo accesso</span></div>` : ""}
+    <div id="acc_host" class="sh-scroll"></div>
+    <p class="muted" style="font-size:11px">Con lo storage Wasabi un download è la richiesta del file: il trasferimento avviene direttamente fra il browser e Wasabi.</p>
+    <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    const host = $("#acc_host", modalBg);
+    if (!r.ok) host.innerHTML = `<p class="acc-bad">${esc(r.error || "Errore")}</p>`;
+    else host.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` : '<p class="muted">Nessun accesso registrato per questo link.</p>';
+    $("#acc_back", modalBg).onclick = back;
+  }
+
   // shares.js
   var DIR_LEVELS = [
     ["view", "Sola lettura", "Vede e scarica i file. Non può modificare nulla."],
@@ -612,7 +710,7 @@
         return;
       }
       const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
-      const when = new Date(r.expires_at * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
+      const when2 = new Date(r.expires_at * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
       const cap = hasCap() ? Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : " · nessun tetto" : "";
       $("#sh_result", modalBg).innerHTML = `<div class="sh-done">
       <label for="sh_url">Link creato</label>
@@ -621,7 +719,7 @@
       <dl class="sh-sum">
         <dt>Livello</dt><dd>${esc(levelName(rMode, isDir) + cap)}</dd>
         ${rLabel ? `<dt>Destinatario</dt><dd>${esc(rLabel)}</dd>` : ""}
-        <dt>Scade</dt><dd>${esc(when)}</dd>
+        <dt>Scade</dt><dd>${esc(when2)}</dd>
       </dl>
       ${r.has_pin ? '<div class="sh-pinset"><i class="ti ti-lock"></i> PIN impostato: comunicalo separatamente</div>' : ""}</div>`;
       modalBg.querySelectorAll("#sh_label, #sh_ttl, #sh_mode, #sh_limit, #sh_pin, #sh_slug").forEach((el) => {
@@ -664,6 +762,7 @@
         <div class="sh-meta">${shareMeta(s, r.is_admin)}</div></td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
+        <i class="ti ti-activity" data-acc="${esc(s.token)}" title="Accessi"></i>
         <i class="ti ti-clock-edit" data-ttl="${esc(s.token)}" title="Cambia scadenza"></i>
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
         <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nessuna condivisione attiva.</p>';
@@ -677,13 +776,23 @@
     });
     modalBg.querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
       const s = r.shares.find((x2) => x2.token === b.dataset.revoke) || {};
-      const who = s.label ? ` di «${s.label}»` : "";
-      if (!confirm(`Revocare il link${who} a «${s.name || ""}»? Smetterà subito di funzionare.`)) return;
+      const who2 = s.label ? ` di «${s.label}»` : "";
+      if (!confirm(`Revocare il link${who2} a «${s.name || ""}»? Smetterà subito di funzionare.`)) return;
       const x = await apiPost("share_revoke", { token: b.dataset.revoke });
       if (x.ok) {
         toast("Condivisione revocata");
         sharesPanel();
       } else toast(x.error || "Errore", true);
+    });
+    modalBg.querySelectorAll("[data-acc]").forEach((b) => b.onclick = () => {
+      const s = r.shares.find((x) => x.token === b.dataset.acc);
+      if (s) {
+        if (S.shareTimer) {
+          clearInterval(S.shareTimer);
+          S.shareTimer = null;
+        }
+        shareAccessPanel(s, sharesPanel);
+      }
     });
     modalBg.querySelectorAll("[data-ttl]").forEach((b) => b.onclick = () => {
       const tr = b.closest("tr");
@@ -1146,17 +1255,24 @@ Annulla = conserva i file`);
       else toast(r.error || "Errore", true);
     };
   }
-  async function renderAuditSection(body) {
+  async function renderAuditSection(body, which = "access") {
+    body.innerHTML = `<div class="acc-tabs"><button class="btn ${which === "access" ? "btn-primary" : ""}" data-reg="access"><i class="ti ti-activity"></i> Accessi</button><button class="btn ${which === "mgmt" ? "btn-primary" : ""}" data-reg="mgmt"><i class="ti ti-history"></i> Gestione</button></div><div id="reg_body"></div>`;
+    body.querySelectorAll("[data-reg]").forEach((b) => b.onclick = () => renderAuditSection(body, b.dataset.reg));
+    const host = $("#reg_body", body);
+    if (which === "access") {
+      accessTable(host);
+      return;
+    }
     const r = await apiGet("audit_list");
     if (!r.ok) {
-      body.textContent = r.error || "Errore";
+      host.textContent = r.error || "Errore";
       return;
     }
     if (!r.entries.length) {
-      body.innerHTML = '<p class="muted">Nessuna attività registrata.</p>';
+      host.innerHTML = '<p class="muted">Nessuna attività registrata.</p>';
       return;
     }
-    body.innerHTML = `<table class="utable">
+    host.innerHTML = `<table class="utable">
     <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${r.entries.map((e) => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join("")}</tbody></table>`;
   }
   function userForm(u = null) {

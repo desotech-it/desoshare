@@ -335,6 +335,7 @@ function oidc_callback(): void {
     if ($backfill) audit('sso_sub_anchor', $username . ' ancorato a sub=' . substr($sub, 0, 12) . '…');
     if ($keptAdmin) audit('sso_admin_kept', $username . ' resterebbe unico admin: ruolo admin mantenuto nonostante i gruppi IdP');
     audit($event, $username . ' (' . $perms['role'] . '/' . $perms['permission'] . ')');
+    access_log('login', ['via' => 'sso']);
     header('Location: index.php');
     exit;
 }

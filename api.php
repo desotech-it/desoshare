@@ -13,6 +13,7 @@ require_once __DIR__ . '/api_shares.php';
 require_once __DIR__ . '/api_notes.php';
 require_once __DIR__ . '/api_link.php';
 require_once __DIR__ . '/api_trash.php';
+require_once __DIR__ . '/api_access.php';
 
 $action = $_REQUEST['action'] ?? '';
 
@@ -30,6 +31,8 @@ switch ($action) {
     case 'audit_list':  action_audit_list();   break;
     case 'usage_list':  action_usage_list();    break;
     case 'trash_list':  action_trash_list();    break;
+    case 'access_list': action_access_list();   break;
+    case 'access_export': action_access_export(); break;
 
     // Modifiche (POST + CSRF)
     case 'settings_save': csrf_check(); action_settings_save(); break;

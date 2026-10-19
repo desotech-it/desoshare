@@ -199,7 +199,7 @@ function share_lookup(string $id, bool $json = true): ?array {
         exit;
     }
     $s = share_find($id);
-    if (!$s) share_lookup_fail($id);
+    if (!$s) { share_lookup_fail($id); access_lookup_fail(); }
     return $s;
 }
 function share_blocked_page(string $title, string $msg): void {

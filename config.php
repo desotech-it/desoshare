@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.26.0');
+define('APP_VERSION', '0.27.0');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -38,7 +38,9 @@ define('SHARE_PIN_MAX_FAILS', 5);            // PIN errati per link e IP prima d
 define('SHARE_PIN_WINDOW', 900);             // secondi
 define('SHARE_PIN_LINK_MAX_FAILS', 20);      // PIN errati per link da qualunque IP prima del blocco del link
 define('TRASH_PREFIX', '~cestino');          // radice del cestino nello storage (fuori da ogni home: '~' non è ammesso negli username)
-define('TRASH_DAYS', 30);                    // conservazione degli elementi eliminati tramite link
+define('TRASH_DAYS', 30);
+define('ACCESS_LOG_MONTHS', 12);            // conservazione del registro degli accessi (mesi)
+define('ACCESS_NOTICE', 'Gli accessi a questo link sono registrati (data, ora e indirizzo IP) per motivi di sicurezza.');                    // conservazione degli elementi eliminati tramite link
 
 // Scadenza (s) dell'URL presigned per il download di un singolo file via link
 // pubblico: tenuta breve e comunque MAI oltre la scadenza del link di condivisione.

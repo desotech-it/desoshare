@@ -25,9 +25,13 @@ if (!share_pin_ok($share)) {
         if (!hash_equals(csrf_token(), is_string($_POST['csrf'] ?? null) ? $_POST['csrf'] : '')) $err = 'Sessione scaduta: riprova';
         elseif (share_pin_locked($share)) $err = 'Troppi tentativi errati: riprova tra qualche minuto';
         elseif (share_pin_try($share, $pin)) {
+            access_log('share_pin_ok', access_link_fields($share));
             header('Location: ' . share_self_url(), true, 303);
             exit;
-        } else $err = share_pin_locked($share) ? 'Troppi tentativi errati: riprova tra qualche minuto' : 'PIN non corretto';
+        } else {
+            $err = share_pin_locked($share) ? 'Troppi tentativi errati: riprova tra qualche minuto' : 'PIN non corretto';
+            access_log('share_pin_fail', access_link_fields($share) + ['status' => 'denied']);
+        }
     }
     share_pin_page($share, $err);
     exit;
@@ -42,6 +46,7 @@ session_write_close();
 if (isset($_GET['dl'])) {
     $target = ($type === 'file') ? share_base($share) : share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'file') { http_response_code(404); echo 'File non trovato'; exit; }
+    access_log(access_dl_event(), access_link_fields($share) + ['path' => access_rel($target, (string) ($share['created_by'] ?? '')), 'size' => (int) storage()->sizeOf($target), 'via' => access_dl_via()]);
     if (storage_is_s3() && ($_GET['via'] ?? '') === 'server') stream_via_server($target, basename($target));
     if (storage_is_s3()) {
         // Presigned a TTL breve e MAI oltre la scadenza del link: una URL già
@@ -66,7 +71,10 @@ if (isset($_GET['zipmanifest']) && $type === 'dir') {
     $zipname = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
     $remaining = max(60, (int) $share['expires_at'] - time());        // mai sotto i 60s
     $ttl = min(ZIP_PRESIGN_TTL, $remaining);                          // ≤ scadenza del token
-    echo json_encode(zip_manifest_build([$target], $zipname, $ttl));
+    $man = zip_manifest_build([$target], $zipname, $ttl);
+    // mode 'server': il browser ripiega sullo ZIP del server, che si registra da sé.
+    if (($man['mode'] ?? '') === 'client') access_log('zip', access_link_fields($share) + ['path' => access_rel($target, (string) ($share['created_by'] ?? '')), 'via' => 'presigned']);
+    echo json_encode($man);
     exit;
 }
 
@@ -74,6 +82,7 @@ if (isset($_GET['zipmanifest']) && $type === 'dir') {
 if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'dir') { http_response_code(404); echo 'Cartella non trovata'; exit; }
+    access_log('zip', access_link_fields($share) + ['path' => access_rel($target, (string) ($share['created_by'] ?? '')), 'via' => 'server']);
     $tmp = zip_logical([$target]);
     $dl = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
     while (ob_get_level()) ob_end_clean();
@@ -87,12 +96,14 @@ if (isset($_GET['zip']) && $type === 'dir') {
 // Pagina HTML
 if ($type === 'file') {
     $logical = share_base($share);
+    access_log('share_view', access_link_fields($share) + ['path' => access_rel($logical, (string) ($share['created_by'] ?? ''))]);
     if (storage()->typeOf($logical) !== 'file') { share_invalid_page(); exit; }
     if (note_is_text(basename($logical))) share_editor_page($share, $logical);   // nota testuale → editor (live)
     else share_file_page($share, $logical);                                      // binario → pagina download
 } else {
     $dir = share_resolve($share, $p);
     if ($dir === null || storage()->typeOf($dir) !== 'dir') { share_invalid_page('Cartella non trovata'); exit; }
+    access_log('share_view', access_link_fields($share) + ['path' => access_rel($dir, (string) ($share['created_by'] ?? ''))]);
     share_folder_page($share, $dir, $p);
 }
 
@@ -128,6 +139,7 @@ function share_footer(): void {
        // clock skew del client si elide; al più UN reload (flag) a scadenza raggiunta.
        . 'function t(){document.querySelectorAll(".share-exp").forEach(function(e){if(!e.dataset.dl)e.dataset.dl=Date.now()/1000+ +e.dataset.rem;var r=e.dataset.dl-Date.now()/1000;var s=e.querySelector(".share-rem");if(r<=0){if(!RL){RL=true;location.reload();}}else if(s){s.textContent="scade tra "+f(r);}});}t();setInterval(t,1000);})();</script>'
        . '<p class="share-brand"><img src="assets/desolabs-icon.png" alt=""> ' . h(APP_NAME) . '</p>'
+       . '<p class="share-privacy">' . h(ACCESS_NOTICE) . '</p>'
        . '</body></html>';
 }
 function share_invalid_page(string $msg = 'Link non valido o scaduto'): void {
@@ -165,6 +177,7 @@ function share_pin_page(array $s, string $err): void {
        . '<input type="hidden" name="csrf" value="' . h(csrf_token()) . '">'
        . '<label for="pin">PIN</label><input type="password" id="pin" name="pin" autocomplete="off" required autofocus>'
        . '<button class="btn btn-primary" type="submit" style="justify-content:center;width:100%;margin-top:12px"><i class="ti ti-lock-open"></i> Apri</button>'
+       . '<p class="share-privacy">' . h(ACCESS_NOTICE) . '</p>'
        . '</form></div></body></html>';
 }
 function share_file_page(array $s, string $abs): void {
