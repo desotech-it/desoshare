@@ -6,6 +6,14 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.27.2] - 2026-10-20
+
+### Corretto
+- **Fuso orario unico (Europe/Rome)**: il server di hosting è in UTC, quindi la
+  scadenza sulle pagine pubbliche («Disponibile fino al …»), le date dell'elenco
+  file e il registro di gestione risultavano indietro di un'ora o due rispetto
+  all'Italia. Ora tutte le date usano `APP_TZ`. [config.php, lib.php]
+
 ## [0.27.1] - 2026-10-20
 
 ### Corretto

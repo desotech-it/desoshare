@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.27.1');
+define('APP_VERSION', '0.27.2');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -28,7 +28,8 @@ define('QUOTA_MAX_MB', 4 * 1024 * 1024);     // tetto della quota impostabile (4
 define('SHARE_UPLOAD_LIMIT_MB_DEFAULT', 1024);  // spazio caricabile via link 'edit' di cartella se non specificato (0 = solo la quota del creatore)
 
 // ─── Link di condivisione: indirizzo, PIN, tentativi, cestino ────────────────
-define('SHARE_SLUG_TZ', 'Europe/Rome');      // fuso dell'ora inserita nell'indirizzo (nome-AAAAMMGG-HHMM-codice)
+define('APP_TZ', 'Europe/Rome');             // fuso di TUTTE le date mostrate e registrate (scadenze, elenco, registri, indirizzi dei link)
+define('SHARE_SLUG_TZ', APP_TZ);
 define('SHARE_LABEL_MAX', 80);               // lunghezza massima del nome del link («a chi lo dai»)
 // Indirizzi /d/ inesistenti dallo stesso IP: oltre la soglia nella finestra, blocco temporaneo
 // (anti-enumerazione). Sovrascrivibili da ambiente solo per i test automatici.
