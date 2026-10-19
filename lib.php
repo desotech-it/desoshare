@@ -4,6 +4,9 @@
 // MAI i singoli lib_*.php. Ordine obbligatorio (config per primo, storage per ultimo).
 require_once __DIR__ . '/config.php';
 mb_internal_encoding('UTF-8');
+// Il server di hosting è in UTC: senza questo le scadenze sulle pagine pubbliche e le
+// date nei registri risulterebbero un'ora o due indietro rispetto all'Italia.
+date_default_timezone_set(APP_TZ);
 require_once __DIR__ . '/lib_util.php';      // json_out, human_size, valid_name, rrmdir, h
 require_once __DIR__ . '/lib_crypto.php';    // app_secret, secret_encrypt/decrypt
 require_once __DIR__ . '/lib_settings.php';  // settings_*, setting, app_title, note_*
