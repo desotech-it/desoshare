@@ -6,6 +6,15 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.27.1] - 2026-10-20
+
+### Corretto
+- **PIN modificabile dopo la creazione**: dal pannello Condivisioni (icona chiave)
+  si imposta, cambia o toglie il PIN di un link esistente. Cambiandolo, chi aveva
+  già sbloccato il vecchio deve inserire quello nuovo (lo sblocco in sessione è
+  legato a un'impronta del PIN). `share_update` accetta `pin_action=set|remove`.
+  [api_shares.php, lib_shares.php, app-src/shares.js]
+
 ## [0.27.0] - 2026-10-19
 
 ### Aggiunto

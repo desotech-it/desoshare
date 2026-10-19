@@ -978,6 +978,29 @@ has "durata non valida → 400" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/nu
 has "link inesistente → 404" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/null -w '%{http_code}' --data-urlencode token=00000000000000000000000000000000 --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '404'
 has "senza CSRF → 419" "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' --data-urlencode token=$UT --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '419'
 
+echo "=== PIN modificabile dopo la creazione ==="
+rm -f "$SBX/appdata/share_pin_attempts.json"
+PT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=3600 --data-urlencode mode=view "$B/api.php?action=share_create")
+PS=$(echo "$PT" | sed -n 's/.*"slug":"\([^"]*\)".*/\1/p'); PTK=$(echo "$PT" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+upd(){ curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$PTK "$@" "$B/api.php?action=share_update"; }
+has "link senza PIN: pagina aperta" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$PS")" '200'
+has "imposta PIN su un link esistente" "$(upd --data-urlencode pin_action=set --data-urlencode pin=1111)" '"has_pin":true'
+has "ora la pagina chiede il PIN (401)" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$PS")" '401'
+PJ="$SBX/pinjar"; PC=$(curl -s -c $PJ -b $PJ "$B/share.php?t=$PS" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1)
+has "sblocco col primo PIN" "$(curl -s -c $PJ -b $PJ -o /dev/null -w '%{http_code}' --data-urlencode pin=1111 --data-urlencode csrf=$PC "$B/share.php?t=$PS")" '303'
+has "sessione sbloccata: pagina 200" "$(curl -s -b $PJ -o /dev/null -w '%{http_code}' "$B/share.php?t=$PS")" '200'
+has "cambia PIN" "$(upd --data-urlencode pin_action=set --data-urlencode pin=2222)" '"has_pin":true'
+has "dopo il cambio la vecchia sessione deve reinserire il PIN" "$(curl -s -b $PJ -o /dev/null -w '%{http_code}' "$B/share.php?t=$PS")" '401'
+PC=$(curl -s -c $PJ -b $PJ "$B/share.php?t=$PS" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1)
+has "il vecchio PIN non funziona più" "$(curl -s -c $PJ -b $PJ -o /dev/null -w '%{http_code}' --data-urlencode pin=1111 --data-urlencode csrf=$PC "$B/share.php?t=$PS")" '403'
+has "il nuovo PIN funziona" "$(curl -s -c $PJ -b $PJ -o /dev/null -w '%{http_code}' --data-urlencode pin=2222 --data-urlencode csrf=$PC "$B/share.php?t=$PS")" '303'
+has "PIN troppo corto → 400" "$(upd -o /dev/null -w '%{http_code}' --data-urlencode pin_action=set --data-urlencode pin=12)" '400'
+has "niente da aggiornare → 400" "$(upd -o /dev/null -w '%{http_code}')" '400'
+has "togli PIN" "$(upd --data-urlencode pin_action=remove)" '"has_pin":false'
+has "senza PIN: pagina di nuovo aperta" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$PS")" '200'
+has "share_list riflette has_pin" "$(curl -s -b $JAR "$B/api.php?action=share_list")" "\"token\":\"$PTK\""
+rm -f "$SBX/appdata/share_pin_attempts.json"
+
 echo "=== Registro degli accessi ==="
 ADIR="$SBX/appdata/access"
 acc(){ curl -s -b $JAR "$B/api.php?action=access_list&limit=500$1"; }
