@@ -145,6 +145,7 @@ function action_upload_finish(): void {
             @unlink(manifest_path($uid));
             if (!$r['ok']) json_out(['ok' => false, 'error' => $r['error']], $r['code']);
             audit('link_upload', $r['name'] . ' (0 B) in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
+            access_log('upload', access_link_fields($cx['link']) + ['path' => access_rel(logical_join($cx['base'], $r['name']), $cx['owner']), 'size' => 0]);
             json_out(['ok' => true, 'name' => $r['name'], 'renamed' => $r['renamed']]);
         }
         $dest = logical_join($cx['base'], $name);
@@ -154,6 +155,7 @@ function action_upload_finish(): void {
         if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura/ricreazione: via il relay stantio
         usage_bump($cx['owner'], -$repl);
         @unlink(manifest_path($uid));
+        access_log('upload', ['path' => access_rel($dest, $cx['owner']), 'size' => 0]);
         json_out(['ok' => true]);
     }
 
@@ -196,6 +198,7 @@ function action_upload_finish(): void {
         @unlink(manifest_path($uid));
         upload_gc();
         audit('link_upload', $r['name'] . ' (' . human_size($total) . ') in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
+        access_log('upload', access_link_fields($cx['link']) + ['path' => access_rel(logical_join($cx['base'], $r['name']), $cx['owner']), 'size' => $total]);
         json_out(['ok' => true, 'name' => $r['name'], 'renamed' => $r['renamed']]);
     }
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
@@ -215,6 +218,7 @@ function action_upload_finish(): void {
     usage_bump($cx['owner'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
+    access_log('upload', ['path' => access_rel($dest, $cx['owner']), 'size' => $total]);
     json_out(['ok' => true]);
 }
 

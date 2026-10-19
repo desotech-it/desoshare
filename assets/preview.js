@@ -36,6 +36,7 @@
   // Il browser legge il file direttamente (redirect verso Wasabi con CORS). Se non
   // ci riesce (CORS assente, rete), lo chiede al server con via=server.
   async function fetchBytes(url) {
+    url += (url.includes('?') ? '&' : '?') + 'purpose=preview';   // nel registro degli accessi: anteprima, non download
     let r;
     try { r = await fetch(url, { credentials: 'same-origin' }); } catch (_) { r = null; }
     if (!r || !r.ok) {

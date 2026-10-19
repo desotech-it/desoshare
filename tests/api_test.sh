@@ -978,6 +978,64 @@ has "durata non valida → 400" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/nu
 has "link inesistente → 404" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/null -w '%{http_code}' --data-urlencode token=00000000000000000000000000000000 --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '404'
 has "senza CSRF → 419" "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' --data-urlencode token=$UT --data-urlencode ttl=3600 "$B/api.php?action=share_update")" '419'
 
+echo "=== Registro degli accessi ==="
+ADIR="$SBX/appdata/access"
+acc(){ curl -s -b $JAR "$B/api.php?action=access_list&limit=500$1"; }
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=acc "$B/api.php?action=mkdir" >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=acc --data-urlencode name=r.txt --data-urlencode content=riservato "$B/api.php?action=newfile" >/dev/null
+curl -s -b $JAR -o /dev/null "$B/api.php?action=download&path=acc/r.txt"
+curl -s -b $JAR -o /dev/null "$B/api.php?action=download&path=acc/r.txt&purpose=preview"
+has "download dell'app registrato (path, via, IP)" "$(acc '&event=download&path=acc/')" '"event":"download","path":"acc/r.txt"'
+has "IP della connessione" "$(acc '&event=download&path=acc/')" '"ip":"127.0.0.1"'
+has "anteprima distinta dal download" "$(acc '&event=preview')" '"path":"acc/r.txt"'
+AT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=acc --data-urlencode ttl=3600 --data-urlencode mode=edit --data-urlencode label=Revisore --data-urlencode pin=98765 "$B/api.php?action=share_create")
+AS=$(echo "$AT" | sed -n 's/.*"slug":"\([^"]*\)".*/\1/p'); ATOK=$(echo "$AT" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+GJ="$SBX/accjar"; GC=$(curl -s -c $GJ -b $GJ "$B/share.php?t=$AS" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1)
+curl -s -c $GJ -b $GJ -o /dev/null --data-urlencode pin=11111 --data-urlencode csrf=$GC "$B/share.php?t=$AS"
+curl -s -c $GJ -b $GJ -o /dev/null --data-urlencode pin=98765 --data-urlencode csrf=$GC "$B/share.php?t=$AS"
+curl -s -b $GJ -o /dev/null "$B/share.php?t=$AS"
+curl -s -b $GJ -o /dev/null "$B/share.php?t=$AS&p=r.txt&dl=1"
+GC2=$(curl -s -b $GJ "$B/share.php?t=$AS" | grep -o '"csrf":"[0-9a-f]*"' | head -1 | cut -d'"' -f4)
+echo up > "$SBX/acc-up.txt"; curl -s -b $GJ -H "X-CSRF: $GC2" -F "files[]=@$SBX/acc-up.txt" "$B/api.php?action=upload&t=$AS" >/dev/null
+L=$(acc "&token=${ATOK:0:8}")
+has "link: PIN errato registrato (denied)" "$L" '"event":"share_pin_fail"'
+has "link: PIN corretto registrato" "$L" '"event":"share_pin_ok"'
+has "link: visita registrata col nome del link" "$L" '"event":"share_view","actor":"link:Revisore"'
+has "link: download registrato" "$L" '"event":"download","actor":"link:Revisore"'
+has "link: caricamento registrato" "$L" '"event":"upload","actor":"link:Revisore"'
+hasnt "il PIN non compare mai nel registro" "$(cat $ADIR/*.jsonl)" '98765'
+hasnt "il token completo non compare mai" "$(cat $ADIR/*.jsonl)" "$ATOK"
+rm -f "$SBX/appdata/share_attempts.json"
+for i in 1 2 3; do curl -s -o /dev/null "$B/share.php?t=acc-inesistente-$i"; done
+NLF=$(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l)
+[ "$NLF" -ge 1 ] && [ "$NLF" -le 2 ] && ok "indirizzi inesistenti aggregati ($NLF righe per 3 tentativi)" || no "aggregazione indirizzi inesistenti" "$NLF righe"
+rm -f "$SBX/appdata/share_attempts.json"
+LJ="$SBX/acclogin"; curl -s -c $LJ -b $LJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=sbagliata --data-urlencode "csrf=$(precsrf $LJ)" "$B/index.php" -o /dev/null
+has "login fallito registrato col nome tentato" "$(acc '&event=login_fail')" '"actor":"tentativo:admin"'
+# Permessi: un utente vede solo i propri eventi
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=accuser --data-urlencode password=secret123 --data-urlencode permission=write "$B/api.php?action=user_save" >/dev/null
+UJ="$SBX/accuser"; curl -s -c $UJ -b $UJ --data-urlencode action=login --data-urlencode username=accuser --data-urlencode password=secret123 --data-urlencode "csrf=$(precsrf $UJ)" "$B/index.php" -o /dev/null
+UL=$(curl -s -b $UJ "$B/api.php?action=access_list&limit=500")
+has "utente: vede il proprio login" "$UL" '"actor":"user:accuser"'
+hasnt "utente: non vede gli accessi ai file altrui" "$UL" 'acc/r.txt'
+hasnt "utente: non vede i login falliti altrui" "$UL" 'login_fail'
+hasnt "utente: il filtro owner non allarga la visibilità" "$(curl -s -b $UJ "$B/api.php?action=access_list&owner=admin")" 'acc/r.txt'
+has "non autenticato → 401" "$(curl -s -o /dev/null -w '%{http_code}' "$B/api.php?action=access_list")" '401'
+has "data non valida → 400" "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' "$B/api.php?action=access_list&from=ieri")" '400'
+CSV=$(curl -s -b $JAR "$B/api.php?action=access_export&path=acc/")
+has "CSV: intestazione" "$CSV" 'ts;event;actor;owner;path'
+has "CSV: righe del filtro" "$CSV" 'acc/r.txt'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=acc --data-urlencode name='=1+1.txt' --data-urlencode content=x "$B/api.php?action=newfile" >/dev/null
+hasnt "CSV: niente formule Excel" "$(curl -s -b $JAR "$B/api.php?action=access_export&event=upload" | grep -o ';=1+1')" ';=1+1'
+# Paginazione a cursore: due pagine da 1 senza ripetizioni
+P1=$(curl -s -b $JAR "$B/api.php?action=access_list&limit=1"); NX=$(echo "$P1" | sed -n 's/.*"next":"\([^"]*\)".*/\1/p')
+P2=$(curl -s -b $JAR "$B/api.php?action=access_list&limit=1&cursor=$NX")
+[ -n "$NX" ] && [ "$(echo "$P1" | sed -n 's/.*"ts":"\([^"]*\)".*"event":"\([a-z_]*\)".*/\1\2/p')" != "" ] && [ "$P1" != "$P2" ] && ok "paginazione a cursore" || no "paginazione" "$NX"
+# Conservazione: un mese oltre la soglia viene eliminato
+echo '{"ts":"2000-01-01T00:00:00+01:00","event":"download","owner":"admin"}' > "$ADIR/2000-01.jsonl"; rm -f "$ADIR/.gc"
+curl -s -b $JAR -o /dev/null "$B/api.php?action=download&path=acc/r.txt"
+[ ! -f "$ADIR/2000-01.jsonl" ] && ok "conservazione: mese scaduto eliminato" || no "conservazione" "2000-01.jsonl ancora presente"
+
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
 has "settings_get (admin)" "$SG" '"ok":true'
@@ -1051,7 +1109,7 @@ has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

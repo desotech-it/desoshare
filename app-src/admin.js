@@ -3,6 +3,7 @@ import { modalBg, $ } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, fmtTime } from './util.js';
 import { openModal } from './modal.js';
+import { accessTable } from './accesslog.js';
 
 export async function adminPanel(section) {
   section = section || 'users';
@@ -233,11 +234,17 @@ async function renderSettingsSection(body) {
   };
 }
 
-async function renderAuditSection(body) {
+// Registro: «Accessi» (chi apre e scarica cosa, da quale IP) e «Gestione» (audit.log).
+async function renderAuditSection(body, which = 'access') {
+  body.innerHTML = `<div class="acc-tabs"><button class="btn ${which === 'access' ? 'btn-primary' : ''}" data-reg="access"><i class="ti ti-activity"></i> Accessi</button>`
+    + `<button class="btn ${which === 'mgmt' ? 'btn-primary' : ''}" data-reg="mgmt"><i class="ti ti-history"></i> Gestione</button></div><div id="reg_body"></div>`;
+  body.querySelectorAll('[data-reg]').forEach(b => b.onclick = () => renderAuditSection(body, b.dataset.reg));
+  const host = $('#reg_body', body);
+  if (which === 'access') { accessTable(host); return; }
   const r = await apiGet('audit_list');
-  if (!r.ok) { body.textContent = r.error || 'Errore'; return; }
-  if (!r.entries.length) { body.innerHTML = '<p class="muted">Nessuna attività registrata.</p>'; return; }
-  body.innerHTML = `<table class="utable">
+  if (!r.ok) { host.textContent = r.error || 'Errore'; return; }
+  if (!r.entries.length) { host.innerHTML = '<p class="muted">Nessuna attività registrata.</p>'; return; }
+  host.innerHTML = `<table class="utable">
     <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${
     r.entries.map(e => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('')
     }</tbody></table>`;

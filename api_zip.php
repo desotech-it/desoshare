@@ -14,6 +14,7 @@ function action_zip(): void {
     if (empty($paths)) { if ($raw > 0) $paths = ['']; else json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400); }
 
     $logical = array_map(fn($rel) => user_path((string) $rel), $paths);
+    foreach ($logical as $lp) access_log('zip', ['path' => access_rel($lp, user_home()), 'via' => 'server']);
     $tmp = zip_logical($logical);   // zip via storage (Local o S3), confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
     $dlname = (count($logical) === 1) ? ($b === '' ? 'cartella' : $b) . '.zip' : 'share-download.zip';
@@ -43,6 +44,8 @@ function action_zip_manifest(): void {
     $logical = array_map(fn($rel) => user_path((string) $rel), $paths);   // confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
     $zipname = (count($logical) === 1) ? ($b === '' ? 'cartella' : $b) . '.zip' : 'share-download.zip';
-    json_out(zip_manifest_build($logical, $zipname, ZIP_PRESIGN_TTL));
+    $man = zip_manifest_build($logical, $zipname, ZIP_PRESIGN_TTL);
+    if (($man['mode'] ?? '') === 'client') foreach ($logical as $lp) access_log('zip', ['path' => access_rel($lp, user_home()), 'via' => 'presigned']);
+    json_out($man);
 }
 

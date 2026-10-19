@@ -45,6 +45,7 @@ function action_link_mkdir(): void {
     if ($chk['type'] !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     if (!storage()->makeDir($target)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
     audit('link_mkdir', link_rel($s, $target) . ' in "' . ($s['name'] ?? '') . '"', $cx['actor']);
+    access_log('mkdir', access_link_fields($s) + ['path' => access_rel($target, $cx['owner'])]);
     json_out(['ok' => true]);
 }
 
@@ -71,6 +72,7 @@ function action_link_rename(): void {
     shares_follow_rename($from, $target);
     if ($own) link_file_move($s, $from, $target);
     audit('link_rename', link_rel($s, $from) . ' → ' . $newName . ' in "' . ($s['name'] ?? '') . '"', $cx['actor']);
+    access_log('rename', access_link_fields($s) + ['path' => access_rel($from, $cx['owner']), 'to' => $newName]);
     json_out(['ok' => true]);
 }
 
@@ -94,6 +96,7 @@ function action_link_delete(): void {
         link_file_forget($s, $abs);
         $removed[] = $abs; $deleted++;
         audit('link_delete', link_rel($s, $abs) . ' in "' . ($s['name'] ?? '') . '" (nel cestino)', $cx['actor']);
+        access_log('delete', access_link_fields($s) + ['path' => access_rel($abs, $cx['owner'])]);
     }
     shares_revoke_under($removed);   // le share di elementi eliminati non devono servire omonimi futuri
     trash_gc();

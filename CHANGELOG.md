@@ -6,6 +6,25 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.27.0] - 2026-10-19
+
+### Aggiunto
+- **Registro degli accessi**: chi apre, guarda in anteprima, scarica, carica,
+  rinomina ed elimina quali file, quando e da quale IP, nell'app e soprattutto dai
+  link pubblici (visite, PIN corretti ed errati, indirizzi inesistenti aggregati
+  per minuto), più login e login falliti. Una riga JSON per evento in
+  `appdata/access/AAAA-MM.jsonl`, solo in aggiunta, conservata 12 mesi
+  (`ACCESS_LOG_MONTHS`) con pulizia automatica. Mai PIN, token completi o
+  contenuti. Con Wasabi un download è la richiesta del file: il trasferimento
+  avviene fra il browser e Wasabi. [lib_access.php]
+- **Consultazione**: Amministrazione → Registro → «Accessi» con filtri (date,
+  evento, chi, percorso, IP), paginazione ed export CSV; nel pannello
+  Condivisioni, per ogni link, «Accessi» con visite, download, anteprime, IP
+  distinti e ultimo accesso. Ogni utente vede solo gli eventi sui propri file e
+  link. API `access_list`, `access_export`. [api_access.php, app-src/accesslog.js]
+- Riga di informativa sulle pagine pubbliche dei link: gli accessi sono registrati
+  (data, ora e IP) per motivi di sicurezza.
+
 ## [0.26.0] - 2026-10-12
 
 ### Aggiunto

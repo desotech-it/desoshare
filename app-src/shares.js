@@ -4,6 +4,7 @@ import { apiGet, apiPost } from './net.js';
 import { toast, esc, isTextFile, copyText, fmtDuration, fmtBytes, slugify, iconFor } from './util.js';
 import { openModal, guardSubmit } from './modal.js';
 import { trashPanel } from './trash.js';
+import { shareAccessPanel } from './accesslog.js';
 
 // Livelli d'accesso [valore, nome, spiegazione]. Per una nota `edit` è il co-editing.
 const DIR_LEVELS = [
@@ -165,6 +166,7 @@ export async function sharesPanel() {
         <div class="sh-meta">${shareMeta(s, r.is_admin)}</div></td>
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
+        <i class="ti ti-activity" data-acc="${esc(s.token)}" title="Accessi"></i>
         <i class="ti ti-clock-edit" data-ttl="${esc(s.token)}" title="Cambia scadenza"></i>
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
         <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join('')
@@ -180,6 +182,10 @@ export async function sharesPanel() {
     if (!confirm(`Revocare il link${who} a «${s.name || ''}»? Smetterà subito di funzionare.`)) return;
     const x = await apiPost('share_revoke', { token: b.dataset.revoke });
     if (x.ok) { toast('Condivisione revocata'); sharesPanel(); } else toast(x.error || 'Errore', true);
+  });
+  modalBg.querySelectorAll('[data-acc]').forEach(b => b.onclick = () => {
+    const s = r.shares.find(x => x.token === b.dataset.acc);
+    if (s) { if (S.shareTimer) { clearInterval(S.shareTimer); S.shareTimer = null; } shareAccessPanel(s, sharesPanel); }
   });
   // Nuova scadenza: la cella «Scade» diventa una scelta di durata (da adesso).
   modalBg.querySelectorAll('[data-ttl]').forEach(b => b.onclick = () => {

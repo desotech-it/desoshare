@@ -38,6 +38,7 @@ function action_mkdir(): void {
     $target = logical_join($dir, $name);
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
     if (!storage()->makeDir($target)) json_out(['ok' => false, 'error' => 'Impossibile creare la cartella'], 500);
+    access_log('mkdir', ['path' => access_rel($target, user_home())]);
     json_out(['ok' => true]);
 }
 
@@ -56,6 +57,7 @@ function action_newfile(): void {
         json_out(['ok' => false, 'error' => 'Impossibile creare il file'], 500);
     }
     usage_bump((string) $_SESSION['username'], strlen($content));
+    access_log('upload', ['path' => access_rel($target, user_home()), 'size' => strlen($content)]);
     json_out(['ok' => true]);
 }
 
@@ -92,6 +94,7 @@ function action_upload(): void {
             $r = link_store($cx, link_claim($cx['link'], $dir, $n), (string) $tmp[$i], $n);   // errori per file, mai uscite a metà lotto
             if (!$r['ok']) { $errors[] = "$n: " . $r['error']; $lost += $counted; continue; }
             $saved++; $savedBytes += $counted; $stored[] = $r['name'];
+            access_log('upload', access_link_fields($cx['link']) + ['path' => access_rel(logical_join($dir, $r['name']), $cx['owner']), 'size' => $counted]);
         }
         if ($savedBytes > 0) usage_bump($cx['owner'], $savedBytes);
         if ($lost > 0) share_upload_release($cx['link']['token'], $lost);
@@ -110,6 +113,7 @@ function action_upload(): void {
         if (!storage()->putFromLocal((string) $tmp[$i], logical_join($dir, $n))) { $errors[] = "$n: impossibile salvare"; $lost += $counted; continue; }
         if (note_is_text($n)) note_state_purge_path(logical_join($dir, $n));   // sovrascrittura: il relay non rappresenta più il file
         $saved++; $savedBytes += $sz - $repl;
+        access_log('upload', ['path' => access_rel(logical_join($dir, $n), $cx['owner']), 'size' => $sz]);
     }
     if ($savedBytes !== 0) usage_bump($cx['owner'], $savedBytes);
     json_out(['ok' => true, 'saved' => $saved, 'errors' => $errors]);
@@ -138,6 +142,7 @@ function action_delete(): void {
             if ($t !== 'dir') note_state_purge_path($p);
             $removedPaths[] = $p;
             $deleted++; $freed += $sz;
+            access_log('delete', ['path' => $clean, 'size' => $sz]);
         } else $errors[] = "$rel: impossibile eliminare";
     }
     shares_revoke_under($removedPaths);
@@ -165,6 +170,7 @@ function action_rename(): void {
     note_state_purge_path($target);
     if (!storage()->renamePath($from, $target)) json_out(['ok' => false, 'error' => 'Impossibile rinominare'], 500);
     shares_follow_rename($from, $target);
+    access_log('rename', ['path' => $fromRel, 'to' => $newName]);
     json_out(['ok' => true]);
 }
 
@@ -174,6 +180,7 @@ function action_download(): void {
     $p = user_path($_GET['path'] ?? '');
     if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     $name = basename($p);
+    access_log(access_dl_event(), ['path' => access_rel($p, user_home()), 'size' => (int) storage()->sizeOf($p), 'via' => access_dl_via()]);
     if (storage_is_s3() && ($_GET['via'] ?? '') === 'server') stream_via_server($p, $name);   // ripiego dell'anteprima
     $url = storage()->downloadRedirect($p, $name);   // S3 → presigned diretto
     if ($url !== null) { header('Location: ' . $url); exit; }

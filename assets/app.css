@@ -317,4 +317,16 @@ body.dragging .listing { outline: 2px dashed var(--primary); outline-offset: -2p
 .pv-tabs button { border: 0; border-radius: 6px 6px 0 0; padding: 6px 12px; background: #3a3f45; color: #e8eaed; cursor: pointer; font: inherit; font-size: 13px; }
 .pv-tabs button.on { background: #fff; color: #1f2328; }
 @media (max-width: 560px) { .pv-head .btn { padding: 6px 8px; } .pv-dl { font-size: 0; } .pv-dl .ti { font-size: 16px; } }
+.share-privacy { font-size: 11px; color: var(--tertiary); text-align: center; margin: 8px 16px 16px; }
+/* ─── Registro degli accessi ──────────────────────────────────────────── */
+.acc-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.acc-filters input, .acc-filters select { width: auto; flex: 1 1 120px; min-width: 0; }
+.acc-table td { font-size: 12px; vertical-align: top; }
+.acc-table .acc-ip { font-family: ui-monospace, Menlo, Consolas, monospace; cursor: pointer; }
+.acc-table .acc-ip:hover, .acc-table .acc-who:hover { color: var(--primary); text-decoration: underline; }
+.acc-table .acc-who { cursor: pointer; }
+.acc-bad { color: var(--danger); }
+.acc-sum { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 10px; font-size: 13px; }
+.acc-sum b { font-size: 18px; display: block; }
+.acc-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
 

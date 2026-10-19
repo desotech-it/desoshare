@@ -97,9 +97,11 @@ if (!current_user()) {
                 $_SESSION['username'] = $u['username'];
                 ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
                 audit('login');
+                access_log('login');
                 header('Location: index.php'); exit;
             } else {
                 login_fail_record();
+                access_log('login_fail', ['actor' => 'tentativo:' . mb_substr(is_string($uname) ? trim($uname) : '', 0, 40), 'owner' => '', 'status' => 'denied']);
                 $err = 'Credenziali non valide.';
             }
         }
