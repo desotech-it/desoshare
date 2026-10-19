@@ -121,27 +121,45 @@ function action_share_list(): void {
 }
 
 // ─── Condivisioni: nuova scadenza (da adesso, stesse durate della creazione) ───
+// Aggiorna un link: ttl (nuova scadenza da adesso) e/o PIN (pin_action=set con pin,
+// oppure pin_action=remove). Almeno una delle due cose.
 function action_share_update(): void {
     $u = require_login();
     $token = is_string($_POST['token'] ?? null) ? $_POST['token'] : '';
-    $ttl = (int) ($_POST['ttl'] ?? 0);
-    if (!in_array($ttl, [3600, 86400, 604800, 2592000], true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
+    $ttl = isset($_POST['ttl']) ? (int) $_POST['ttl'] : 0;
+    if ($ttl !== 0 && !in_array($ttl, [3600, 86400, 604800, 2592000], true)) json_out(['ok' => false, 'error' => 'Durata non valida'], 400);
+    $pinAction = is_string($_POST['pin_action'] ?? null) ? $_POST['pin_action'] : '';
+    if (!in_array($pinAction, ['', 'set', 'remove'], true)) json_out(['ok' => false, 'error' => 'Operazione sul PIN non valida'], 400);
+    $pinHash = null;
+    if ($pinAction === 'set') {
+        $pin = is_string($_POST['pin'] ?? null) ? $_POST['pin'] : '';
+        $len = mb_strlen($pin);
+        if ($len < 4 || $len > 64 || preg_match('/[\x00-\x1F\x7F]/', $pin)) json_out(['ok' => false, 'error' => 'PIN non valido: da 4 a 64 caratteri'], 400);
+        $pinHash = password_hash($pin, PASSWORD_DEFAULT);
+    }
+    if ($ttl === 0 && $pinAction === '') json_out(['ok' => false, 'error' => 'Niente da aggiornare'], 400);
     $admin = is_admin();
     $found = null;
-    with_json_lock(shares_file(), function (array $d) use ($token, $ttl, $u, $admin, &$found) {
+    with_json_lock(shares_file(), function (array $d) use ($token, $ttl, $pinAction, $pinHash, $u, $admin, &$found) {
         $now = time();
         foreach ($d['shares'] ?? [] as $i => $s) {
             if (($s['token'] ?? '') !== $token || ($s['expires_at'] ?? 0) <= $now) continue;   // un link scaduto non si riattiva
             if (!$admin && ($s['created_by'] ?? '') !== $u['username']) return null;
-            $d['shares'][$i]['expires_at'] = $now + $ttl;
+            if ($ttl) $d['shares'][$i]['expires_at'] = $now + $ttl;
+            if ($pinAction === 'set') $d['shares'][$i]['pin_hash'] = $pinHash;
+            if ($pinAction === 'remove') unset($d['shares'][$i]['pin_hash']);
             $found = $d['shares'][$i];
             return $d;
         }
         return null;
     });
     if (!$found) json_out(['ok' => false, 'error' => 'Condivisione non trovata o non autorizzata'], 404);
-    audit('share_update', ($found['name'] ?? '') . ($found['label'] ?? '' ? ' per «' . $found['label'] . '»' : '') . ': scade ' . date('c', $found['expires_at']));
-    json_out(['ok' => true, 'expires_at' => $found['expires_at']]);
+    $what = [];
+    if ($ttl) $what[] = 'scade ' . date('c', $found['expires_at']);
+    if ($pinAction === 'set') $what[] = 'PIN cambiato';
+    if ($pinAction === 'remove') $what[] = 'PIN rimosso';
+    audit('share_update', ($found['name'] ?? '') . ($found['label'] ?? '' ? ' per «' . $found['label'] . '»' : '') . ': ' . implode(', ', $what));
+    json_out(['ok' => true, 'expires_at' => $found['expires_at'], 'has_pin' => share_has_pin($found)]);
 }
 
 // ─── Condivisioni: revoca ────────────────────────────────────────────────────

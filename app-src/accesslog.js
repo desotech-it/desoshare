@@ -75,7 +75,7 @@ export async function shareAccessPanel(s, back) {
     <p class="muted" style="margin-top:-6px">${esc(s.name)} · ultimi ${rows.length} eventi</p>
     ${r.ok ? `<div class="acc-sum"><span><b>${n('share_view')}</b>visite</span><span><b>${n('download') + n('zip')}</b>download</span><span><b>${n('preview')}</b>anteprime</span><span><b>${n('upload')}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : '—'}</b>ultimo accesso</span></div>` : ''}
     <div id="acc_host" class="sh-scroll"></div>
-    <p class="muted" style="font-size:11px">Con lo storage Wasabi un download è la richiesta del file: il trasferimento avviene direttamente fra il browser e Wasabi.</p>
+    <p class="muted" style="font-size:11px">Ogni clic su un file è registrato con data, ora e indirizzo IP.</p>
     <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
   const host = $('#acc_host', modalBg);
   if (!r.ok) host.innerHTML = `<p class="acc-bad">${esc(r.error || 'Errore')}</p>`;

@@ -353,6 +353,13 @@ async function runShares() {
   sel ? ok('cambia scadenza: scelta della durata nella cella') : bad('cambia scadenza: select assente');
   if (sel) { sel.value = '604800'; sel.onchange(); await new Promise(r => setTimeout(r, 30)); }
   (updPost && updPost.token === 'tok1' && updPost.ttl === '604800') ? ok('cambia scadenza → POST share_update token+ttl') : bad(`share_update errato (${JSON.stringify(updPost)})`);
+  // PIN: l'icona chiave apre il modulo e invia pin_action=set.
+  updPost = null;
+  doc.querySelector('#modalBg [data-pin="tok1"]').onclick();
+  const pinBox = doc.querySelector('#modalBg .sh-pin-edit');
+  pinBox ? ok('PIN: modulo sotto il link') : bad('PIN: modulo assente');
+  if (pinBox) { pinBox.querySelector('input').value = '4321'; pinBox.querySelector('[data-act="set"]').onclick(); await new Promise(r => setTimeout(r, 30)); }
+  (updPost && updPost.token === 'tok1' && updPost.pin_action === 'set' && updPost.pin === '4321') ? ok('PIN → POST share_update pin_action=set') : bad(`PIN errato (${JSON.stringify(updPost)})`);
   win.closeModal();   // chiusura → deve fermare il timer (stato condiviso shareTimer)
   ciCount >= 1 ? ok('closeModal ferma il timer (clearInterval)') : bad('timer non fermato alla chiusura');
 }

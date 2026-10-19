@@ -576,7 +576,7 @@
     <p class="muted" style="margin-top:-6px">${esc(s.name)} · ultimi ${rows.length} eventi</p>
     ${r.ok ? `<div class="acc-sum"><span><b>${n("share_view")}</b>visite</span><span><b>${n("download") + n("zip")}</b>download</span><span><b>${n("preview")}</b>anteprime</span><span><b>${n("upload")}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : "—"}</b>ultimo accesso</span></div>` : ""}
     <div id="acc_host" class="sh-scroll"></div>
-    <p class="muted" style="font-size:11px">Con lo storage Wasabi un download è la richiesta del file: il trasferimento avviene direttamente fra il browser e Wasabi.</p>
+    <p class="muted" style="font-size:11px">Ogni clic su un file è registrato con data, ora e indirizzo IP.</p>
     <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
     const host = $("#acc_host", modalBg);
     if (!r.ok) host.innerHTML = `<p class="acc-bad">${esc(r.error || "Errore")}</p>`;
@@ -763,6 +763,7 @@
       <td class="sh-rem" style="white-space:nowrap"></td>
       <td class="uact" style="white-space:nowrap">
         <i class="ti ti-activity" data-acc="${esc(s.token)}" title="Accessi"></i>
+        <i class="ti ti-key" data-pin="${esc(s.token)}" title="${s.has_pin ? "Cambia o togli il PIN" : "Imposta un PIN"}"></i>
         <i class="ti ti-clock-edit" data-ttl="${esc(s.token)}" title="Cambia scadenza"></i>
         <i class="ti ti-copy" data-url="${esc(s.url)}" title="Copia link"></i>
         <i class="ti ti-trash" data-revoke="${esc(s.token)}" title="Revoca"></i></td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Nessuna condivisione attiva.</p>';
@@ -793,6 +794,52 @@
         }
         shareAccessPanel(s, sharesPanel);
       }
+    });
+    modalBg.querySelectorAll("[data-pin]").forEach((b) => b.onclick = () => {
+      const s = r.shares.find((x) => x.token === b.dataset.pin);
+      const td = b.closest("tr").querySelector("td");
+      if (!s || td.querySelector(".sh-pin-edit")) return;
+      const box = document.createElement("div");
+      box.className = "sh-pin-edit";
+      box.innerHTML = `<input type="text" autocomplete="off" placeholder="${s.has_pin ? "Nuovo PIN" : "PIN (4–64 caratteri)"}" maxlength="64">
+      <button class="btn btn-primary" data-act="set">${s.has_pin ? "Cambia PIN" : "Imposta PIN"}</button>
+      ${s.has_pin ? '<button class="btn" data-act="remove">Togli PIN</button>' : ""}<button class="btn" data-act="cancel">Annulla</button>
+      <span class="muted sh-pin-note">Comunicalo a parte. Chi aveva già inserito il vecchio PIN dovrà inserire quello nuovo.</span>`;
+      td.appendChild(box);
+      const inp = box.querySelector("input");
+      inp.focus();
+      const send = async (data, msg) => {
+        box.querySelectorAll("button").forEach((x2) => {
+          x2.disabled = true;
+        });
+        const x = await apiPost("share_update", { token: s.token, ...data });
+        if (x.ok) {
+          toast(msg);
+          sharesPanel();
+        } else {
+          toast(x.error || "Errore", true);
+          box.querySelectorAll("button").forEach((y) => {
+            y.disabled = false;
+          });
+        }
+      };
+      box.querySelector('[data-act="set"]').onclick = () => {
+        const v = inp.value;
+        if (v.length < 4) {
+          toast("Il PIN deve avere almeno 4 caratteri", true);
+          inp.focus();
+          return;
+        }
+        send({ pin_action: "set", pin: v }, s.has_pin ? "PIN cambiato" : "PIN impostato");
+      };
+      inp.onkeydown = (e) => {
+        if (e.key === "Enter") box.querySelector('[data-act="set"]').onclick();
+      };
+      const rm = box.querySelector('[data-act="remove"]');
+      if (rm) rm.onclick = () => {
+        if (confirm("Togliere il PIN? Basterà l'indirizzo per aprire il link.")) send({ pin_action: "remove" }, "PIN tolto");
+      };
+      box.querySelector('[data-act="cancel"]').onclick = () => box.remove();
     });
     modalBg.querySelectorAll("[data-ttl]").forEach((b) => b.onclick = () => {
       const tr = b.closest("tr");

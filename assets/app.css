@@ -329,4 +329,6 @@ body.dragging .listing { outline: 2px dashed var(--primary); outline-offset: -2p
 .acc-sum { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 10px; font-size: 13px; }
 .acc-sum b { font-size: 18px; display: block; }
 .acc-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-
+.sh-pin-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.sh-pin-edit input { width: auto; flex: 1 1 140px; min-width: 0; }
+.sh-pin-note { flex-basis: 100%; font-size: 11px; }

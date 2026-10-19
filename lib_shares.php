@@ -216,8 +216,11 @@ function share_blocked_page(string $title, string $msg): void {
 // la SUA sessione. Da lì le richieste sono autenticate dal cookie di sessione,
 // quindi le operazioni di modifica richiedono anche il token CSRF della pagina.
 function share_has_pin(array $s): bool { return (string) ($s['pin_hash'] ?? '') !== ''; }
+// Lo sblocco vale per QUESTO PIN: la sessione ne conserva un'impronta, così se il
+// proprietario cambia il PIN chi aveva sbloccato il vecchio deve reinserirlo.
+function share_pin_mark(array $s): string { return substr(hash('sha256', (string) ($s['pin_hash'] ?? '')), 0, 16); }
 function share_pin_ok(array $s): bool {
-    return !share_has_pin($s) || !empty($_SESSION['share_pin'][(string) ($s['token'] ?? '')]);
+    return !share_has_pin($s) || hash_equals(share_pin_mark($s), (string) ($_SESSION['share_pin'][(string) ($s['token'] ?? '')] ?? ''));
 }
 // Chiude la sessione appena verificato l'accesso: il lock del file di sessione
 // bloccherebbe ogni altra richiesta dello stesso browser (download lunghi,
@@ -266,7 +269,7 @@ function share_pin_try(array $s, string $pin): bool {
         return $a;
     });
     session_regenerate_id(true);
-    $_SESSION['share_pin'][(string) $s['token']] = true;
+    $_SESSION['share_pin'][(string) $s['token']] = share_pin_mark($s);
     return true;
 }
 
