@@ -1,6 +1,6 @@
 // accesslog.js — registro degli accessi: tabella filtrabile (amministrazione) e
 // riepilogo per link (pannello Condivisioni). Dati da api.php?action=access_list.
-import { modalBg, $ } from './state.js';
+import { modalBg, $, USER } from './state.js';
 import { apiGet } from './net.js';
 import { esc, fmtBytes } from './util.js';
 import { openModal } from './modal.js';
@@ -27,13 +27,13 @@ function rowHtml(r) {
 }
 
 // Tabella con filtri e «Mostra altri» (paginazione a cursore). fixed: filtri imposti (es. token).
-export function accessTable(host, fixed = {}, { filters = true } = {}) {
+export function accessTable(host, fixed = {}, { filters = true, initial = {}, fixedNote = '' } = {}) {
   host.innerHTML = (filters ? `<div class="acc-filters">
       <input type="date" id="af_from" title="Dal"><input type="date" id="af_to" title="Al">
       <select id="af_event"><option value="">Tutti gli eventi</option>${Object.entries(EVENTS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select>
       <input type="text" id="af_actor" placeholder="Chi (utente o link)"><input type="text" id="af_path" placeholder="Percorso"><input type="text" id="af_ip" placeholder="IP">
       <button class="btn" id="af_go"><i class="ti ti-search"></i> Filtra</button>
-      <a class="btn" id="af_csv"><i class="ti ti-file-spreadsheet"></i> CSV</a></div>` : '')
+      <a class="btn" id="af_csv"><i class="ti ti-file-spreadsheet"></i> CSV</a>${fixedNote}</div>` : '')
     + `<div class="acc-body"><p class="muted">Caricamento…</p></div>`;
   const body = host.querySelector('.acc-body');
   const val = id => (filters && $('#' + id, host) ? $('#' + id, host).value.trim() : '');
@@ -59,7 +59,9 @@ export function accessTable(host, fixed = {}, { filters = true } = {}) {
     }
   };
   if (filters) {
+    if (initial.path) $('#af_path', host).value = initial.path;
     $('#af_go', host).onclick = () => load();
+    host.querySelectorAll('.acc-filters input').forEach(i => { i.onkeydown = e => { if (e.key === 'Enter') load(); }; });
     $('#af_csv', host).onclick = () => { location.href = 'api.php?' + new URLSearchParams({ action: 'access_export', ...params() }); };
   }
   load();
@@ -76,11 +78,36 @@ export async function shareAccessPanel(s, back) {
     ${r.ok ? `<div class="acc-sum"><span><b>${n('share_view')}</b>visite</span><span><b>${n('download') + n('zip')}</b>download</span><span><b>${n('preview')}</b>anteprime</span><span><b>${n('upload')}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : '—'}</b>ultimo accesso</span></div>` : ''}
     <div id="acc_host" class="sh-scroll"></div>
     <p class="muted" style="font-size:11px">Ogni clic su un file è registrato con data, ora e indirizzo IP.</p>
-    <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
+    <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><a class="btn" href="index.php?view=registro&token=${esc(String(s.token).slice(0, 8))}"><i class="ti ti-activity"></i> Apri nel registro</a><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
   const host = $('#acc_host', modalBg);
   if (!r.ok) host.innerHTML = `<p class="acc-bad">${esc(r.error || 'Errore')}</p>`;
   else host.innerHTML = rows.length
     ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table>`
     : '<p class="muted">Nessun accesso registrato per questo link.</p>';
   $('#acc_back', modalBg).onclick = back;
+}
+
+// Pagina «Registro» (index.php?view=registro): tabella a tutta pagina; ?path= precompila il
+// percorso (icona «Accessi» di un elemento), ?token= limita a un link; l'admin sceglie Tutti/Solo i miei.
+export function registroPage(host) {
+  if (!host) return;
+  const q = new URLSearchParams(location.search);
+  const fixed = {};
+  const token = (q.get('token') || '').replace(/[^0-9a-f]/gi, '').slice(0, 8);
+  if (token) fixed.token = token;
+  const initial = { path: (q.get('path') || '').replace(/^\/+/, '') };
+  const fixedNote = token ? `<span class="acc-fixed"><i class="ti ti-link"></i> solo il link ${esc(token)}… <a href="index.php?view=registro">tutti gli eventi</a></span>` : '';
+  let scope = 'all';
+  const seg = document.getElementById('accScope');
+  const render = () => accessTable(host, { ...fixed, ...(scope === 'mine' ? { owner: USER } : {}) }, { initial, fixedNote });
+  if (seg) seg.querySelectorAll('button').forEach(b => b.onclick = () => {
+    scope = b.dataset.scope;
+    seg.querySelectorAll('button').forEach(x => x.classList.toggle('active', x === b));
+    render();
+  });
+  render();
+  const note = document.createElement('p');
+  note.className = 'acc-note';
+  note.textContent = 'Ogni evento riporta data e ora, chi ha agito (utente o link), file, esito e indirizzo IP della connessione. Conservazione: 12 mesi.';
+  host.after(note);
 }

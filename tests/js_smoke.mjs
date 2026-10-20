@@ -21,24 +21,23 @@ function pageHtml(canWrite, isAdmin) {
         <button class="btn" id="btnNewFolder">Nuova cartella</button>
         <button class="btn" id="btnNewFile">Nuovo file</button>
         <button class="btn" id="btnNewNote">Nuova nota</button>` : '';
-  const adminBtn = isAdmin ? `<button class="btn" id="btnAdmin">Amministrazione</button>` : '';
+  const adminBtn = isAdmin ? `<button class="sb-item" id="btnAdmin">Amministrazione</button>` : '';
   const delSel = canWrite ? `<button class="btn btn-danger" id="btnDelSel">Elimina</button>` : '';
   return `<!doctype html><html><body>
-    <div id="app" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}" data-jszipv="1">
-      <header class="topbar"><div class="brand">Share</div><div><button id="btnShares">Condivisioni</button>${adminBtn}<a id="logout">Esci</a></div></header>
-      <div class="toolbar">${w}
-        <button class="btn" id="btnZipCurrent">Scarica ZIP</button>
-        <div class="spacer"></div>
-        <button class="btn" id="btnRefresh">Aggiorna</button>
-        <div class="search"><input type="text" id="search"></div>
+    <div id="app" data-view="files" data-csrf="testcsrf" data-user="admin" data-admin="${isAdmin ? 1 : 0}" data-write="${canWrite ? 1 : 0}" data-jszipv="1" data-version="0.0.0">
+      <aside class="sb" id="sb"><div class="sb-brand">Share<button id="sbToggle"><i class="ti ti-layout-sidebar-left-collapse"></i></button></div>
+        <nav class="sb-nav"><a class="sb-item active" href="index.php">File</a><button class="sb-item" id="btnShares">Condivisioni</button><button class="sb-item" id="btnTrash">Cestino</button><a class="sb-item" href="index.php?view=registro">Registro</a>${adminBtn}</nav>
+        <div class="sb-foot"><a id="logout" class="sb-logout" href="#">Esci</a></div></aside>
+      <main class="main">
+      <header class="topbar"><nav class="crumbs tb-left" id="crumbs"></nav><div class="topbar-right"><div class="search"><input type="text" id="search"></div><button class="btn" id="btnRefresh">Aggiorna</button></div></header>
+      <div class="toolbar">${w}<div class="spacer"></div><button class="btn" id="btnZipCurrent">Scarica ZIP</button>
         <input type="file" id="fileInput" multiple hidden>
-        <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
-      </div>
-      <nav class="crumbs" id="crumbs"></nav>
+        <input type="file" id="folderInput" webkitdirectory directory multiple hidden></div>
       <div class="listing"><div class="list-head"><input type="checkbox" id="checkAll"></div>
         <div id="rows"></div><div id="empty" hidden></div></div>
       <div class="selbar" id="selbar" hidden><span id="selCount"></span>
         <button class="btn" id="btnZipSel">ZIP</button>${delSel}</div>
+      </main>
     </div>
     <div class="modal-bg" id="modalBg" hidden></div>
   </body></html>`;
@@ -47,7 +46,7 @@ function pageHtml(canWrite, isAdmin) {
 const listResponse = {
   ok: true, path: '/', can_write: true, is_admin: true,
   items: [
-    { name: 'documenti', type: 'dir', size: 0, size_h: '', mtime: '01/01/2026' },
+    { name: 'documenti', type: 'dir', size: 0, size_h: '', mtime: '01/01/2026', shared: true },
     { name: 'foto.jpg', type: 'file', size: 2048, size_h: '2.0 KB', mtime: '02/01/2026' },
     { name: 'nota.md', type: 'file', size: 12, size_h: '12 B', mtime: '03/01/2026' },
   ],
@@ -77,6 +76,16 @@ async function run(label, canWrite, isAdmin) {
 
   // attende il microtask di load('') che popola le righe
   await new Promise(r => setTimeout(r, 30));
+  {
+    const rows = win.document.querySelectorAll('#rows .row');
+    if (rows.length === 3) {
+      (rows[0].querySelector('.badge-link') && rows[0].querySelector('.ti-acc')) ? ok('elemento con link attivo: pillola «condivisa» e icona Accessi') : bad('pillola/icona Accessi assenti sull\'elemento condiviso');
+      (!rows[1].querySelector('.badge-link') && !rows[1].querySelector('.ti-acc')) ? ok('elemento senza link: niente pillola né icona Accessi') : bad('pillola/icona Accessi su elemento non condiviso');
+    }
+    const t = win.document.getElementById('sbToggle');
+    t.onclick(); win.document.getElementById('app').classList.contains('sb-collapsed') ? ok('barra laterale: il pulsante la riduce (sb-collapsed)') : bad('sb-collapsed non applicato');
+    t.onclick(); !win.document.getElementById('app').classList.contains('sb-collapsed') ? ok('barra laterale: secondo clic la riallarga') : bad('sb-collapsed non rimosso');
+  }
 
   if (loadError) { bad(`errore asincrono al caricamento: ${loadError.message}`); }
   else ok('nessun errore asincrono');
