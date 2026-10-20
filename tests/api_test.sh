@@ -1094,6 +1094,46 @@ has "user_delete riporta purged:true" "$DR" '"purged":true'
 has "share dell'utente eliminato → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '404'
 [ ! -d "$SBX/storage/eliminando" ] && ok "purge: home eliminata" || no "purge: home ancora presente"
 
+echo "=== Difetti strutturali: riuso del nome, share orfane, note non UTF-8/CRLF/BOM ==="
+# 1) Un utente eliminato SENZA i file lascia la home: ricreare lo stesso nome non deve ereditarla.
+EJ="$SBX/erjar"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=ereditario --data-urlencode password=secret123 --data-urlencode permission=write "$B/api.php?action=user_save" >/dev/null
+curl -s -c $EJ -b $EJ --data-urlencode action=login --data-urlencode username=ereditario --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $EJ)" "$B/index.php"
+ECSRF=$(curl -s -b $EJ "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
+curl -s -b $EJ -H "X-CSRF: $ECSRF" --data-urlencode path= --data-urlencode name=segreto.txt --data-urlencode content=riservato "$B/api.php?action=newfile" >/dev/null
+has "utente eliminato senza i file" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=ereditario "$B/api.php?action=user_delete")" '"purged":false'
+[ -f "$SBX/storage/ereditario/segreto.txt" ] && ok "la home resta nello storage" || no "home sparita" 
+has "ricreare lo stesso nome → 409 (home residua)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/stdout -w ' %{http_code}' --data-urlencode username=ereditario --data-urlencode password=secret123 --data-urlencode permission=write "$B/api.php?action=user_save")" 'esiste già una cartella'
+rm -rf "$SBX/storage/ereditario"
+has "rimossa la cartella, la creazione riesce" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=ereditario --data-urlencode password=secret123 --data-urlencode permission=write "$B/api.php?action=user_save")" '"ok":true'
+has "modifica di un utente esistente non è bloccata dalla sua stessa home" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=ereditario --data-urlencode original=ereditario --data-urlencode permission=read --data-urlencode role=user "$B/api.php?action=user_save")" '"ok":true'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=ereditario --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+# 2) Share di un elemento sparito dallo storage (fuori dall'app): segnalata, non potata.
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=orfano.txt --data-urlencode content=x "$B/api.php?action=newfile" >/dev/null
+OT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=orfano.txt --data-urlencode ttl=86400 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([a-f0-9]*\)".*/\1/p')
+has "share di un elemento presente: missing:false" "$(curl -s -b $JAR "$B/api.php?action=share_list" | grep -o "\"token\":\"$OT\"[^}]*")" '"missing":false'
+rm -f "$SBX/storage/admin/orfano.txt"
+SL=$(curl -s -b $JAR "$B/api.php?action=share_list")
+has "elemento sparito: la share NON viene potata" "$SL" "\"token\":\"$OT\""
+has "… ed è segnalata (missing:true)" "$(echo "$SL" | grep -o "\"token\":\"$OT\"[^}]*")" '"missing":true'
+has "… la pagina pubblica risponde 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$OT")" '404'
+has "… e si può revocare a mano" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$OT "$B/api.php?action=share_revoke")" '"ok":true'
+# 3) Note: file non UTF-8 in sola lettura; BOM e CRLF conservati al salvataggio.
+printf 'caff\xe8 latin1\n' > "$SBX/storage/admin/latin.txt"
+LO=$(curl -s -b $JAR "$B/api.php?action=note_open&path=latin.txt")
+has "file non UTF-8: editable:false" "$LO" '"editable":false'
+has "… con il motivo" "$LO" 'non è in UTF-8'
+has "… note_save rifiutato (403)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" -o /dev/null -w '%{http_code}' --data-urlencode path=latin.txt --data-urlencode content=sovrascritto "$B/api.php?action=note_save")" '403'
+[ "$(head -c 5 "$SBX/storage/admin/latin.txt" | od -An -c | tr -d ' ')" = "caff350" ] && ok "… il file è intatto" || no "file latin1 alterato" "$(od -An -c "$SBX/storage/admin/latin.txt" | head -1)"
+printf 'uno\r\ndue\r\n' > "$SBX/storage/admin/crlf.txt"
+has "file CRLF: editable" "$(curl -s -b $JAR "$B/api.php?action=note_open&path=crlf.txt")" '"editable":true'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=crlf.txt --data-urlencode content="$(printf 'uno\ndue\ntre')" "$B/api.php?action=note_save" >/dev/null
+[ "$(grep -c $'\r' "$SBX/storage/admin/crlf.txt")" = "2" ] && [ "$(tail -c 3 "$SBX/storage/admin/crlf.txt")" = "tre" ] && ok "salvataggio: fine riga CRLF conservati" || no "CRLF persi" "$(od -An -c "$SBX/storage/admin/crlf.txt" | head -2)"
+printf '\xef\xbb\xbfciao' > "$SBX/storage/admin/bom.txt"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=bom.txt --data-urlencode content=ciao2 "$B/api.php?action=note_save" >/dev/null
+[ "$(head -c 3 "$SBX/storage/admin/bom.txt" | od -An -tx1 | tr -d ' \n')" = "efbbbf" ] && [ "$(tail -c 5 "$SBX/storage/admin/bom.txt")" = "ciao2" ] && ok "salvataggio: BOM conservato" || no "BOM perso" "$(od -An -tx1 "$SBX/storage/admin/bom.txt" | head -1)"
+rm -f "$SBX/storage/admin/latin.txt" "$SBX/storage/admin/crlf.txt" "$SBX/storage/admin/bom.txt"
+
 echo "=== Hardening P1 (upload: validazione metadati + owner-binding) ==="
 G1="$SBX/g_1000"; head -c 1000 /dev/zero > "$G1"
 G2="$SBX/g_500"; head -c 500 /dev/zero > "$G2"

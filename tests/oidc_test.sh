@@ -35,6 +35,10 @@ $cfg = ['admin_group'=>OIDC_ADMIN_GROUP, 'rw_group'=>OIDC_RW_GROUP];
 $a = oidc_perms_from_groups([OIDC_ADMIN_GROUP], $cfg);  t($a['role']==='admin' && $a['permission']==='write', 'gruppo admin -> admin/write');
 $rw = oidc_perms_from_groups([OIDC_RW_GROUP], $cfg);    t($rw['role']==='user' && $rw['permission']==='write', 'gruppo rw -> user/write');
 $ro = oidc_perms_from_groups(['qualsiasi'], $cfg);      t($ro['permission']==='read', 'nessun gruppo -> sola lettura');
+$ex = ['role'=>'admin','permission'=>'write'];
+$p1 = oidc_perms_for(['groups'=>['altro']], $ex, $cfg);     t($p1['role']==='user' && $p1['permission']==='read' && !$p1['groups_missing'], 'claim groups presente: i permessi seguono i gruppi (anche in declassamento)');
+$p2 = oidc_perms_for(['preferred_username'=>'a'], $ex, $cfg); t($p2['role']==='admin' && $p2['permission']==='write' && $p2['groups_missing'], 'claim groups ASSENTE: l\'utente esistente conserva i permessi');
+$p3 = oidc_perms_for([], null, $cfg);                       t($p3['permission']==='read' && $p3['groups_missing'], 'claim groups assente: utente nuovo in sola lettura');
 // Crypto: ricostruisci il PEM da n/e e verifica una firma RS256 reale.
 $res = openssl_pkey_new(['private_key_bits'=>2048,'private_key_type'=>OPENSSL_KEYTYPE_RSA]);
 $d = openssl_pkey_get_details($res);

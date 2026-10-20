@@ -149,6 +149,19 @@ function oidc_perms_from_groups(array $groups, array $cfg): array {
     if (in_array($cfg['rw_group'], $groups, true))    return ['role' => 'user',  'permission' => 'write'];
     return ['role' => 'user', 'permission' => 'read'];     // default: sola lettura
 }
+// Permessi dai claim. Senza claim «groups» (scope mancante, IdP riconfigurato) un
+// utente ESISTENTE conserva i permessi attuali invece di essere declassato in
+// silenzio; un utente nuovo parte in sola lettura. 'groups_missing' va a registro.
+function oidc_perms_for(array $claims, ?array $existing, array $cfg): array {
+    if (isset($claims['groups']) && is_array($claims['groups'])) {
+        return oidc_perms_from_groups(array_values(array_filter($claims['groups'], 'is_string')), $cfg) + ['groups_missing' => false];
+    }
+    if ($existing) {
+        return ['role' => ($existing['role'] ?? '') === 'admin' ? 'admin' : 'user',
+                'permission' => ($existing['permission'] ?? '') === 'write' ? 'write' : 'read', 'groups_missing' => true];
+    }
+    return oidc_perms_from_groups([], $cfg) + ['groups_missing' => true];
+}
 
 // ─── Step 1: avvia il flusso (redirect all'authorization_endpoint) ───────────
 function oidc_login(): void {
@@ -267,9 +280,9 @@ function oidc_callback(): void {
     if (strlen($username) < 3) oidc_fail('username SSO non valido.');
     $username = substr($username, 0, 32);
 
-    $groups = [];
-    if (isset($claims['groups']) && is_array($claims['groups'])) $groups = array_values(array_filter($claims['groups'], 'is_string'));
-    $perms = oidc_perms_from_groups($groups, $c);
+    $existingUser = find_user($username);
+    if (!$existingUser && ($conflict = user_home_conflict($username))) oidc_fail($conflict);   // mai ereditare la home di un altro
+    $perms = oidc_perms_for($claims, $existingUser, $c);
 
     // Provisioning / aggiornamento in users.json (utente SSO, senza password locale).
     // Sezione critica (atomica) + identità ANCORATA al claim 'sub': uno stesso
@@ -334,6 +347,7 @@ function oidc_callback(): void {
     ensure_user_home($username);
     if ($backfill) audit('sso_sub_anchor', $username . ' ancorato a sub=' . substr($sub, 0, 12) . '…');
     if ($keptAdmin) audit('sso_admin_kept', $username . ' resterebbe unico admin: ruolo admin mantenuto nonostante i gruppi IdP');
+    if ($perms['groups_missing']) audit('sso_groups_missing', $username . ': claim groups assente dall\'IdP (scope?), permessi ' . ($existingUser ? 'conservati' : 'in sola lettura'));
     audit($event, $username . ' (' . $perms['role'] . '/' . $perms['permission'] . ')');
     access_log('login', ['via' => 'sso']);
     header('Location: index.php');

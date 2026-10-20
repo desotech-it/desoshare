@@ -365,12 +365,13 @@
         reopen: () => apiGet("note_open", { path: rel })
         // resync completo (epoca cambiata senza snapshot)
       });
+      if (info.readonly_reason) statusEl.textContent = "sola lettura: " + info.readonly_reason;
     } else {
       editorFallback(rel, info, host, statusEl);
     }
   }
   function editorFallback(rel, info, host, statusEl) {
-    statusEl.textContent = info.editable ? "editor semplice" : "sola lettura";
+    statusEl.textContent = info.editable ? "editor semplice" : "sola lettura" + (info.readonly_reason ? ": " + info.readonly_reason : "");
     const text = info.text ? new TextDecoder().decode(b64ToU8(info.text)) : "";
     host.innerHTML = "";
     const ta = document.createElement("textarea");
@@ -743,6 +744,7 @@
     if (s.label) parts.push(`per «${esc(s.label)}»`);
     parts.push(level === mode ? esc(levelName(level, isDir)) : `${esc(levelName(level, isDir))} <span title="Chi l'ha creato non ha più il permesso di scrittura">(era ${esc(levelName(mode, isDir))})</span>`);
     if (s.has_pin) parts.push('<i class="ti ti-lock" title="Protetto da PIN" aria-label="Protetto da PIN"></i>');
+    if (s.missing) parts.push(`<span class="acc-bad" title="Il file o la cartella non esiste più nello storage (eliminato fuori dall'app, o archiviazione cambiata senza spostare i file): il link risponde «non valido»">elemento non trovato</span>`);
     if (isDir && UPLOAD_LEVELS.has(mode)) {
       const used = Number(s.uploaded) || 0, cap = Number(s.upload_limit) || 0;
       parts.push(esc("caricati " + fmtBytes(used) + (cap > 0 ? " / " + fmtBytes(cap) : " (nessun tetto)")));
@@ -1291,6 +1293,7 @@ Annulla = conserva i file`);
       msg.style.color = r.ok ? "var(--ok, #1a7f37)" : "var(--danger, #c0392b)";
     };
     $("#adm_save", modalBg).onclick = async () => {
+      if (backendSel.value !== (st.backend || "local") && !confirm("Stai cambiando l'archiviazione dei file.\n\nI file NON vengono spostati: quelli esistenti restano dove sono e non saranno visibili finché non vengono copiati nella nuova archiviazione. I link di condivisione degli elementi non trovati smetteranno di funzionare.\n\nContinuare?")) return;
       const r = await apiPost("settings_save", Object.assign({
         site_title: $("#set_title", modalBg).value,
         note_poll_ms: $("#set_poll", modalBg).value,

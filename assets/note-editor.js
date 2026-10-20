@@ -84,7 +84,9 @@
       // Seed SOLO se il relay è vuoto. clientID FISSO → item identici su ogni client (seed idempotente),
       // così le modifiche di chiunque si ancorano allo stesso testo iniziale e si integrano ovunque.
       if (ytext.length === 0 && offset === 0 && st.text) {
-        const t = new TextDecoder().decode(b64ToU8(st.text));
+        // CodeMirror normalizza i fine riga a \n: il Y.Text deve coincidere, altrimenti con
+        // un file CRLF le posizioni dei due documenti divergono. Il server li ripristina al salvataggio.
+        const t = new TextDecoder().decode(b64ToU8(st.text)).replace(/\r\n?/g, '\n');
         if (t.length) { const orig = doc.clientID; doc.clientID = 1; ytext.insert(0, t); doc.clientID = orig; }
       }
       host.innerHTML = '';

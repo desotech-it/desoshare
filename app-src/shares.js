@@ -147,6 +147,7 @@ function shareMeta(s, isAdmin) {
   parts.push(level === mode ? esc(levelName(level, isDir))
     : `${esc(levelName(level, isDir))} <span title="Chi l'ha creato non ha più il permesso di scrittura">(era ${esc(levelName(mode, isDir))})</span>`);
   if (s.has_pin) parts.push('<i class="ti ti-lock" title="Protetto da PIN" aria-label="Protetto da PIN"></i>');
+  if (s.missing) parts.push('<span class="acc-bad" title="Il file o la cartella non esiste più nello storage (eliminato fuori dall\'app, o archiviazione cambiata senza spostare i file): il link risponde «non valido»">elemento non trovato</span>');
   if (isDir && UPLOAD_LEVELS.has(mode)) {
     const used = Number(s.uploaded) || 0, cap = Number(s.upload_limit) || 0;
     parts.push(esc('caricati ' + fmtBytes(used) + (cap > 0 ? ' / ' + fmtBytes(cap) : ' (nessun tetto)')));

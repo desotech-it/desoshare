@@ -62,25 +62,16 @@ function migration_guard_active(): bool {
     return true;
 }
 
-// Rimuove le condivisioni scadute o il cui elemento non esiste più.
-// I controlli (typeOf, eventualmente su S3) avvengono FUORI dal lock; la rimozione
-// è poi atomica e mirata ai soli token individuati → non clobbera share aggiunte
-// in concorrenza, né tiene il lock durante chiamate di rete.
+// Rimuove SOLO le condivisioni scadute. Quelle il cui elemento non esiste più
+// NON si eliminano: dopo un cambio di archiviazione (locale ↔ S3) i file non sono
+// ancora dove l'app li cerca, e potarle le distruggerebbe per sempre. Le
+// eliminazioni fatte dall'app revocano già le share (shares_revoke_under);
+// le altre vengono segnalate nel pannello (shares_missing) e revocate a mano.
 function shares_prune(): array {
     $d = shares_load();
     $now = time();
-    $migrating = migration_guard_active();   // rinomina in corso: non potare per "elemento mancante"
     $remove = [];
-    foreach ($d['shares'] as $s) {
-        if (($s['expires_at'] ?? 0) <= $now) { $remove[(string) ($s['token'] ?? '')] = true; continue; }
-        if ($migrating) continue;
-        // Rimozione per elemento mancante SOLO se il backend ha potuto verificarlo con
-        // certezza: un errore S3 (credenziali, rete, 5xx) non deve cancellare le share.
-        $chk = storage()->existsCheck(share_base($s));
-        if ($chk['sure'] && $chk['type'] === false) {
-            $remove[(string) ($s['token'] ?? '')] = true;
-        }
-    }
+    foreach ($d['shares'] as $s) if (($s['expires_at'] ?? 0) <= $now) $remove[(string) ($s['token'] ?? '')] = true;
     if ($remove) {
         with_json_lock(shares_file(), function (array $d) use ($remove) {
             $d['shares'] = array_values(array_filter($d['shares'] ?? [], fn($s) => !isset($remove[(string) ($s['token'] ?? '')])));
@@ -89,6 +80,17 @@ function shares_prune(): array {
         $d['shares'] = array_values(array_filter($d['shares'], fn($s) => !isset($remove[(string) ($s['token'] ?? '')])));
     }
     return $d;
+}
+// Token delle share il cui elemento manca CON CERTEZZA dallo storage (un errore S3
+// non è una mancanza). Durante una rinomina utente non si giudica.
+function shares_missing(array $d): array {
+    if (migration_guard_active()) return [];
+    $out = [];
+    foreach ($d['shares'] ?? [] as $s) {
+        $chk = storage()->existsCheck(share_base($s));
+        if ($chk['sure'] && $chk['type'] === false) $out[(string) ($s['token'] ?? '')] = true;
+    }
+    return $out;
 }
 // Trova una condivisione valida (esistente e non scaduta) dal suo identificatore,
 // che può essere il TOKEN casuale oppure lo SLUG personalizzato (case-insensitive).
