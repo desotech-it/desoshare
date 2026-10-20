@@ -92,6 +92,12 @@ function shares_missing(array $d): array {
     }
     return $out;
 }
+// Numero di link attivi creati da un utente (solo shares.json, nessuna chiamata allo storage).
+function shares_count_active(string $username): int {
+    $now = time(); $n = 0;
+    foreach (shares_load()['shares'] ?? [] as $s) if (($s['created_by'] ?? '') === $username && ($s['expires_at'] ?? 0) > $now) $n++;
+    return $n;
+}
 // Trova una condivisione valida (esistente e non scaduta) dal suo identificatore,
 // che può essere il TOKEN casuale oppure lo SLUG personalizzato (case-insensitive).
 function share_find(string $id): ?array {

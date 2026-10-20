@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.29.0** · stato: in sviluppo (0.x.x)
+Versione: **0.30.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -72,8 +72,9 @@ Versione: **0.29.0** · stato: in sviluppo (0.x.x)
   Markdown, testo, Word (.docx), RTF ed Excel (.xlsx, .xls, .ods, .csv). Il server
   non converte nulla; i .doc si scaricano.
 - **Registro degli accessi**: per ogni file e link, chi lo ha visto, scaricato o
-  modificato, quando e da quale IP (12 mesi), consultabile e esportabile in CSV
-  dall'amministrazione e, per i propri link, da ogni utente.
+  modificato, quando e da quale IP (12 mesi), in una pagina dedicata con filtri ed
+  export CSV: ogni utente vede i propri oggetti, l'amministratore tutti. Gli
+  elementi con un link attivo mostrano la pillola «condivisa» e l'icona «Accessi».
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

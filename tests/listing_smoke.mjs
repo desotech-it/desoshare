@@ -40,22 +40,23 @@ const bad = (m) => { failures++; console.log('  ✗ ' + m); };
 const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
 <link rel="stylesheet" href="assets/app.css"></head><body>
-<div id="app" data-csrf="x" data-user="utente" data-admin="1" data-write="1" data-edv="1" data-jszipv="1">
-<header class="topbar"><div class="brand">Share</div><div class="topbar-right">
-<button class="btn" id="btnShares"><i class="ti ti-share"></i> Condivisioni</button><button class="btn" id="btnAdmin"><i class="ti ti-settings"></i> Amministrazione</button></div></header>
+<div id="app" data-view="files" data-csrf="x" data-user="utente" data-admin="1" data-write="1" data-edv="1" data-jszipv="1">
+<aside class="sb" id="sb"><div class="sb-brand"><span class="sb-brand-txt">Share</span><button class="sb-toggle" id="sbToggle"><i class="ti ti-layout-sidebar-left-collapse"></i></button></div>
+<nav class="sb-nav"><a class="sb-item active" href="index.php"><i class="ti ti-folder"></i><span class="sb-label">File</span></a><button class="sb-item" id="btnShares"><i class="ti ti-share"></i><span class="sb-label">Condivisioni</span></button><button class="sb-item" id="btnTrash"><i class="ti ti-trash"></i><span class="sb-label">Cestino</span></button><a class="sb-item" href="index.php?view=registro"><i class="ti ti-activity"></i><span class="sb-label">Registro</span></a><button class="sb-item" id="btnAdmin"><i class="ti ti-settings"></i><span class="sb-label">Amministrazione</span></button></nav>
+<div class="sb-foot"><div class="sb-user"><div class="avatar">UT</div><div class="sb-user-txt"><div class="sb-user-name">utente</div></div><a class="sb-logout" id="logout" href="#"><i class="ti ti-logout"></i></a></div></div></aside>
+<main class="main">
+<header class="topbar"><nav class="crumbs tb-left" id="crumbs"></nav><div class="topbar-right"><div class="search"><i class="ti ti-search"></i><input type="text" id="search"></div><button class="btn" id="btnRefresh"><i class="ti ti-refresh"></i></button></div></header>
 <div class="toolbar"><button class="btn btn-primary" id="btnUpload"><i class="ti ti-upload"></i> Carica file</button>
 <button class="btn" id="btnUploadFolder">Carica cartella</button><button class="btn" id="btnNewFolder">Nuova cartella</button>
-<button class="btn" id="btnNewFile">Nuovo file</button><button class="btn" id="btnNewNote">Nuova nota</button>
-<button class="btn" id="btnZipCurrent">Scarica ZIP</button><div class="spacer"></div>
-<button class="btn" id="btnRefresh"><i class="ti ti-refresh"></i></button><div class="search"><i class="ti ti-search"></i><input type="text" id="search"></div>
+<button class="btn" id="btnNewFile">Nuovo file</button><button class="btn" id="btnNewNote">Nuova nota</button><div class="spacer"></div>
+<button class="btn" id="btnZipCurrent">Scarica ZIP</button>
 <input type="file" id="fileInput" multiple hidden><input type="file" id="folderInput" webkitdirectory directory multiple hidden></div>
-<nav class="crumbs" id="crumbs"></nav>
 <div class="listing" id="listing"><div class="list-head"><label class="cb"><input type="checkbox" id="checkAll"></label>
 <span>Nome</span><span class="col-size">Dimensione</span><span class="col-date">Modificato</span><span class="col-act">Azioni</span></div>
 <div id="rows"></div><div id="empty" class="empty" hidden></div></div>
 <div class="selbar" id="selbar" hidden><span id="selCount"></span><div class="spacer"></div>
 <button class="btn" id="btnZipSel">Scarica come ZIP</button><button class="btn btn-danger" id="btnDelSel"><i class="ti ti-trash"></i> Elimina</button></div>
-<div class="dropzone-hint" id="dropHint"></div></div>
+<div class="dropzone-hint" id="dropHint"></div></main></div>
 <div class="modal-bg" id="modalBg" hidden></div><script src="assets/app.js"></script></body></html>`;
 
 // Cartella, note (5 icone: c'è «Modifica nota») e file con nomi lunghi (4 icone).

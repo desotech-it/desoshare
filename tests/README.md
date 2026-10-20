@@ -3,7 +3,7 @@
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
 fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs`,
-`share_upload_smoke.mjs`, `listing_smoke.mjs` `share_levels_smoke.mjs`, `preview_smoke.mjs` e `login_smoke.mjs` (servono un
+`share_upload_smoke.mjs`, `listing_smoke.mjs` `share_levels_smoke.mjs`, `preview_smoke.mjs`, `login_smoke.mjs` e `layout_smoke.mjs` (servono un
 browser), `s3_links_test.sh` (serve Wasabi reale).
 
 ## 1. Test API (PHP) — `api_test.sh`
@@ -137,5 +137,17 @@ sbagliate, accesso riuscito, resa a 390 px.
 ```bash
 PATH=/percorso/php:$PATH node tests/login_smoke.mjs
 # atteso: "SMOKE LOGIN OK ✓"
+```
+
+## Layout con barra laterale — `layout_smoke.mjs`
+Istanza reale (`php -S`) in **Chromium**: barra laterale a 1920 (voci, utente,
+contatore condivisioni), riduzione a sole icone ricordata dopo il ricaricamento,
+fascia di icone a 390 senza overflow, pillola «condivisa» e icona «Accessi» solo
+sugli elementi con un link attivo, pagina «Registro» (percorso precompilato
+dall'icona, selettore Tutti/Solo i miei per l'admin, assente per l'utente).
+
+```bash
+PATH=/percorso/php:$PATH node tests/layout_smoke.mjs
+# atteso: "SMOKE LAYOUT OK ✓"
 ```
 

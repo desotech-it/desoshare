@@ -2,7 +2,7 @@
 // api_files.php — operazioni file base (modulo di api.php, incluso dal dispatcher)
 // ─── File: elenco ────────────────────────────────────────────────────────────
 function action_list(): void {
-    require_login();
+    $u = require_login();
     trash_gc();   // scadenza del cestino, opportunistica (al più una volta l'ora)
     $rel = clean_logical($_GET['path'] ?? '');
     $dir = logical_join(user_home(), $rel);            // percorso assoluto nello storage (sandbox utente)
@@ -11,6 +11,9 @@ function action_list(): void {
     } elseif (storage()->typeOf($dir) !== 'dir') {
         json_out(['ok' => false, 'error' => 'Non è una cartella'], 400);
     }
+    // Elementi con un link attivo dell'utente: pillola «condivisa» e azione «Accessi» nell'elenco.
+    $now = time(); $linked = [];
+    foreach (shares_load()['shares'] ?? [] as $s) if (($s['created_by'] ?? '') === $u['username'] && ($s['expires_at'] ?? 0) > $now) $linked[(string) ($s['path'] ?? '')] = true;
     $items = [];
     foreach (storage()->listDir($dir) as $e) {
         $items[] = [
@@ -19,6 +22,7 @@ function action_list(): void {
             'size'   => $e['size'],
             'size_h' => $e['type'] === 'dir' ? '' : human_size((int) $e['size']),
             'mtime'  => date('d/m/Y', (int) $e['mtime']),
+            'shared' => isset($linked[logical_join($dir, $e['name'])]),
         ];
     }
     usort($items, fn($a, $b) =>

@@ -1,6 +1,6 @@
 // main.js — entry point: cabla la toolbar, il drag&drop e avvia il primo load.
 // esbuild parte da QUI e segue gli import per costruire il bundle (assets/app.js).
-import { CAN_WRITE, IS_ADMIN, S, selected, $, searchEl, modalBg } from './state.js';
+import { app, CAN_WRITE, IS_ADMIN, VIEW, S, selected, $, searchEl, modalBg } from './state.js';
 import { toast } from './util.js';
 import { load, renderRows, updateSelbar } from './listing.js';
 import { startZip } from './zip.js';
@@ -9,11 +9,29 @@ import { adminPanel } from './admin.js';
 import { newFolderDialog, newFileDialog, newNoteDialog, deleteDialog } from './dialogs.js';
 import { uploadItems, walkEntry, relDir } from './upload.js';
 import { closeModal } from './modal.js';
+import { trashPanel } from './trash.js';
+import { registroPage } from './accesslog.js';
 
 // Mostra a video qualunque errore JS imprevisto (diagnosi, invece di pagina "morta")
 window.addEventListener('error', e => { try { toast('Errore: ' + (e.message || (e.error && e.error.message) || e), true); } catch (_) {} });
 window.addEventListener('unhandledrejection', e => { try { toast('Errore: ' + ((e.reason && e.reason.message) || e.reason), true); } catch (_) {} });
 
+// ─── Barra laterale (riducibile a sole icone, scelta ricordata nel browser) ──
+const sbToggle = $('#sbToggle');
+if (sbToggle) sbToggle.onclick = () => {
+  const collapsed = app.classList.toggle('sb-collapsed');
+  try { localStorage.setItem('share-sb', collapsed ? '1' : '0'); } catch (_) {}
+  sbToggle.title = sbToggle.getAttribute('aria-label') === null ? '' : (collapsed ? 'Allarga la barra' : 'Riduci la barra');
+  sbToggle.setAttribute('aria-label', sbToggle.title);
+  sbToggle.querySelector('.ti').className = 'ti ' + (collapsed ? 'ti-layout-sidebar-left-expand' : 'ti-layout-sidebar-left-collapse');
+};
+$('#btnShares') && ($('#btnShares').onclick = sharesPanel);
+$('#btnTrash') && ($('#btnTrash').onclick = () => trashPanel());
+if (IS_ADMIN) $('#btnAdmin') && ($('#btnAdmin').onclick = () => adminPanel('users'));
+
+if (VIEW === 'registro') {
+  registroPage($('#registro'));
+} else {
 // ─── Wiring toolbar ────────────────────────────────────────────────────
 if (CAN_WRITE) {
   $('#btnUpload').onclick = () => $('#fileInput').click();
@@ -26,10 +44,8 @@ if (CAN_WRITE) {
   $('#btnDelSel') && ($('#btnDelSel').onclick = () => deleteDialog([...selected]));
 }
 $('#btnRefresh').onclick = () => load(S.cwd);
-$('#btnShares') && ($('#btnShares').onclick = sharesPanel);
 $('#btnZipCurrent').onclick = () => startZip(selected.size ? [...selected] : [S.cwd || '']);
 $('#btnZipSel').onclick = () => startZip([...selected]);
-if (IS_ADMIN) $('#btnAdmin') && ($('#btnAdmin').onclick = () => adminPanel('users'));
 searchEl.oninput = renderRows;
 $('#checkAll').onchange = e => {
   const filter = searchEl.value.trim().toLowerCase();
@@ -59,6 +75,6 @@ if (CAN_WRITE) {
     }
   });
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalBg.hidden) closeModal(); });
-
 load('');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modalBg.hidden) closeModal(); });

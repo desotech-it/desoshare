@@ -218,12 +218,26 @@ function render_login(?string $err, bool $localLogin = true): void {
     <?php
 }
 
+// Iniziali per l'avatar: «n.decandia» → ND, «admin» → AD.
+function app_initials(string $username): string {
+    $parts = preg_split('/[._-]+/', $username, -1, PREG_SPLIT_NO_EMPTY) ?: [$username];
+    $s = count($parts) >= 2 ? $parts[0][0] . $parts[1][0] : substr($username, 0, 2);
+    return mb_strtoupper($s);
+}
 function render_app(array $user): void {
     $isAdmin = ($user['role'] ?? '') === 'admin';
     $canWrite = $isAdmin || ($user['permission'] ?? '') === 'write';
     echo page_head('File manager');
     ?>
-    <div id="app"
+    <?php
+    $view = (($_GET['view'] ?? '') === 'registro') ? 'registro' : 'files';
+    $quota = user_quota_of($user); $usage = usage_cached($user['username']);
+    $pct = ($usage !== null && $quota > 0) ? (int) min(100, round($usage / $quota * 100)) : null;
+    $shCount = shares_count_active($user['username']);
+    $iconV = @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png');
+    ?>
+    <div id="app" class="view-<?= $view ?>"
+         data-view="<?= $view ?>"
          data-csrf="<?= h(csrf_token()) ?>"
          data-user="<?= h($user['username']) ?>"
          data-admin="<?= $isAdmin ? '1' : '0' ?>"
@@ -231,62 +245,86 @@ function render_app(array $user): void {
          data-version="<?= h(APP_VERSION) ?>"
          data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>"
          data-jszipv="<?= @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js') ?>">
-
-      <header class="topbar">
-        <div class="brand"><img src="assets/desolabs-icon.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-icon.png') ?>" class="brand-logo" alt="DesoLabs"> <?= h(app_title()) ?></div>
-        <div class="topbar-right">
-          <span class="who"><i class="ti ti-user"></i> <?= h($user['username']) ?>
-            <span class="badge <?= $canWrite ? 'badge-w' : 'badge-r' ?>">
-              <?= $canWrite ? 'lettura e scrittura' : 'sola lettura' ?></span>
-          </span>
-          <button class="btn" id="btnShares"><i class="ti ti-share"></i> Condivisioni</button>
+      <script>try{if(localStorage.getItem('share-sb')==='1')document.getElementById('app').classList.add('sb-collapsed');}catch(e){}</script>
+      <aside class="sb" id="sb">
+        <div class="sb-brand">
+          <img src="assets/desolabs-icon.png?v=<?= $iconV ?>" class="brand-logo" alt="DesoLabs"><span class="sb-brand-txt"><?= h(app_title()) ?></span>
+          <button type="button" class="sb-toggle" id="sbToggle" title="Riduci la barra" aria-label="Riduci la barra"><i class="ti ti-layout-sidebar-left-collapse"></i></button>
+        </div>
+        <nav class="sb-nav">
+          <a class="sb-item<?= $view === 'files' ? ' active' : '' ?>" href="index.php" title="File"><i class="ti ti-folder"></i><span class="sb-label">File</span></a>
+          <button type="button" class="sb-item" id="btnShares" title="Condivisioni"><i class="ti ti-share"></i><span class="sb-label">Condivisioni</span><?= $shCount ? '<span class="sb-count">' . $shCount . '</span>' : '' ?></button>
+          <button type="button" class="sb-item" id="btnTrash" title="Cestino"><i class="ti ti-trash"></i><span class="sb-label">Cestino</span></button>
+          <a class="sb-item<?= $view === 'registro' ? ' active' : '' ?>" href="index.php?view=registro" title="Registro"><i class="ti ti-activity"></i><span class="sb-label">Registro</span></a>
           <?php if ($isAdmin): ?>
-          <button class="btn" id="btnAdmin"><i class="ti ti-settings"></i> Amministrazione</button>
+          <div class="sb-sep"></div>
+          <button type="button" class="sb-item" id="btnAdmin" title="Amministrazione"><i class="ti ti-settings"></i><span class="sb-label">Amministrazione</span></button>
           <?php endif; ?>
-          <a class="btn" href="index.php?action=logout&amp;csrf=<?= h(urlencode(csrf_token())) ?>"><i class="ti ti-logout"></i> Esci</a>
+        </nav>
+        <div class="sb-foot">
+          <div class="sb-user">
+            <div class="avatar" title="<?= h($user['username']) ?>"><?= h(app_initials($user['username'])) ?></div>
+            <div class="sb-user-txt"><div class="sb-user-name"><?= h($user['username']) ?></div>
+              <span class="badge <?= $canWrite ? 'badge-w' : 'badge-r' ?>"><?= $canWrite ? 'lettura e scrittura' : 'sola lettura' ?></span></div>
+            <a class="sb-logout" id="logout" href="index.php?action=logout&amp;csrf=<?= h(urlencode(csrf_token())) ?>" title="Esci" aria-label="Esci"><i class="ti ti-logout"></i></a>
+          </div>
+          <?php if ($usage !== null): ?>
+          <div class="sb-quota" title="Spazio usato">
+            <div class="quota-bar"><div class="<?= $pct === null ? 'q-green' : ($pct >= 90 ? 'q-red' : ($pct >= 70 ? 'q-amber' : 'q-green')) ?>" style="width:<?= $pct === null ? 0 : max(2, $pct) ?>%"></div></div>
+            <div class="quota-txt"><span><?= h(human_size($usage)) ?><?= $quota > 0 ? ' di ' . h(human_size($quota)) : '' ?></span><span><?= $pct === null ? 'illimitata' : $pct . ' %' ?></span></div>
+          </div>
+          <?php endif; ?>
         </div>
-      </header>
-
-      <div class="toolbar">
-        <?php if ($canWrite): ?>
-        <button class="btn btn-primary" id="btnUpload"><i class="ti ti-upload"></i> Carica file</button>
-        <button class="btn" id="btnUploadFolder"><i class="ti ti-cloud-upload"></i> Carica cartella</button>
-        <button class="btn" id="btnNewFolder"><i class="ti ti-folder-plus"></i> Nuova cartella</button>
-        <button class="btn" id="btnNewFile"><i class="ti ti-file-plus"></i> Nuovo file</button>
-        <button class="btn" id="btnNewNote"><i class="ti ti-note"></i> Nuova nota</button>
-        <?php endif; ?>
-        <button class="btn" id="btnZipCurrent"><i class="ti ti-file-zip"></i> Scarica ZIP</button>
-        <div class="spacer"></div>
-        <button class="btn" id="btnRefresh" title="Aggiorna elenco" aria-label="Aggiorna elenco"><i class="ti ti-refresh"></i></button>
-        <div class="search"><i class="ti ti-search"></i><input type="text" id="search" placeholder="Cerca…"></div>
-        <input type="file" id="fileInput" multiple hidden>
-        <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
-      </div>
-
-      <nav class="crumbs" id="crumbs"></nav>
-
-      <div class="listing" id="listing">
-        <div class="list-head">
-          <label class="cb"><input type="checkbox" id="checkAll"></label>
-          <span>Nome</span><span class="col-size">Dimensione</span>
-          <span class="col-date">Modificato</span><span class="col-act">Azioni</span>
+      </aside>
+      <main class="main">
+      <?php if ($view === 'registro'): ?>
+        <header class="topbar">
+          <h2 class="pg-title tb-left"><i class="ti ti-activity"></i> Registro degli accessi</h2>
+          <div class="topbar-right"><?php if ($isAdmin): ?><div class="seg" id="accScope"><button type="button" class="active" data-scope="all">Tutti</button><button type="button" data-scope="mine">Solo i miei</button></div><?php endif; ?></div>
+        </header>
+        <div id="registro" class="acc-page"></div>
+      <?php else: ?>
+        <header class="topbar">
+          <nav class="crumbs tb-left" id="crumbs"></nav>
+          <div class="topbar-right">
+            <div class="search"><i class="ti ti-search"></i><input type="text" id="search" placeholder="Cerca in questa cartella…"></div>
+            <button class="btn" id="btnRefresh" title="Aggiorna elenco" aria-label="Aggiorna elenco"><i class="ti ti-refresh"></i></button>
+          </div>
+        </header>
+        <div class="toolbar">
+          <?php if ($canWrite): ?>
+          <button class="btn btn-primary" id="btnUpload"><i class="ti ti-upload"></i> Carica file</button>
+          <button class="btn" id="btnUploadFolder"><i class="ti ti-cloud-upload"></i> Carica cartella</button>
+          <button class="btn" id="btnNewFolder"><i class="ti ti-folder-plus"></i> Nuova cartella</button>
+          <button class="btn" id="btnNewFile"><i class="ti ti-file-plus"></i> Nuovo file</button>
+          <button class="btn" id="btnNewNote"><i class="ti ti-note"></i> Nuova nota</button>
+          <?php endif; ?>
+          <div class="spacer"></div>
+          <button class="btn" id="btnZipCurrent"><i class="ti ti-file-zip"></i> Scarica ZIP</button>
+          <input type="file" id="fileInput" multiple hidden>
+          <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
         </div>
-        <div id="rows"></div>
-        <div id="empty" class="empty" hidden><i class="ti ti-folder-open"></i> Cartella vuota</div>
-      </div>
-
-      <div class="selbar" id="selbar" hidden>
-        <span id="selCount"></span>
-        <div class="spacer"></div>
-        <button class="btn" id="btnZipSel"><i class="ti ti-file-zip"></i> Scarica come ZIP</button>
-        <?php if ($canWrite): ?>
-        <button class="btn btn-danger" id="btnDelSel"><i class="ti ti-trash"></i> Elimina</button>
-        <?php endif; ?>
-      </div>
-
-      <div class="dropzone-hint" id="dropHint"><i class="ti ti-upload"></i> Rilascia qui per caricare</div>
+        <div class="listing" id="listing">
+          <div class="list-head">
+            <label class="cb"><input type="checkbox" id="checkAll"></label>
+            <span>Nome</span><span class="col-size">Dimensione</span>
+            <span class="col-date">Modificato</span><span class="col-act">Azioni</span>
+          </div>
+          <div id="rows"></div>
+          <div id="empty" class="empty" hidden><i class="ti ti-folder-open"></i> Cartella vuota</div>
+        </div>
+        <div class="selbar" id="selbar" hidden>
+          <span id="selCount"></span>
+          <div class="spacer"></div>
+          <button class="btn" id="btnZipSel"><i class="ti ti-file-zip"></i> Scarica come ZIP</button>
+          <?php if ($canWrite): ?>
+          <button class="btn btn-danger" id="btnDelSel"><i class="ti ti-trash"></i> Elimina</button>
+          <?php endif; ?>
+        </div>
+        <div class="dropzone-hint" id="dropHint"><i class="ti ti-upload"></i> Rilascia qui per caricare</div>
+      <?php endif; ?>
+      </main>
     </div>
-
     <div class="modal-bg" id="modalBg" hidden></div>
     <script src="assets/note-editor.js?v=<?= @filemtime(PUBLIC_DIR . '/assets/note-editor.js') ?>"></script>
     <script src="assets/preview.js?v=<?= @filemtime(PUBLIC_DIR . '/assets/preview.js') ?>"></script>

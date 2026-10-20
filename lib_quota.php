@@ -59,6 +59,12 @@ function usage_bump(string $username, int $delta): void {
         return $c;
     });
 }
+// Consumo dalla sola cache (anche stantia), senza interrogare lo storage: per la
+// barra laterale, che non deve fallire né rallentare se lo storage non risponde.
+function usage_cached(string $username): ?int {
+    $e = usage_load()[$username] ?? null;
+    return (is_array($e) && isset($e['bytes'])) ? (int) $e['bytes'] : null;
+}
 function usage_invalidate(string $username): void {
     with_json_lock(usage_file(), function (array $c) use ($username) {
         unset($c[$username]);

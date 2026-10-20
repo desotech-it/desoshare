@@ -6,6 +6,27 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.30.0] - 2026-10-20
+
+### Modificato
+- **Interfaccia con barra laterale** (#75, mockup «Barra laterale» scelto da
+  Nicola): navigazione a sinistra (File, Condivisioni con contatore, Cestino,
+  Registro, Amministrazione) con utente, permessi, Esci e barra della quota;
+  contenuto fluido fino a 1800 px invece del tetto a 1000 px; la barra si riduce a
+  sole icone con un pulsante e la scelta resta memorizzata nel browser; su telefono
+  diventa una fascia di icone in alto. [index.php, assets/app.css, app-src/main.js]
+- **Elementi condivisi evidenziati**: nell'elenco, chi ha un link attivo mostra la
+  pillola «condivisa» e l'icona «Accessi», che apre il registro filtrato su quel
+  file o cartella (`shared` in `list`). [api_files.php, app-src/listing.js]
+- **Pagina «Registro»** a tutta pagina (`index.php?view=registro`) al posto della
+  scheda nel modale di Amministrazione: filtri, paginazione, CSV; per l'admin il
+  selettore «Tutti / Solo i miei»; ogni utente vede solo i propri oggetti. Dal
+  pannello di un link «Apri nel registro». [app-src/accesslog.js, app-src/admin.js]
+
+### Test
+- `tests/layout_smoke.mjs`: barra laterale, riduzione memorizzata, fascia mobile,
+  pillola e icona Accessi solo sugli elementi con link, pagina Registro per admin e utente.
+
 ## [0.29.0] - 2026-10-20
 
 ### Modificato

@@ -3,7 +3,6 @@ import { modalBg, $, APP_VERSION } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, fmtTime } from './util.js';
 import { openModal } from './modal.js';
-import { accessTable } from './accesslog.js';
 
 export async function adminPanel(section) {
   section = section || 'users';
@@ -235,13 +234,10 @@ async function renderSettingsSection(body) {
   };
 }
 
-// Registro: «Accessi» (chi apre e scarica cosa, da quale IP) e «Gestione» (audit.log).
-async function renderAuditSection(body, which = 'access') {
-  body.innerHTML = `<div class="acc-tabs"><button class="btn ${which === 'access' ? 'btn-primary' : ''}" data-reg="access"><i class="ti ti-activity"></i> Accessi</button>`
-    + `<button class="btn ${which === 'mgmt' ? 'btn-primary' : ''}" data-reg="mgmt"><i class="ti ti-history"></i> Gestione</button></div><div id="reg_body"></div>`;
-  body.querySelectorAll('[data-reg]').forEach(b => b.onclick = () => renderAuditSection(body, b.dataset.reg));
+// Registro di gestione (audit.log). Gli accessi ai file stanno nella pagina «Registro».
+async function renderAuditSection(body) {
+  body.innerHTML = `<p class="muted" style="margin:0 0 10px">Operazioni di gestione (utenti, impostazioni, condivisioni). Gli accessi ai file sono nella pagina <a href="index.php?view=registro">Registro</a>.</p><div id="reg_body"></div>`;
   const host = $('#reg_body', body);
-  if (which === 'access') { accessTable(host); return; }
   const r = await apiGet('audit_list');
   if (!r.ok) { host.textContent = r.error || 'Errore'; return; }
   if (!r.entries.length) { host.innerHTML = '<p class="muted">Nessuna attività registrata.</p>'; return; }

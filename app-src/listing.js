@@ -48,14 +48,16 @@ export function renderRows() {
     // Anteprima (assets/preview.js): tutto tranne il testo semplice, che si apre nell'editor.
     const pk = !isDir && window.Preview ? window.Preview.kindOf(it.name) : null;
     const canPreview = pk && pk !== 'txt';
+    const shared = !!it.shared;   // link attivo: pillola e azione «Accessi»
     row.innerHTML = `
       <label class="cb"><input type="checkbox" ${selected.has(rel) ? 'checked' : ''}></label>
       <div class="name ${(isDir || isText || canPreview) ? 'clickable' : ''}">
-        <i class="ti ${iconFor(it)}"></i><span class="label" title="${esc(it.name)}">${esc(it.name)}</span>
+        <i class="ti ${iconFor(it)}"></i><span class="label" title="${esc(it.name)}">${esc(it.name)}</span>${shared ? '<span class="badge badge-link" title="Condivisa con un link attivo"><i class="ti ti-link"></i><span class="badge-txt">condivisa</span></span>' : ''}
       </div>
       <div class="size">${isDir ? '—' : esc(it.size_h)}</div>
       <div class="date">${esc(it.mtime)}</div>
       <div class="acts">
+        ${shared ? '<i class="ti ti-activity ti-acc" title="Accessi a questo elemento"></i>' : ''}
         ${isText ? '<i class="ti ti-edit" title="Modifica nota"></i>' : ''}
         <i class="ti ti-share" title="Condividi"></i>
         <i class="ti ti-download" title="Scarica"></i>
@@ -79,6 +81,7 @@ export function renderRows() {
       if (isDir) startZip([rel]); else window.location = 'api.php?action=download&path=' + encodeURIComponent(rel);
     };
     row.querySelector('.ti-share').onclick = () => shareDialog(rel, it.name, isDir);
+    if (shared) row.querySelector('.ti-acc').onclick = () => { location.href = 'index.php?view=registro&path=' + encodeURIComponent(rel); };
     if (CAN_WRITE) {
       row.querySelector('.ti-pencil').onclick = () => renameDialog(it.name, rel);
       row.querySelector('.ti-trash').onclick = () => deleteDialog([rel], it.name);
