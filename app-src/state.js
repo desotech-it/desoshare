@@ -7,6 +7,7 @@ export const CAN_WRITE = app.dataset.write === '1';
 export const IS_ADMIN = app.dataset.admin === '1';
 export const EDITOR_BUNDLE_V = app.dataset.edv || '1';
 export const JSZIP_V = app.dataset.jszipv || '1';
+export const APP_VERSION = app.dataset.version || '';
 
 // Stato mutabile dell'app (riassegnabile attraverso i moduli via S.*)
 export const S = {

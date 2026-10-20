@@ -161,51 +161,58 @@ function render_setup(?string $err): void {
 function render_login(?string $err, bool $localLogin = true): void {
     echo page_head('Accesso');
     $sso  = oidc_enabled();
-    $both = $localLogin && $sso;   // entrambi i metodi → menu a tendina (desoauth predefinito)
+    $both = $localLogin && $sso;
+    $logoV = @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png');
+    // Campi del login locale (con SSO stanno in un <details>, da soli sono sempre visibili).
+    $fields = '<label for="lg-user">Username</label>'
+        . '<input type="text" id="lg-user" name="username" autocomplete="username" required' . ($both ? '' : ' autofocus') . '>'
+        . '<label for="lg-pass">Password</label>'
+        . '<input type="password" id="lg-pass" name="password" autocomplete="current-password" required>'
+        . '<button type="submit" class="btn"><i class="ti ti-login-2"></i> Accedi</button>';
     ?>
-    <div class="auth-wrap">
-      <form class="auth-card" method="post" action="index.php?action=login">
-        <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
-        <img src="assets/desolabs-logo.png?v=<?= @filemtime(PUBLIC_DIR . '/assets/desolabs-logo.png') ?>" class="auth-logo-img" alt="DesoLabs">
-        <h1><?= h(app_title()) ?></h1>
-        <p class="muted"><?= $localLogin && !$sso ? "Inserisci le credenziali per accedere" : "Scegli come accedere" ?></p>
-        <?php if ($err): ?><div class="alert"><?= h($err) ?></div><?php endif; ?>
-
-        <?php if ($both): ?>
-        <label>Metodo di accesso</label>
-        <select id="login-method">
-          <option value="sso" selected>desoauth (SSO aziendale)</option>
-          <option value="local">Account locale</option>
-        </select>
-        <?php endif; ?>
-
-        <?php if ($sso): ?>
-        <div id="m-sso" style="margin-top:14px">
-          <a class="btn-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
+    <div class="lg-wrap">
+      <aside class="lg-brand">
+        <div class="lg-brand-inner">
+          <div class="lg-logo-box"><img src="assets/desolabs-logo.png?v=<?= $logoV ?>" class="auth-logo-img" alt="DesoLabs"></div>
+          <h1><?= h(app_title()) ?></h1>
+          <p class="lg-tagline">I documenti dello studio, condivisi in modo sicuro.</p>
+          <ul class="lg-feat">
+            <li><span class="lg-feat-ico"><i class="ti ti-key"></i></span><div><b>Link con PIN e scadenza</b><span>Ogni condivisione può richiedere un PIN e smette di funzionare alla data scelta.</span></div></li>
+            <li><span class="lg-feat-ico"><i class="ti ti-activity"></i></span><div><b>Registro degli accessi</b><span>Chi ha aperto cosa, quando e da dove: sempre consultabile.</span></div></li>
+            <li><span class="lg-feat-ico"><i class="ti ti-world"></i></span><div><b>Archiviazione in Europa</b><span>I file restano su server europei, nel rispetto del GDPR.</span></div></li>
+          </ul>
         </div>
-        <?php endif; ?>
-
-        <?php if ($localLogin): ?>
-        <div id="m-local"<?= $both ? ' hidden' : '' ?> style="margin-top:<?= $both ? '0' : '14px' ?>">
-          <label>Username</label>
-          <input type="text" name="username" autocomplete="username"<?= $both ? '' : ' required autofocus' ?>>
-          <label>Password</label>
-          <input type="password" name="password" autocomplete="current-password"<?= $both ? '' : ' required' ?>>
-          <button type="submit"><i class="ti ti-login-2"></i> Accedi</button>
+      </aside>
+      <main class="lg-auth">
+        <div class="lg-panel">
+          <form class="auth-card lg-form" method="post" action="index.php?action=login">
+            <input type="hidden" name="csrf" value="<?= h(csrf_token()) ?>">
+            <h2>Accedi</h2>
+            <p class="muted">Area riservata allo staff DesoLabs.</p>
+            <?php if ($err): ?><div class="alert" role="alert"><i class="ti ti-alert-circle"></i> <?= h($err) ?></div><?php endif; ?>
+            <?php if ($sso): ?>
+            <a class="btn-sso lg-sso" href="index.php?action=oidc_login"><i class="ti ti-shield-lock"></i> Accedi con desoauth</a>
+            <p class="lg-sso-note">Accesso unico aziendale (SSO), consigliato.</p>
+            <?php endif; ?>
+            <?php if ($both): ?>
+            <div class="sso-sep">oppure</div>
+            <details class="lg-local"<?= $err ? ' open' : '' ?>>
+              <summary><i class="ti ti-user"></i> Accedi con username e password <i class="ti ti-chevron-down lg-chev"></i></summary>
+              <?= $fields ?>
+            </details>
+            <?php elseif ($localLogin): ?>
+            <div class="lg-local"><?= $fields ?></div>
+            <?php elseif (!$sso): ?>
+            <div class="alert" role="alert">Nessun metodo di accesso disponibile: contatta l'amministratore.</div>
+            <?php endif; ?>
+          </form>
+          <div class="lg-linkbox">
+            <span class="lg-linkbox-ico"><i class="ti ti-link"></i></span>
+            <div><b>Hai ricevuto un link di condivisione?</b><p>Non serve un account: apri direttamente il link che ti è stato inviato.</p></div>
+          </div>
+          <p class="lg-foot"><i class="ti ti-lock"></i> Connessione protetta · DesoLabs</p>
         </div>
-        <?php endif; ?>
-
-        <p class="hint"><i class="ti ti-shield-lock"></i> Sessione protetta · v<?= h(APP_VERSION) ?></p>
-      </form>
-      <?php if ($both): ?>
-      <script>(function(){
-        var s=document.getElementById('login-method'),sso=document.getElementById('m-sso'),loc=document.getElementById('m-local');
-        function upd(){var v=s.value;sso.hidden=(v!=='sso');loc.hidden=(v!=='local');
-          var u=loc.querySelector('input[name=username]'),p=loc.querySelector('input[name=password]');
-          if(v==='local'){u.required=p.required=true;u.focus();}else{u.required=p.required=false;}}
-        s.addEventListener('change',upd);upd();
-      })();</script>
-      <?php endif; ?>
+      </main>
     </div>
     </body></html>
     <?php
@@ -221,6 +228,7 @@ function render_app(array $user): void {
          data-user="<?= h($user['username']) ?>"
          data-admin="<?= $isAdmin ? '1' : '0' ?>"
          data-write="<?= $canWrite ? '1' : '0' ?>"
+         data-version="<?= h(APP_VERSION) ?>"
          data-edv="<?= @filemtime(PUBLIC_DIR . '/assets/editor-bundle.js') ?>"
          data-jszipv="<?= @filemtime(PUBLIC_DIR . '/assets/vendor/jszip.min.js') ?>">
 

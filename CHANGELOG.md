@@ -6,6 +6,21 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.29.0] - 2026-10-20
+
+### Modificato
+- **Pagina di login a due pannelli** (#74, mockup «Due pannelli» scelto da
+  Nicola): a sinistra il pannello di marca (logo, nome, tre punti: link con PIN
+  e scadenza, registro degli accessi, archiviazione in Europa), a destra
+  l'accesso con «Accedi con desoauth» come unico pulsante principale e le
+  credenziali locali in una sezione apribile (aperta se c'è un errore); riquadro
+  «Hai ricevuto un link di condivisione? Non serve un account». Niente più menu
+  a tendina del metodo né numero di versione in pagina (ora in Amministrazione).
+  Su telefono i pannelli si impilano. [index.php, assets/app.css, app-src/admin.js]
+
+### Test
+- `tests/login_smoke.mjs`: la login in Chromium con SSO+locale e solo locale.
+
 ## [0.28.0] - 2026-10-20
 
 ### Corretto

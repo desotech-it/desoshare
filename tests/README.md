@@ -3,7 +3,7 @@
 Suite per prevenire regressioni. Eseguile dopo ogni modifica. In CI girano
 `api_test.sh`, `oidc_test.sh`, `js_smoke.mjs` e `lifecycle_fuzz.mjs`; restano
 fuori `s3_test.sh` (serve Wasabi reale), `editor_smoke.mjs`,
-`share_upload_smoke.mjs`, `listing_smoke.mjs` `share_levels_smoke.mjs` e `preview_smoke.mjs` (servono un
+`share_upload_smoke.mjs`, `listing_smoke.mjs` `share_levels_smoke.mjs`, `preview_smoke.mjs` e `login_smoke.mjs` (servono un
 browser), `s3_links_test.sh` (serve Wasabi reale).
 
 ## 1. Test API (PHP) — `api_test.sh`
@@ -126,5 +126,16 @@ script e che un Markdown con `<script>`/`onerror` non esegua codice. Con
 ```bash
 PATH=/percorso/php:$PATH node tests/preview_smoke.mjs
 # atteso: "SMOKE ANTEPRIMA OK ✓"
+```
+
+## Pagina di login — `login_smoke.mjs`
+Due istanze `php -S` (SSO abilitato da ambiente e solo locale) aperte in **Chromium**:
+layout a due pannelli, pulsante desoauth, credenziali locali in sezione apribile,
+riquadro per chi ha un link, nessuna versione in pagina, errore con credenziali
+sbagliate, accesso riuscito, resa a 390 px.
+
+```bash
+PATH=/percorso/php:$PATH node tests/login_smoke.mjs
+# atteso: "SMOKE LOGIN OK ✓"
 ```
 
