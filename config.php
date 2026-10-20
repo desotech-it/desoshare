@@ -3,7 +3,7 @@
 // I dati sensibili (utenti) e i file gestiti stanno FUORI da public_html.
 
 define('APP_NAME', 'Share');
-define('APP_VERSION', '0.30.0');
+define('APP_VERSION', '0.31.0');
 define('PUBLIC_DIR', __DIR__);
 define('DOMAIN_DIR', dirname(__DIR__));          // .../domains/share.deso.tech
 define('STORAGE_DIR', DOMAIN_DIR . '/storage');  // file gestiti (non accessibili dal web)
@@ -41,6 +41,8 @@ define('SHARE_PIN_LINK_MAX_FAILS', 20);      // PIN errati per link da qualunque
 define('TRASH_PREFIX', '~cestino');          // radice del cestino nello storage (fuori da ogni home: '~' non è ammesso negli username)
 define('TRASH_DAYS', 30);
 define('ACCESS_LOG_MONTHS', 12);            // conservazione del registro degli accessi (mesi)
+define('GEOIP_DB_URL_PREFIX', 'https://download.db-ip.com/free/dbip-city-lite-');   // + AAAA-MM.mmdb.gz (gratuito, CC BY 4.0)
+define('GEOIP_STALE_DAYS', 35);              // oltre, le Impostazioni invitano ad aggiornare il database
 define('ACCESS_NOTICE', 'Gli accessi a questo link sono registrati (data, ora e indirizzo IP) per motivi di sicurezza.');                    // conservazione degli elementi eliminati tramite link
 
 // Scadenza (s) dell'URL presigned per il download di un singolo file via link

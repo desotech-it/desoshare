@@ -6,7 +6,7 @@
 // Tutti/Solo i miei per l'admin, assente per l'utente normale, che non vede «Amministrazione»).
 // Uso: PATH=/percorso/php:$PATH node tests/layout_smoke.mjs   (atteso "SMOKE LAYOUT OK ✓")
 import { spawn } from 'node:child_process';
-import { mkdtempSync, cpSync, rmSync } from 'node:fs';
+import { mkdtempSync, cpSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,9 @@ cpSync(APP, PUB, { recursive: true, filter: s => !/node_modules|\/tests\/|\.git(
 const srv = spawn('php', ['-S', `127.0.0.1:${PORT}`, '-t', PUB], { stdio: 'ignore' });
 process.on('exit', () => { try { srv.kill(); } catch {} try { rmSync(SBX, { recursive: true, force: true }); } catch {} });
 for (let i = 0; ; i++) { try { await fetch(B + '/index.php'); break; } catch { if (i > 50) throw new Error('server non avviato'); await new Promise(r => setTimeout(r, 100)); } }
+// Database GeoIP di prova (MaxMind) per la colonna «Da dove»
+mkdirSync(join(SBX, 'appdata', 'geoip'), { recursive: true });
+copyFileSync(join(APP, 'tests', 'GeoIP2-City-Test.mmdb'), join(SBX, 'appdata', 'geoip', 'city.mmdb'));
 
 // Client HTTP con cookie (setup + dati di prova)
 function client() {
@@ -92,6 +95,8 @@ await p.waitForSelector('#registro .acc-table');
 /view=registro/.test(p.url()) && /path=Condivisa/.test(p.url()) ? ok('icona Accessi → pagina Registro con percorso') : bad('URL del registro: ' + p.url());
 (await p.inputValue('#af_path')) === 'Condivisa' ? ok('filtro percorso precompilato') : bad('percorso non precompilato');
 (await p.$$('#registro .acc-table tbody tr')).length >= 1 ? ok('eventi dell\'elemento elencati') : bad('nessun evento');
+(await p.$$eval('#registro .acc-table thead th', ths => ths.map(t => t.textContent))).includes('Da dove') ? ok('colonna «Da dove» presente') : bad('colonna Da dove assente');
+/rete locale/.test(await p.textContent('#registro .acc-table tbody')) ? ok('IP locale mostrato come «rete locale»') : bad('posizione locale non mostrata');
 (await p.$eval('.sb-item.active .sb-label', e => e.textContent.trim())) === 'Registro' ? ok('voce Registro attiva nella barra') : bad('voce attiva errata');
 (await p.$('#accScope')) ? ok('admin: selettore Tutti / Solo i miei') : bad('selettore assente per l\'admin');
 await p.click('#accScope [data-scope="mine"]'); await p.waitForTimeout(400);

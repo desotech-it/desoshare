@@ -514,6 +514,12 @@
       return ts;
     }
   };
+  var flag = (cc) => String(cc).toUpperCase().replace(/[A-Z]/g, (c) => String.fromCodePoint(127462 + c.charCodeAt(0) - 65));
+  function where(r) {
+    if (r.cc === "LAN") return '<span class="muted">rete locale</span>';
+    if (r.cc) return `<span title="Posizione approssimativa (IP Geolocation by DB-IP)">${flag(r.cc)} ${esc(r.city ? r.city + ", " : "")}${esc(r.country || r.cc)}</span>`;
+    return '<span class="muted" title="Posizione non disponibile: database GeoIP assente o indirizzo sconosciuto">—</span>';
+  }
   var who = (a) => String(a || "-").replace(/^user:/, "").replace(/^link:/, "link «").replace(/^(link «.*)$/, "$1»").replace(/^tentativo:/, "tentativo: ");
   function rowHtml(r) {
     const bad = r.status && r.status !== "ok";
@@ -523,20 +529,21 @@
     <td class="${bad ? "acc-bad" : ""}">${esc(EVENTS[r.event] || r.event)}${r.via ? ` <span class="muted">· ${esc(VIA[r.via] || r.via)}</span>` : ""}</td>
     <td class="acc-who" data-actor="${esc(r.actor || "")}">${esc(who(r.actor))}</td>
     <td>${what || '<span class="muted">—</span>'}</td>
+    <td class="acc-where">${where(r)}</td>
     <td class="acc-ip" data-ip="${esc(r.ip || "")}" title="${esc(r.ua || "")}">${esc(r.ip || "")}</td></tr>`;
   }
   function accessTable(host, fixed = {}, { filters = true, initial = {}, fixedNote = "" } = {}) {
     host.innerHTML = (filters ? `<div class="acc-filters">
       <input type="date" id="af_from" title="Dal"><input type="date" id="af_to" title="Al">
       <select id="af_event"><option value="">Tutti gli eventi</option>${Object.entries(EVENTS).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select>
-      <input type="text" id="af_actor" placeholder="Chi (utente o link)"><input type="text" id="af_path" placeholder="Percorso"><input type="text" id="af_ip" placeholder="IP">
+      <input type="text" id="af_actor" placeholder="Chi (utente o link)"><input type="text" id="af_path" placeholder="Percorso"><input type="text" id="af_ip" placeholder="IP"><input type="text" id="af_cc" placeholder="Paese (es. IT)" maxlength="3" size="8">
       <button class="btn" id="af_go"><i class="ti ti-search"></i> Filtra</button>
       <a class="btn" id="af_csv"><i class="ti ti-file-spreadsheet"></i> CSV</a>${fixedNote}</div>` : "") + `<div class="acc-body"><p class="muted">Caricamento…</p></div>`;
     const body = host.querySelector(".acc-body");
     const val = (id) => filters && $("#" + id, host) ? $("#" + id, host).value.trim() : "";
     const params = () => {
       const p = { ...fixed };
-      [["from", "af_from"], ["to", "af_to"], ["event", "af_event"], ["actor", "af_actor"], ["path", "af_path"], ["ip", "af_ip"]].forEach(([k, id]) => {
+      [["from", "af_from"], ["to", "af_to"], ["event", "af_event"], ["actor", "af_actor"], ["path", "af_path"], ["ip", "af_ip"], ["cc", "af_cc"]].forEach(([k, id]) => {
         const v = val(id);
         if (v) p[k] = v;
       });
@@ -550,7 +557,7 @@
         return;
       }
       rows = cursor ? rows.concat(r.rows) : r.rows;
-      body.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` + (r.next ? '<div style="text-align:center;margin-top:8px"><button class="btn" id="af_more">Mostra altri</button></div>' : "") : '<p class="muted">Nessun accesso registrato con questi filtri.</p>';
+      body.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>Da dove</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` + (r.next ? '<div style="text-align:center;margin-top:8px"><button class="btn" id="af_more">Mostra altri</button></div>' : "") : '<p class="muted">Nessun accesso registrato con questi filtri.</p>';
       if (r.next) $("#af_more", body).onclick = () => load2(r.next);
       if (filters) {
         body.querySelectorAll("[data-ip]").forEach((td) => td.onclick = () => {
@@ -582,15 +589,16 @@
     const rows = r.ok ? r.rows : [];
     const n = (ev) => rows.filter((x) => x.event === ev).length;
     const ips = new Set(rows.map((x) => x.ip)).size;
+    const countries = [...new Set(rows.filter((x) => x.cc && x.cc !== "LAN").map((x) => x.cc))];
     openModal(`<div class="modal wide"><h3><i class="ti ti-activity"></i> Accessi al link${s.label ? " di «" + esc(s.label) + "»" : ""}</h3>
     <p class="muted" style="margin-top:-6px">${esc(s.name)} · ultimi ${rows.length} eventi</p>
-    ${r.ok ? `<div class="acc-sum"><span><b>${n("share_view")}</b>visite</span><span><b>${n("download") + n("zip")}</b>download</span><span><b>${n("preview")}</b>anteprime</span><span><b>${n("upload")}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : "—"}</b>ultimo accesso</span></div>` : ""}
+    ${r.ok ? `<div class="acc-sum"><span><b>${n("share_view")}</b>visite</span><span><b>${n("download") + n("zip")}</b>download</span><span><b>${n("preview")}</b>anteprime</span><span><b>${n("upload")}</b>caricamenti</span><span><b>${ips}</b>IP distinti</span><span><b>${countries.length ? countries.map(flag).join(" ") : "—"}</b>${countries.length === 1 ? "paese" : "paesi"}</span><span><b>${rows[0] ? esc(when(rows[0].ts)) : "—"}</b>ultimo accesso</span></div>` : ""}
     <div id="acc_host" class="sh-scroll"></div>
     <p class="muted" style="font-size:11px">Ogni clic su un file è registrato con data, ora e indirizzo IP.</p>
     <div class="modal-actions"><button class="btn" id="acc_back"><i class="ti ti-arrow-left"></i> Condivisioni</button><a class="btn" href="index.php?view=registro&token=${esc(String(s.token).slice(0, 8))}"><i class="ti ti-activity"></i> Apri nel registro</a><button class="btn" onclick="closeModal()">Chiudi</button></div></div>`);
     const host = $("#acc_host", modalBg);
     if (!r.ok) host.innerHTML = `<p class="acc-bad">${esc(r.error || "Errore")}</p>`;
-    else host.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` : '<p class="muted">Nessun accesso registrato per questo link.</p>';
+    else host.innerHTML = rows.length ? `<table class="utable acc-table"><thead><tr><th>Quando</th><th>Evento</th><th>Chi</th><th>File</th><th>Da dove</th><th>IP</th></tr></thead><tbody>${rows.map(rowHtml).join("")}</tbody></table>` : '<p class="muted">Nessun accesso registrato per questo link.</p>';
     $("#acc_back", modalBg).onclick = back;
   }
   function registroPage(host) {
@@ -612,7 +620,7 @@
     render();
     const note = document.createElement("p");
     note.className = "acc-note";
-    note.textContent = "Ogni evento riporta data e ora, chi ha agito (utente o link), file, esito e indirizzo IP della connessione. Conservazione: 12 mesi.";
+    note.innerHTML = 'Ogni evento riporta data e ora, chi ha agito (utente o link), file, esito e indirizzo IP della connessione. Conservazione: 12 mesi. La posizione è approssimativa, a livello di città o di provider · IP Geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a>.';
     host.after(note);
   }
 
@@ -1202,6 +1210,7 @@ Annulla = conserva i file`);
       <button type="button" class="active" data-pane="general"><i class="ti ti-adjustments"></i> Generale</button>
       <button type="button" data-pane="storage"><i class="ti ti-database"></i> Archiviazione</button>
       <button type="button" data-pane="auth"><i class="ti ti-shield-lock"></i> Autenticazione</button>
+      <button type="button" data-pane="geoip"><i class="ti ti-world"></i> GeoIP</button>
     </div>
 
     <div class="set-pane" data-pane="general">
@@ -1243,6 +1252,14 @@ Annulla = conserva i file`);
       <label class="sw"><input type="checkbox" id="local_auth_enabled" ${localOn ? "checked" : ""}> Abilita login con username e password</label>
       <p class="muted" style="font-size:12px;margin:4px 0 0">Se disattivata, l'accesso sarà possibile <b>solo via SSO</b>: assicurati che l'SSO sia abilitato e funzionante, altrimenti rischi di restare fuori.</p>
       ${oidcSection(s.oidc || {})}
+    </div>
+
+    <div class="set-pane" data-pane="geoip" hidden>
+      <h3 style="margin:2px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-world"></i> Posizione degli accessi (GeoIP)</h3>
+      <p class="muted" style="font-size:12px;margin:4px 0 10px">Il registro mostra da dove arriva ogni accesso usando un database locale (DB-IP City Lite, gratuito): nessun indirizzo IP viene inviato a servizi esterni. Il database va aggiornato circa una volta al mese.</p>
+      ${geoipStatus(s.geoip || {})}
+      <div style="margin-top:10px"><button class="btn" id="geoip_update"><i class="ti ti-download"></i> ${s.geoip && s.geoip.installed ? "Aggiorna il database" : "Scarica il database"} (circa 60 MB)</button> <span id="geoip_msg" class="muted" style="font-size:12px"></span></div>
+      <p class="muted" style="font-size:11px;margin:10px 0 0">IP Geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a> (CC BY 4.0). Posizione approssimativa, a livello di città o di provider.</p>
     </div>`;
     modalBg.querySelectorAll(".set-tabs button").forEach((b) => b.onclick = () => {
       modalBg.querySelectorAll(".set-tabs button").forEach((x) => x.classList.toggle("active", x === b));
@@ -1250,6 +1267,21 @@ Annulla = conserva i file`);
         p.hidden = p.dataset.pane !== b.dataset.pane;
       });
     });
+    const gBtn = $("#geoip_update", modalBg);
+    if (gBtn) gBtn.onclick = async () => {
+      const msg = $("#geoip_msg", modalBg);
+      gBtn.disabled = true;
+      msg.textContent = "download in corso, può richiedere un minuto…";
+      const r = await apiPost("geoip_update", {});
+      gBtn.disabled = false;
+      if (r.ok) {
+        toast("Database GeoIP aggiornato (" + r.build + ")");
+        adminPanel("settings");
+      } else {
+        msg.textContent = r.error || "Errore";
+        toast(r.error || "Errore", true);
+      }
+    };
     const backendSel = $("#set_backend", modalBg);
     backendSel.onchange = () => {
       $("#s3_box", modalBg).style.display = backendSel.value === "s3" ? "" : "none";
@@ -1355,6 +1387,12 @@ Annulla = conserva i file`);
     }
     host.innerHTML = `<table class="utable">
     <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${r.entries.map((e) => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join("")}</tbody></table>`;
+  }
+  function geoipStatus(g) {
+    if (!g.installed) return '<p class="alert" style="margin:0">Database non installato: nel registro la colonna «Da dove» resta vuota.</p>';
+    if (g.error) return `<p class="alert" style="margin:0">${esc(g.error)}</p>`;
+    const stale = g.stale ? ' <span class="badge badge-r">da aggiornare</span>' : ' <span class="badge badge-w">aggiornato</span>';
+    return `<p style="margin:0">Database <b>${esc(g.type || "")}</b> del <b>${esc(g.build || "")}</b> (${esc(String(g.age_days))} giorni fa, ${esc(fmtBytes(g.size || 0))})${stale}</p>`;
   }
   function userForm(u = null) {
     const editing = !!u;

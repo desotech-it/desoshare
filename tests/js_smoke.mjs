@@ -238,8 +238,8 @@ async function runOidcSettings() {
   const doc = win.document;
   // Sotto-sezioni: Generale / Archiviazione / Autenticazione
   const subTabs = [...doc.querySelectorAll('.set-tabs button')].map(b => b.textContent.trim());
-  (subTabs.length === 3 && /Generale/.test(subTabs[0]) && /Archiviazione/.test(subTabs[1]) && /Autenticazione/.test(subTabs[2]))
-    ? ok('sotto-sezioni Generale/Archiviazione/Autenticazione presenti') : bad(`sotto-sezioni errate (${subTabs.join('|')})`);
+  (subTabs.length === 4 && /Generale/.test(subTabs[0]) && /Archiviazione/.test(subTabs[1]) && /Autenticazione/.test(subTabs[2]) && /GeoIP/.test(subTabs[3]))
+    ? ok('sotto-sezioni Generale/Archiviazione/Autenticazione/GeoIP presenti') : bad(`sotto-sezioni errate (${subTabs.join('|')})`);
   // di default è visibile "Generale", lo storage e l'auth sono nascosti
   const authPaneHidden = doc.querySelector('.set-pane[data-pane="auth"]').hidden;
   authPaneHidden ? ok('pannello Autenticazione nascosto di default') : bad('pannello Autenticazione non nascosto');

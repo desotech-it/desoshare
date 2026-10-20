@@ -5,7 +5,7 @@ accesso a una cartella dove **caricare, scaricare, organizzare ed eliminare file
 di qualsiasi tipo**, con gestione utenti e permessi. Pensato per girare su hosting
 PHP condiviso (es. Hostinger), **senza database**.
 
-Versione: **0.30.0** · stato: in sviluppo (0.x.x)
+Versione: **0.31.0** · stato: in sviluppo (0.x.x)
 
 ## Cosa fa
 
@@ -75,6 +75,9 @@ Versione: **0.30.0** · stato: in sviluppo (0.x.x)
   modificato, quando e da quale IP (12 mesi), in una pagina dedicata con filtri ed
   export CSV: ogni utente vede i propri oggetti, l'amministratore tutti. Gli
   elementi con un link attivo mostrano la pillola «condivisa» e l'icona «Accessi».
+  Con il database **GeoIP** locale (DB-IP City Lite, scaricabile dalle
+  Impostazioni) il registro indica anche **da dove** arriva ogni accesso: città e
+  paese, senza inviare gli IP a servizi esterni.
 - **Archiviazione configurabile**: i file possono risiedere sul **server locale**
   oppure su uno **storage esterno S3-compatibile** (es. **Wasabi**), scegliibile
   dall'area di amministrazione, sempre **senza database**.

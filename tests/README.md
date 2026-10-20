@@ -151,3 +151,10 @@ PATH=/percorso/php:$PATH node tests/layout_smoke.mjs
 # atteso: "SMOKE LAYOUT OK ✓"
 ```
 
+## GeoIP
+`tests/GeoIP2-City-Test.mmdb` è il database di prova di MaxMind (GeoIP2-City-Test,
+18 KB, IP noti come 81.2.69.142 → Londra): `api_test.sh` lo copia nel sandbox come
+`appdata/geoip/city.mmdb` per verificare lookup, arricchimento del registro, filtro
+per paese e CSV senza scaricare il DB-IP vero (~60 MB). Il download reale si prova
+a mano da Amministrazione → Impostazioni → GeoIP.
+

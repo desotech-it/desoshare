@@ -39,6 +39,7 @@ switch ($action) {
     case 's3_test':      csrf_check(); action_s3_test();      break;
     case 'oidc_discovery': csrf_check(); action_oidc_discovery(); break;
     case 'oidc_test':    csrf_check(); action_oidc_test();    break;
+    case 'geoip_update': csrf_check(); action_geoip_update(); break;
     case 'share_create': csrf_check(); action_share_create(); break;
     case 'share_revoke': csrf_check(); action_share_revoke(); break;
     case 'share_update': csrf_check(); action_share_update(); break;

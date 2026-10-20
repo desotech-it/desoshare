@@ -11,7 +11,7 @@ APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PORT:-8390}"
 SBX="$(mktemp -d)"; PUB="$SBX/public_html"; mkdir -p "$PUB"
 cp "$APP_DIR"/*.php "$PUB"/ 2>/dev/null
-cp -R "$APP_DIR"/assets "$PUB"/ 2>/dev/null
+cp -R "$APP_DIR"/assets "$APP_DIR"/lib "$PUB"/ 2>/dev/null
 cp "$APP_DIR"/.htaccess "$APP_DIR"/.user.ini "$PUB"/ 2>/dev/null
 B="http://127.0.0.1:$PORT"; JAR="$SBX/jar"; RJAR="$SBX/rjar"
 PASS=0; FAIL=0
@@ -1059,6 +1059,33 @@ echo '{"ts":"2000-01-01T00:00:00+01:00","event":"download","owner":"admin"}' > "
 curl -s -b $JAR -o /dev/null "$B/api.php?action=download&path=acc/r.txt"
 [ ! -f "$ADIR/2000-01.jsonl" ] && ok "conservazione: mese scaduto eliminato" || no "conservazione" "2000-01.jsonl ancora presente"
 
+echo "=== GeoIP (database di prova MaxMind, posizione degli accessi) ==="
+has "senza database: stato non installato" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"geoip":{"installed":false}'
+mkdir -p "$SBX/appdata/geoip" && cp "$APP_DIR/tests/GeoIP2-City-Test.mmdb" "$SBX/appdata/geoip/city.mmdb"
+has "con database: installato, tipo e data di build" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"installed":true,"type":"GeoIP2-City","build":"20'
+cat > "$SBX/geounit.php" <<'PHP'
+<?php
+define('DATA_DIR', getenv('DD')); define('APP_TZ', 'Europe/Rome'); define('GEOIP_STALE_DAYS', 35); define('GEOIP_DB_URL_PREFIX', 'x'); define('APP_VERSION', 't');
+require getenv('APP') . '/lib_geoip.php';
+echo json_encode(['us' => geoip_lookup('216.160.83.56'), 'gb' => geoip_lookup('81.2.69.142'), 'priv' => geoip_lookup('10.1.2.3'), 'priv2' => geoip_lookup('192.168.0.7'), 'lo' => geoip_lookup('127.0.0.1'), 'fields_lan' => geoip_fields('10.0.0.1')]);
+PHP
+GU=$(APP="$APP_DIR" DD="$SBX/appdata" php "$SBX/geounit.php" 2>&1)
+has "lookup: 216.160.83.56 → US, Milton" "$GU" '"us":{"cc":"US","country":"Stati Uniti","city":"Milton"}'
+has "lookup: 81.2.69.142 → GB, London (paese in italiano)" "$GU" '"gb":{"cc":"GB","country":"Regno Unito","city":"London"}'
+has "IP privati e loopback → rete locale" "$GU" '"priv":{"local":true},"priv2":{"local":true},"lo":{"local":true}'
+has "campi del registro per IP privato: cc=LAN" "$GU" '"fields_lan":{"cc":"LAN"}'
+AM="$SBX/appdata/access/$(TZ=Europe/Rome date +%Y-%m).jsonl"; mkdir -p "$SBX/appdata/access"
+printf '{"ts":"%s","ip":"81.2.69.142","ua":"test","event":"download","actor":"link:Londra","owner":"admin","path":"acc/r.txt","status":"ok","via":"direct"}\n' "$(TZ=Europe/Rome date +%Y-%m-%dT%H:%M:%S%:z)" >> "$AM"
+has "access_list: posizione calcolata per una riga registrata senza cc" "$(curl -s -b $JAR "$B/api.php?action=access_list&ip=81.2.69.142")" '"cc":"GB","country":"Regno Unito","city":"London"'
+has "access_list: IP locale → cc LAN" "$(curl -s -b $JAR "$B/api.php?action=access_list&event=mkdir&limit=1")" '"cc":"LAN"'
+has "filtro paese gb (case-insensitive) trova la riga" "$(curl -s -b $JAR "$B/api.php?action=access_list&cc=gb")" '"actor":"link:Londra"'
+hasnt "filtro paese IT non la trova" "$(curl -s -b $JAR "$B/api.php?action=access_list&cc=IT")" 'link:Londra'
+has "CSV: colonne cc, country, city" "$(curl -s -b $JAR "$B/api.php?action=access_export&ip=81.2.69.142")" ';GB;"Regno Unito";London;'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=geo.txt --data-urlencode content=g "$B/api.php?action=newfile" >/dev/null
+has "nuovi eventi registrati con la posizione al momento dell'accesso" "$(tail -n 1 "$AM")" '"cc":"LAN"'
+has "geoip_update richiede il token CSRF (419)" "$(curl -s -b $JAR -o /dev/null -w '%{http_code}' -X POST "$B/api.php?action=geoip_update")" '419'
+rm -f "$SBX/appdata/geoip/city.mmdb"
+
 echo "=== Amministrazione (area admin, impostazioni, audit) ==="
 SG=$(curl -s -b $JAR "$B/api.php?action=settings_get")
 has "settings_get (admin)" "$SG" '"ok":true'
@@ -1172,7 +1199,7 @@ has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

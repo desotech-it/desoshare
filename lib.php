@@ -17,6 +17,7 @@ require_once __DIR__ . '/lib_quota.php';     // quota_*, usage_*
 require_once __DIR__ . '/lib_download.php';  // stream_file, zip_*
 require_once __DIR__ . '/lib_shares.php';    // shares_*, share_*
 require_once __DIR__ . '/lib_linkfiles.php'; // link_file_* (provenienza upload via link), link_upload_target
+require_once __DIR__ . '/lib_geoip.php';     // geoip_* (posizione degli IP dal database locale DB-IP)
 require_once __DIR__ . '/lib_access.php';    // access_* (registro degli accessi: download, visite, IP)
 require_once __DIR__ . '/lib_trash.php';     // trash_* (cestino delle eliminazioni via link)
 require_once __DIR__ . '/lib_notes.php';     // note_* (relay/awareness)
