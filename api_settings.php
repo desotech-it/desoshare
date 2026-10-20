@@ -69,6 +69,7 @@ function action_settings_save(): void {
     }
 
     // ─ Storage: backend locale o S3-compatibile (Wasabi) ─
+    $prevBackend = (settings_load()['storage_backend'] ?? 'local');
     $backend = (($_POST['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local';
     if ($backend === 's3') {
         $cfg = s3_config_from_post($s['s3'] ?? []);
@@ -98,6 +99,7 @@ function action_settings_save(): void {
     return $s;
     });
     audit('settings_update', 'titolo="' . ($saved['site_title'] ?? APP_NAME) . '" poll=' . note_poll_ms() . ' maxnota=' . note_max_bytes() . ' storage=' . (($saved['storage_backend'] ?? 'local')) . ' sso=' . (oidc_enabled() ? 'on' : 'off'));
+    if ($prevBackend !== $backend) audit('settings_storage_switch', $prevBackend . ' → ' . $backend . ': i file NON vengono spostati, le condivisioni degli elementi non trovati restano e vanno rimosse a mano');
     json_out(['ok' => true]);
 }
 

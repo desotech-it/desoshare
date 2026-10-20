@@ -96,6 +96,7 @@ function action_share_list(): void {
     $u = require_login();
     $admin = is_admin();
     $d = shares_prune();
+    $missing = shares_missing($d);
     $out = [];
     foreach ($d['shares'] as $s) {
         if (!$admin && ($s['created_by'] ?? '') !== $u['username']) continue;
@@ -109,6 +110,7 @@ function action_share_list(): void {
             'level'      => share_level($s),            // effettivo: 'view' se il creatore ha perso la scrittura
             'label'      => (string) ($s['label'] ?? ''),
             'has_pin'    => share_has_pin($s),
+            'missing'    => isset($missing[(string) ($s['token'] ?? '')]),   // elemento sparito dallo storage: il link risponde «non valido»
             'upload_limit' => (int) ($s['upload_limit'] ?? 0),
             'uploaded'   => (int) ($s['uploaded'] ?? 0),
             'expires_at' => $s['expires_at'],

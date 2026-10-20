@@ -31,6 +31,7 @@ export async function openEditor(rel, name) {
       save: (content, snapshot) => apiPost('note_save', { path: rel, content, snapshot: snapshot || '' }),
       reopen: () => apiGet('note_open', { path: rel }),   // resync completo (epoca cambiata senza snapshot)
     });
+    if (info.readonly_reason) statusEl.textContent = 'sola lettura: ' + info.readonly_reason;
   } else {
     editorFallback(rel, info, host, statusEl);
   }
@@ -38,7 +39,7 @@ export async function openEditor(rel, name) {
 
 // Fallback: se il bundle non si carica, editor semplice (singolo utente, niente real-time)
 export function editorFallback(rel, info, host, statusEl) {
-  statusEl.textContent = info.editable ? 'editor semplice' : 'sola lettura';
+  statusEl.textContent = info.editable ? 'editor semplice' : ('sola lettura' + (info.readonly_reason ? ': ' + info.readonly_reason : ''));
   const text = info.text ? new TextDecoder().decode(b64ToU8(info.text)) : '';
   host.innerHTML = '';
   const ta = document.createElement('textarea');

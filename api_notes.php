@@ -33,8 +33,10 @@ function action_note_open(): void {
     // una nota vuota che al primo autosave sovrascrive il file reale.
     $rf = storage()->readFileChecked($p);
     if (!$rf['ok']) json_out(['ok' => false, 'error' => 'Nota non leggibile in questo momento (storage non raggiungibile): riprova'], 503);
+    $meta = note_text_meta($rf['data']);
     json_out([
-        'ok' => true, 'id' => $id, 'name' => basename($p), 'editable' => $ctx['editable'],
+        'ok' => true, 'id' => $id, 'name' => basename($p), 'editable' => $ctx['editable'] && !$meta['binary'],
+        'readonly_reason' => $meta['binary'] ? 'il file non è in UTF-8 o contiene byte binari: si apre in sola lettura per non alterarlo' : '',
         'text' => base64_encode($rf['data']),
         'updates' => $updates, 'offset' => count($updates), 'gen' => note_gen_ensure($id),
         'poll_ms' => note_poll_ms(), 'user' => $ctx['user'],
@@ -100,7 +102,18 @@ function action_note_save(): void {
     if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
     $content = (string) ($_POST['content'] ?? '');
     if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
-    $prev = (storage()->typeOf($ctx['logical']) === 'file') ? storage()->sizeOf($ctx['logical']) : 0;
+    $prev = 0;
+    if (storage()->typeOf($ctx['logical']) === 'file') {
+        // Il file esistente decide il formato: niente salvataggi su file non UTF-8
+        // (verrebbero riscritti con «�»); BOM e fine riga CRLF si conservano.
+        $cur = storage()->readFileChecked($ctx['logical']);
+        if (!$cur['ok']) json_out(['ok' => false, 'error' => 'File non leggibile in questo momento (storage non raggiungibile): riprova'], 503);
+        $meta = note_text_meta($cur['data']);
+        if ($meta['binary']) json_out(['ok' => false, 'error' => 'Il file non è in UTF-8: è in sola lettura per non alterarlo'], 403);
+        $content = note_text_encode($content, $meta);
+        if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
+        $prev = strlen($cur['data']);
+    }
     quota_check_user($ctx['owner'] ?? null, strlen($content), $prev);   // conta solo il delta, sulla quota del proprietario
     if (!storage()->writeFile($ctx['logical'], $content)) json_out(['ok' => false, 'error' => 'Salvataggio fallito'], 500);
     if (!empty($ctx['owner'])) usage_bump((string) $ctx['owner'], strlen($content) - $prev);

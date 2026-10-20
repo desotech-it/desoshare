@@ -81,6 +81,18 @@ function user_strip(string $abs, string $username): string {
 }
 // Garantisce che la "home" dell'utente esista nello storage (su S3 le cartelle
 // vuote non esistono: serve un marker di cartella).
+// Prima di CREARE un utente: nello storage non deve esistere già una cartella con
+// quel nome (home o cestino lasciati da un utente eliminato senza i file), o il
+// nuovo utente erediterebbe i file di un altro. Ritorna il messaggio d'errore o null.
+function user_home_conflict(string $username): ?string {
+    foreach ([user_prefix($username), trash_root($username)] as $p) {
+        if ($p === '') continue;
+        $c = storage()->existsCheck($p);
+        if ($c['type'] === false && !$c['sure']) return 'Storage non verificabile in questo momento: riprova';
+        if ($c['type'] !== false) return 'Nello storage esiste già una cartella «' . $p . '» (resti di un utente eliminato senza i file): eliminarla o scegliere un altro nome';
+    }
+    return null;
+}
 function ensure_user_home(string $username): void {
     $p = user_prefix($username);
     if ($p !== '' && storage()->typeOf($p) !== 'dir') storage()->makeDir($p);

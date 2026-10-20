@@ -101,4 +101,18 @@ function note_gc(): void {
     }
 }
 
+// Com'è codificato un file di testo: BOM, fine riga Windows, e se NON è UTF-8
+// (o contiene byte NUL): in quel caso l'editor lo apre in sola lettura, perché
+// un salvataggio riscriverebbe i caratteri non decodificabili come «�».
+function note_text_meta(string $data): array {
+    $bom = str_starts_with($data, "\xEF\xBB\xBF");
+    $body = $bom ? substr($data, 3) : $data;
+    return ['bom' => $bom, 'crlf' => str_contains($body, "\r\n"), 'binary' => str_contains($body, "\0") || !preg_match('//u', $body)];
+}
+// Riporta il testo dell'editor (sempre LF, senza BOM) nel formato del file originale.
+function note_text_encode(string $text, array $meta): string {
+    $text = str_replace("\r\n", "\n", $text);
+    if ($meta['crlf']) $text = str_replace("\n", "\r\n", $text);
+    return ($meta['bom'] ? "\xEF\xBB\xBF" : '') . $text;
+}
 

@@ -226,6 +226,7 @@ function share_editor_page(array $s, string $abs): void {
        . 'if(!info.ok){host.textContent=info.error||"Errore";st.textContent="";return;}'
        . 'try{await NoteEditor.loadBundle("assets/editor-bundle.js?v="+BV);}catch(e){host.textContent="Impossibile caricare l\'editor";st.textContent="";return;}'
        . 'NoteEditor.mount({host:host,statusEl:st,presEl:pr,info:info,sync:function(p){return post("note_sync",p);},save:function(c,sn){return post("note_save",{content:c,snapshot:sn||""});},reopen:reopen});'
+       . 'if(info.readonly_reason)st.textContent="sola lettura: "+info.readonly_reason;'
        . '})();</script>';
     share_footer();
 }

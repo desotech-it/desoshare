@@ -75,6 +75,11 @@ function action_user_save(): void {
     }
     // Calcola l'hash FUORI dalla sezione critica (bcrypt è lento; non tenere il lock).
     $pwHash = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : '';
+    // Creazione (non rinomina né modifica): niente cartelle residue con quel nome.
+    $known = array_column(users_load()['users'] ?? [], null, 'username');
+    if (!isset($known[$original]) && !isset($known[$username]) && ($conflict = user_home_conflict($username))) {
+        json_out(['ok' => false, 'error' => $conflict], str_starts_with($conflict, 'Storage') ? 503 : 409);
+    }
 
     // ─── Rinomina: la chiave logica dell'utente cambia → va MIGRATO tutto ciò che
     // vi è indicizzato (home nello storage, condivisioni, cache di quota), altrimenti

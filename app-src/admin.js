@@ -223,6 +223,7 @@ async function renderSettingsSection(body) {
   };
 
   $('#adm_save', modalBg).onclick = async () => {
+    if (backendSel.value !== (st.backend || 'local') && !confirm('Stai cambiando l\'archiviazione dei file.\n\nI file NON vengono spostati: quelli esistenti restano dove sono e non saranno visibili finché non vengono copiati nella nuova archiviazione. I link di condivisione degli elementi non trovati smetteranno di funzionare.\n\nContinuare?')) return;
     const r = await apiPost('settings_save', Object.assign({
       site_title: $('#set_title', modalBg).value,
       note_poll_ms: $('#set_poll', modalBg).value,

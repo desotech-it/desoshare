@@ -6,6 +6,27 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.28.0] - 2026-10-20
+
+### Corretto
+- **Riuso del nome di un utente eliminato senza i file** (#70): la creazione di un
+  utente (locale o via SSO) viene rifiutata se nello storage esiste già la sua home
+  o il suo cestino, invece di ereditare i file del precedente. [lib_paths.php,
+  api_users.php, oidc.php]
+- **Cambio di archiviazione** (#71): le condivisioni degli elementi non trovati non
+  vengono più potate; restano segnalate nel pannello («elemento non trovato») e si
+  revocano a mano. Conferma esplicita nelle Impostazioni quando si cambia
+  archiviazione, con riga nel registro di gestione. [lib_shares.php, api_shares.php,
+  api_settings.php, app-src/shares.js, app-src/admin.js]
+- **Editor note** (#72): i file non UTF-8 (o con byte binari) si aprono in sola
+  lettura invece di essere riscritti con «�»; BOM e fine riga CRLF vengono
+  conservati al salvataggio; il testo seminato nell'editor collaborativo è
+  normalizzato a LF come fa CodeMirror (posizioni coerenti sui file Windows).
+  [lib_notes.php, api_notes.php, assets/note-editor.js, app-src/editor.js, share.php]
+- **SSO senza claim `groups`** (#73): un utente esistente conserva i permessi attuali
+  invece di essere declassato in silenzio; evento `sso_groups_missing` nel
+  registro. [oidc.php]
+
 ## [0.27.2] - 2026-10-20
 
 ### Corretto
