@@ -73,8 +73,8 @@ LP=$(curl -s -b $JAR "$B/")
 has "login mostra il bottone desoauth" "$LP" 'Accedi con desoauth'
 has "bottone punta a action=oidc_login" "$LP" 'action=oidc_login'
 # con entrambi i metodi attivi: menu a tendina con desoauth predefinito
-has "login: menu a tendina del metodo" "$LP" 'id="login-method"'
-has "login: desoauth è l'opzione predefinita" "$LP" 'value="sso" selected'
+has "login: credenziali locali in una sezione apribile" "$LP" '<details class="lg-local"'
+has "login: desoauth è il pulsante principale (prima delle credenziali)" "$(echo "$LP" | tr -d '\n' | grep -o 'btn-sso lg-sso.*<details class="lg-local"' | head -c 40)" 'btn-sso lg-sso'
 
 LOC=$(curl -s -b $JAR -c $JAR -o /dev/null -D - "$B/index.php?action=oidc_login" | sed -n 's/^[Ll]ocation: //p' | tr -d '\r')
 has "oidc_login -> redirect all'authorize" "$LOC" 'auth.deso.tech/application/o/authorize/'

@@ -7,6 +7,7 @@
   var IS_ADMIN = app.dataset.admin === "1";
   var EDITOR_BUNDLE_V = app.dataset.edv || "1";
   var JSZIP_V = app.dataset.jszipv || "1";
+  var APP_VERSION = app.dataset.version || "";
   var S = {
     cwd: "",
     // percorso corrente (relativo alla radice)
@@ -1050,7 +1051,7 @@
   async function adminPanel(section) {
     section = section || "users";
     const tab = (k, ic, lbl) => `<button class="btn ${section === k ? "btn-primary" : ""}" data-sec="${k}"><i class="ti ${ic}"></i> ${lbl}</button>`;
-    openModal(`<div class="modal wide admin-modal"><h3><i class="ti ti-settings"></i> Amministrazione</h3>
+    openModal(`<div class="modal wide admin-modal"><h3><i class="ti ti-settings"></i> Amministrazione${APP_VERSION ? ` <span class="muted" style="font-size:12px;font-weight:400">v${esc(APP_VERSION)}</span>` : ""}</h3>
     <div class="adm-tabs">
       ${tab("users", "ti-users-group", "Utenti")}${tab("settings", "ti-adjustments", "Impostazioni")}${tab("audit", "ti-history", "Registro")}
     </div>

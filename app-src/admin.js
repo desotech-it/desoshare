@@ -1,5 +1,5 @@
 // admin.js — pannello Amministrazione: Utenti (quota/consumo), Impostazioni (storage+SSO), Registro.
-import { modalBg, $ } from './state.js';
+import { modalBg, $, APP_VERSION } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, fmtTime } from './util.js';
 import { openModal } from './modal.js';
@@ -8,7 +8,7 @@ import { accessTable } from './accesslog.js';
 export async function adminPanel(section) {
   section = section || 'users';
   const tab = (k, ic, lbl) => `<button class="btn ${section === k ? 'btn-primary' : ''}" data-sec="${k}"><i class="ti ${ic}"></i> ${lbl}</button>`;
-  openModal(`<div class="modal wide admin-modal"><h3><i class="ti ti-settings"></i> Amministrazione</h3>
+  openModal(`<div class="modal wide admin-modal"><h3><i class="ti ti-settings"></i> Amministrazione${APP_VERSION ? ` <span class="muted" style="font-size:12px;font-weight:400">v${esc(APP_VERSION)}</span>` : ''}</h3>
     <div class="adm-tabs">
       ${tab('users', 'ti-users-group', 'Utenti')}${tab('settings', 'ti-adjustments', 'Impostazioni')}${tab('audit', 'ti-history', 'Registro')}
     </div>
