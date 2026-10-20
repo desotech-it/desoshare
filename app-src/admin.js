@@ -1,7 +1,7 @@
 // admin.js — pannello Amministrazione: Utenti (quota/consumo), Impostazioni (storage+SSO), Registro.
 import { modalBg, $, APP_VERSION } from './state.js';
 import { apiGet, apiPost } from './net.js';
-import { toast, esc, fmtTime } from './util.js';
+import { toast, esc, fmtTime, fmtBytes } from './util.js';
 import { openModal } from './modal.js';
 
 export async function adminPanel(section) {
@@ -117,6 +117,7 @@ async function renderSettingsSection(body) {
       <button type="button" class="active" data-pane="general"><i class="ti ti-adjustments"></i> Generale</button>
       <button type="button" data-pane="storage"><i class="ti ti-database"></i> Archiviazione</button>
       <button type="button" data-pane="auth"><i class="ti ti-shield-lock"></i> Autenticazione</button>
+      <button type="button" data-pane="geoip"><i class="ti ti-world"></i> GeoIP</button>
     </div>
 
     <div class="set-pane" data-pane="general">
@@ -158,6 +159,14 @@ async function renderSettingsSection(body) {
       <label class="sw"><input type="checkbox" id="local_auth_enabled" ${localOn ? 'checked' : ''}> Abilita login con username e password</label>
       <p class="muted" style="font-size:12px;margin:4px 0 0">Se disattivata, l'accesso sarà possibile <b>solo via SSO</b>: assicurati che l'SSO sia abilitato e funzionante, altrimenti rischi di restare fuori.</p>
       ${oidcSection(s.oidc || {})}
+    </div>
+
+    <div class="set-pane" data-pane="geoip" hidden>
+      <h3 style="margin:2px 0 4px;font-size:15px;display:flex;align-items:center;gap:6px"><i class="ti ti-world"></i> Posizione degli accessi (GeoIP)</h3>
+      <p class="muted" style="font-size:12px;margin:4px 0 10px">Il registro mostra da dove arriva ogni accesso usando un database locale (DB-IP City Lite, gratuito): nessun indirizzo IP viene inviato a servizi esterni. Il database va aggiornato circa una volta al mese.</p>
+      ${geoipStatus(s.geoip || {})}
+      <div style="margin-top:10px"><button class="btn" id="geoip_update"><i class="ti ti-download"></i> ${s.geoip && s.geoip.installed ? 'Aggiorna il database' : 'Scarica il database'} (circa 60 MB)</button> <span id="geoip_msg" class="muted" style="font-size:12px"></span></div>
+      <p class="muted" style="font-size:11px;margin:10px 0 0">IP Geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a> (CC BY 4.0). Posizione approssimativa, a livello di città o di provider.</p>
     </div>`;
 
   // sotto-tab: mostra solo il pannello selezionato (i campi degli altri restano nel DOM)
@@ -166,6 +175,15 @@ async function renderSettingsSection(body) {
     modalBg.querySelectorAll('.set-pane').forEach(p => { p.hidden = p.dataset.pane !== b.dataset.pane; });
   });
 
+  const gBtn = $('#geoip_update', modalBg);
+  if (gBtn) gBtn.onclick = async () => {
+    const msg = $('#geoip_msg', modalBg);
+    gBtn.disabled = true; msg.textContent = 'download in corso, può richiedere un minuto…';
+    const r = await apiPost('geoip_update', {});
+    gBtn.disabled = false;
+    if (r.ok) { toast('Database GeoIP aggiornato (' + r.build + ')'); adminPanel('settings'); }
+    else { msg.textContent = r.error || 'Errore'; toast(r.error || 'Errore', true); }
+  };
   const backendSel = $('#set_backend', modalBg);
   backendSel.onchange = () => { $('#s3_box', modalBg).style.display = backendSel.value === 's3' ? '' : 'none'; };
 
@@ -245,6 +263,13 @@ async function renderAuditSection(body) {
     <thead><tr><th>Quando</th><th>Utente</th><th>Azione</th><th>Dettaglio</th></tr></thead><tbody>${
     r.entries.map(e => `<tr><td style="white-space:nowrap">${esc(fmtTime(e.time))}</td><td>${esc(e.user)}</td><td>${esc(e.action)}</td><td class="muted">${esc(e.detail)}</td></tr>`).join('')
     }</tbody></table>`;
+}
+
+function geoipStatus(g) {
+  if (!g.installed) return '<p class="alert" style="margin:0">Database non installato: nel registro la colonna «Da dove» resta vuota.</p>';
+  if (g.error) return `<p class="alert" style="margin:0">${esc(g.error)}</p>`;
+  const stale = g.stale ? ' <span class="badge badge-r">da aggiornare</span>' : ' <span class="badge badge-w">aggiornato</span>';
+  return `<p style="margin:0">Database <b>${esc(g.type || '')}</b> del <b>${esc(g.build || '')}</b> (${esc(String(g.age_days))} giorni fa, ${esc(fmtBytes(g.size || 0))})${stale}</p>`;
 }
 
 function userForm(u = null) {

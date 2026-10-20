@@ -6,6 +6,29 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.31.0] - 2026-10-20
+
+### Aggiunto
+- **Da dove arriva l'accesso (GeoIP)**: il registro mostra bandiera, città e paese
+  di ogni IP («rete locale» per gli indirizzi privati) e si filtra per paese; nel
+  CSV le colonne `cc`, `country`, `city`; nel pannello di un link i paesi
+  distinti. Posizione calcolata al momento dell'accesso e, per le righe
+  precedenti, alla consultazione. Database **DB-IP City Lite** (gratuito, CC BY
+  4.0, «IP Geolocation by DB-IP») letto **in locale** con il lettore MaxMind in
+  PHP puro vendorizzato in `lib/geoip` (Apache-2.0): nessun IP esce dal server.
+  Nomi dei paesi più comuni in italiano. [lib_geoip.php, lib_access.php,
+  api_access.php, app-src/accesslog.js]
+- **Amministrazione → Impostazioni → GeoIP**: stato del database (data, età,
+  dimensione, avviso oltre 35 giorni) e pulsante «Scarica/Aggiorna il database»
+  (~60 MB, decompressione in streaming, verifica, sostituzione atomica); azione
+  `geoip_update` tracciata nel registro di gestione. [api_settings.php, app-src/admin.js]
+- Il deploy copia anche la cartella `lib/`. [.gitlab-ci.yml]
+
+### Test
+- Database di prova MaxMind (`tests/GeoIP2-City-Test.mmdb`, 18 KB) per lookup,
+  arricchimento del registro, filtro per paese e CSV; colonna «Da dove» nello smoke
+  del layout.
+
 ## [0.30.0] - 2026-10-20
 
 ### Modificato

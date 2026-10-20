@@ -12,7 +12,7 @@ PORT="${PORT:-8399}"
 [ -f "$CRED" ] || { echo "credentials.csv non trovato: $CRED"; exit 2; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
 AK="$(awk -F',' 'NR==2{print $2}' "$CRED" | tr -d ' \r')"; SK="$(awk -F',' 'NR==2{print $3}' "$CRED" | tr -d ' \r')"
-SBX="$(mktemp -d)"; PUB="$SBX/public_html"; mkdir -p "$PUB"; cp "$APP"/*.php "$PUB"/; cp -R "$APP"/assets "$PUB"/
+SBX="$(mktemp -d)"; PUB="$SBX/public_html"; mkdir -p "$PUB"; cp "$APP"/*.php "$PUB"/; cp -R "$APP"/assets "$APP"/lib "$PUB"/
 B="http://127.0.0.1:$PORT"; J="$SBX/jar"; U="$SBX/ujar"
 php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 & SRV=$!
 P=0; F=0; ok(){ P=$((P+1)); echo "  ✓ $1"; }; no(){ F=$((F+1)); echo "  ✗ $1 — ${2:0:200}"; }

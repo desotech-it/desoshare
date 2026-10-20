@@ -12,6 +12,7 @@ function action_settings_get(): void {
         'note_max_bytes' => note_max_bytes(),
         'default_quota_bytes' => (int) setting('default_quota_bytes', 0),
         'local_auth_enabled' => local_auth_enabled(),
+        'geoip' => geoip_status(),
         'storage' => [
             'backend'      => (($s['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local',
             'endpoint'     => (string) ($s3['endpoint'] ?? ''),
@@ -233,5 +234,15 @@ function action_s3_test(): void {
 function action_audit_list(): void {
     require_admin();
     json_out(['ok' => true, 'entries' => audit_tail(150)]);
+}
+
+// ─── GeoIP: scarica/aggiorna il database DB-IP (admin) ───────────────────────
+function action_geoip_update(): void {
+    require_admin();
+    @set_time_limit(300);
+    $r = geoip_update();
+    audit('geoip_update', $r['ok'] ? 'database del ' . $r['build'] . ' (' . human_size($r['size']) . ')' : 'fallito: ' . $r['error']);
+    if (!$r['ok']) json_out(['ok' => false, 'error' => $r['error']], 502);
+    json_out(['ok' => true, 'build' => $r['build'], 'size' => $r['size'], 'geoip' => geoip_status()]);
 }
 

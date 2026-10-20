@@ -4,7 +4,8 @@
 function access_filters(): array {
     $g = fn($k) => is_string($_GET[$k] ?? null) ? trim($_GET[$k]) : '';
     $f = ['from' => $g('from'), 'to' => $g('to'), 'event' => $g('event'), 'actor' => $g('actor'),
-          'path' => ltrim($g('path'), '/'), 'ip' => $g('ip'), 'token' => $g('token')];
+          'path' => ltrim($g('path'), '/'), 'ip' => $g('ip'), 'token' => $g('token'),
+          'cc' => strtoupper(preg_replace('/[^A-Za-z]/', '', $g('cc')))];
     foreach (['from', 'to'] as $k) {
         if ($f[$k] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $f[$k])) json_out(['ok' => false, 'error' => 'Data non valida (AAAA-MM-GG)'], 400);
     }
@@ -27,7 +28,7 @@ function action_access_export(): void {
     header('Cache-Control: no-store');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");   // BOM: Excel apre l'UTF-8 correttamente
-    $cols = ['ts', 'event', 'actor', 'owner', 'path', 'to', 'size', 'status', 'via', 'ip', 'token', 'ua'];
+    $cols = ['ts', 'event', 'actor', 'owner', 'path', 'to', 'size', 'status', 'via', 'ip', 'cc', 'country', 'city', 'token', 'ua'];
     fputcsv($out, $cols, ';', '"', '');
     $cursor = ''; $n = 0;
     do {

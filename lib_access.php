@@ -32,7 +32,7 @@ function access_log(string $event, array $f = []): void {
     $u = isset($f['actor']) ? null : current_user();
     $row = ['ts' => $now->format('c'), 'ip' => access_ip(),
             'ua' => mb_substr((string) ($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 200), 'event' => $event]
-         + $f
+         + $f + geoip_fields(access_ip())
          + ['actor' => $u ? 'user:' . $u['username'] : '-', 'owner' => $u['username'] ?? '', 'status' => 'ok'];
     $line = json_encode($row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n";
     @file_put_contents(access_dir() . '/' . $now->format('Y-m') . '.jsonl', $line, FILE_APPEND | LOCK_EX);
@@ -105,7 +105,13 @@ function access_match(array $r, array $f): bool {
     if (($f['ip'] ?? '') !== '' && ($r['ip'] ?? '') !== $f['ip']) return false;
     if (($f['token'] ?? '') !== '' && ($r['token'] ?? '') !== $f['token']) return false;
     if (array_key_exists('owner', $f) && $f['owner'] !== null && ($r['owner'] ?? '') !== $f['owner']) return false;
+    if (($f['cc'] ?? '') !== '' && strtoupper((string) ($r['cc'] ?? '')) !== strtoupper((string) $f['cc'])) return false;
     return true;
+}
+// Righe registrate prima del GeoIP (o con database aggiornato): posizione calcolata ora.
+function access_geo(array $r): array {
+    if (!isset($r['cc']) && !empty($r['ip'])) $r += geoip_fields((string) $r['ip']);
+    return $r;
 }
 // Fino a $limit righe dalla più recente; $cursor «AAAA-MM:offset» riprende da dove si era arrivati.
 function access_query(array $f, int $limit, string $cursor = ''): array {
@@ -121,9 +127,11 @@ function access_query(array $f, int $limit, string $cursor = ''): array {
         $before = ($cm === $month && $co !== '') ? (int) $co : null;
         foreach (access_lines_reverse($file, $before) as [$line, $off]) {
             $r = json_decode($line, true);
-            if (!is_array($r) || !access_match($r, $f)) continue;
+            if (!is_array($r)) continue;
+            if (($f['cc'] ?? '') !== '') $r = access_geo($r);      // il filtro per paese richiede la posizione
+            if (!access_match($r, $f)) continue;
             if (count($out) >= $limit) { $next = $month . ':' . ($off + strlen($line) + 1); return ['rows' => $out, 'next' => $next]; }
-            $out[] = $r;
+            $out[] = access_geo($r);
         }
     }
     return ['rows' => $out, 'next' => ''];
