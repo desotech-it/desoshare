@@ -9,7 +9,25 @@
 // I formati sono replicati in PHP da preview_kind() (share.php): tenerli allineati.
 (function () {
   const VENDOR = new URL('assets/vendor/preview/', document.baseURI).href;
-  const JSZIP = new URL('assets/vendor/jszip.min.js', document.baseURI).href;
+  // Versione delle librerie vendorizzate: va cambiata a ogni loro aggiornamento. Sono
+  // servite con cache lunga: senza, dopo un deploy il browser può mescolare file
+  // vecchi e nuovi (PDF.js rifiuta un worker di versione diversa).
+  const VV = '?v=20261115';
+  const JSZIP = new URL('assets/vendor/jszip.min.js', document.baseURI).href + VV;
+  // PDF.js: la build moderna usa API recenti senza polyfill; sui browser che non le
+  // hanno tutte si carica la build legacy (pdf-legacy/, polyfill core-js). Pagina e
+  // worker vengono sempre dalla stessa cartella. Elenco = polyfill della legacy.
+  const PDF_MODERN = (() => {
+    try {
+      const U8 = Uint8Array, I = globalThis.Iterator;
+      return [Map.prototype.getOrInsert, Map.prototype.getOrInsertComputed, WeakMap.prototype.getOrInsertComputed,
+        Math.sumPrecise, U8.fromBase64, U8.prototype.toBase64, U8.prototype.toHex, U8.prototype.setFromBase64,
+        URL.parse, Set.prototype.union, Set.prototype.symmetricDifference,
+        I && I.prototype.map, I && I.prototype.take, I && I.prototype.flatMap, I && I.prototype.toArray]
+        .every(f => typeof f === 'function');
+    } catch (_) { return false; }
+  })();
+  const PDF_DIR = VENDOR + (PDF_MODERN ? '' : 'pdf-legacy/');
   const MAX_BYTES = 30 * 1024 * 1024;
   const MAX_TEXT = 2 * 1024 * 1024;
   const MAX_PAGES = 300;
@@ -29,7 +47,7 @@
       document.head.appendChild(s);
     }));
   }
-  const lib = f => script(VENDOR + f);
+  const lib = f => script(VENDOR + f + VV);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = b => { const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; } return (i ? b.toFixed(1) : b) + ' ' + u[i]; };
 
@@ -83,26 +101,31 @@
       doc.body.innerHTML = '<div class="md">' + html + '</div>';
     },
     async pdf(ab, body) {
-      const pdfjs = await import(VENDOR + 'pdf.min.js');
-      pdfjs.GlobalWorkerOptions.workerSrc = VENDOR + 'pdf.worker.min.js';
-      const pdf = await pdfjs.getDocument({ data: new Uint8Array(ab), isEvalSupported: false, enableXfa: false }).promise;
-      const wrap = document.createElement('div');
-      wrap.className = 'pv-pages';
-      body.appendChild(wrap);
-      const n = Math.min(pdf.numPages, MAX_PAGES);
-      for (let i = 1; i <= n; i++) {
-        if (!wrap.isConnected) return;                       // anteprima chiusa nel frattempo
-        const page = await pdf.getPage(i);
-        const base = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, Math.max(0.5, (wrap.clientWidth - 24) / base.width));
-        const vp = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
-        const c = document.createElement('canvas');
-        c.width = vp.width; c.height = vp.height;
-        c.style.width = (vp.width / (window.devicePixelRatio || 1)) + 'px';
-        wrap.appendChild(c);
-        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+      const pdfjs = await import(PDF_DIR + 'pdf.min.js' + VV);
+      pdfjs.GlobalWorkerOptions.workerSrc = PDF_DIR + 'pdf.worker.min.js' + VV;
+      const task = pdfjs.getDocument({ data: new Uint8Array(ab), isEvalSupported: false, enableXfa: false, wasmUrl: VENDOR + 'pdfwasm/' });
+      const pdf = await task.promise;
+      try {
+        const wrap = document.createElement('div');
+        wrap.className = 'pv-pages';
+        body.appendChild(wrap);
+        const n = Math.min(pdf.numPages, MAX_PAGES);
+        for (let i = 1; i <= n; i++) {
+          if (!wrap.isConnected) return;                       // anteprima chiusa nel frattempo
+          const page = await pdf.getPage(i);
+          const base = page.getViewport({ scale: 1 });
+          const scale = Math.min(2, Math.max(0.5, (wrap.clientWidth - 24) / base.width));
+          const vp = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
+          const c = document.createElement('canvas');
+          c.width = vp.width; c.height = vp.height;
+          c.style.width = (vp.width / (window.devicePixelRatio || 1)) + 'px';
+          wrap.appendChild(c);
+          await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        }
+        if (pdf.numPages > n) note(body, 'Mostrate le prime ' + n + ' pagine su ' + pdf.numPages + ': scarica il file per vederlo tutto.');
+      } finally {
+        task.destroy();                                       // libera il worker: i canvas restano disegnati
       }
-      if (pdf.numPages > n) note(body, 'Mostrate le prime ' + n + ' pagine su ' + pdf.numPages + ': scarica il file per vederlo tutto.');
     },
     async docx(ab, body) {
       await script(JSZIP);
