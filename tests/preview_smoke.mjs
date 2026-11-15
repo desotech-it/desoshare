@@ -109,7 +109,8 @@ async function check(page, where, open) {
     try {
       if (exp.canvas) {
         await page.waitForSelector('.pv-pages canvas', { timeout: 15000 });
-        const inked = await page.evaluate(() => { const c = document.querySelector('.pv-pages canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true; return false; });
+        // Il canvas entra nel DOM prima che la pagina sia disegnata: si attende l'inchiostro.
+        const inked = await page.waitForFunction(() => { const c = document.querySelector('.pv-pages canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true; return false; }, null, { timeout: 15000 }).then(() => true, () => false);
         inked ? ok(`${where}: ${name} disegnato (pagina con testo)`) : bad(`${where}: ${name} pagina vuota`);
       } else if (exp.msg) {
         await page.waitForFunction(t => (document.querySelector('.pv-msg')?.textContent || '').includes(t), exp.msg, { timeout: 5000 });
@@ -140,6 +141,7 @@ const errs = [];
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 await ctx.addCookies([...jar].map(([name, value]) => ({ name, value, url: B })));
 const app = await ctx.newPage();
+const pdfReq = []; app.on('request', r => { if (/\/pdf(\.worker)?\.min\.js/.test(r.url())) pdfReq.push(r.url()); });
 app.on('pageerror', e => errs.push('app: ' + e.message));
 await app.goto(B + '/');
 await app.click('#rows .row .label:text("docs")');
@@ -157,6 +159,29 @@ const guest = await (await browser.newContext({ viewport: { width: 390, height: 
 guest.on('pageerror', e => errs.push('pubblica: ' + e.message));
 await guest.goto(`${B}/share.php?t=${share.slug}`);
 await check(guest, 'pubblica', n => guest.click(`.share-row[data-name="${n}"] .js-pv`));
+// PDF.js: build moderna dove ci sono le API recenti, legacy (polyfill) altrove.
+pdfReq.length && pdfReq.every(u => !u.includes('/pdf-legacy/')) ? ok('app: PDF.js build moderna (API presenti)') : bad('app: build PDF.js inattesa ' + pdfReq.join(' '));
+console.log('\nBrowser senza le API recenti (build legacy di PDF.js)');
+const oldCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await oldCtx.addInitScript(() => { delete Math.sumPrecise; delete Map.prototype.getOrInsertComputed; });
+const old = await oldCtx.newPage();
+const oldReq = []; old.on('request', r => { if (/\/pdf(\.worker)?\.min\.js/.test(r.url())) oldReq.push(r.url()); });
+old.on('pageerror', e => errs.push('legacy: ' + e.message));
+await old.goto(`${B}/share.php?t=${share.slug}`);
+await old.click('.share-row[data-name="doc.pdf"] .js-pv');
+await old.waitForSelector('.pv-pages canvas', { timeout: 15000 });
+(await old.waitForFunction(() => { const c = document.querySelector('.pv-pages canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 0; i < d.length; i += 4) if (d[i] < 128) return true; return false; }, null, { timeout: 15000 }).then(() => true, () => false))
+  ? ok('legacy: doc.pdf disegnato') : bad('legacy: doc.pdf pagina vuota');
+oldReq.length === 2 && oldReq.every(u => u.includes('/pdf-legacy/')) ? ok('legacy: pagina e worker dalla build legacy') : bad('legacy: richieste inattese ' + oldReq.join(' '));
+// Ogni anteprima chiude il documento: nessun worker di PDF.js resta vivo.
+for (let k = 0; k < 3; k++) {
+  await old.keyboard.press('Escape'); await old.waitForSelector('.pv-overlay', { state: 'detached' });
+  await old.click('.share-row[data-name="doc.pdf"] .js-pv'); await old.waitForSelector('.pv-pages canvas', { timeout: 15000 });
+}
+await old.waitForFunction(() => !document.querySelector('.pv-loading'), null, { timeout: 15000 }).catch(() => {});
+await old.waitForTimeout(800);
+old.workers().length <= 1 ? ok(`PDF: worker liberati dopo 4 anteprime (${old.workers().length} vivi)`) : bad(`PDF: ${old.workers().length} worker vivi dopo 4 anteprime`);
+await oldCtx.close();
 console.log('\nRegistro degli accessi (proprietario)');
 await app.goto(B + '/');
 await app.click('#btnShares');

@@ -6,6 +6,34 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.31.1] - 2026-11-15
+
+### Modificato
+- **Anteprima PDF con PDF.js 6.5.438** (era 4.10.38): build moderna sui browser che
+  hanno le API JavaScript recenti che richiede, build legacy con polyfill sugli
+  altri, scelta in base alle API presenti (#76). Decodificatori wasm per JPEG 2000,
+  JBIG2 e profili colore. Resa identica alla versione precedente sul PDF di prova.
+  [assets/preview.js, assets/vendor/preview]
+- Librerie aggiornate: marked 18.2.0, DOMPurify 3.4.18, JSZip 3.10.2, lettore
+  MaxMind DB 1.14.0 (limiti di risorse contro database malformati, ricerche ~2,5×
+  più veloci; risultati identici su 20.000 IP del database reale), CodeMirror
+  (language 6.13.1, view 6.43.15, bundle editor rigenerato), jsdom 31 nei test
+  (`npm audit` a 0: risolta la vulnerabilità di undici). CI: Node 24.22.3, Alpine 3.24
+  per il deploy (la 3.20 è fuori supporto).
+- Gli URL delle librerie vendorizzate portano un parametro di versione: sono in cache
+  del browser per 7 giorni e dopo un aggiornamento pagina e worker di PDF.js
+  potevano avere versioni diverse.
+
+### Corretto
+- Ogni anteprima PDF lasciava vivo un Web Worker con il documento in memoria
+  (aprire e chiudere 4 volte = 4 worker): ora il documento si chiude a fine resa
+  o alla chiusura dell'anteprima. [assets/preview.js]
+
+### Test
+- `preview_smoke.mjs`: worker liberati dopo 4 anteprime; verifica la build di PDF.js scelta, simula un browser senza le
+  API recenti (build legacy) e attende il disegno della pagina invece di leggere il
+  canvas appena creato (falliva a volte).
+
 ## [0.31.0] - 2026-10-20
 
 ### Aggiunto

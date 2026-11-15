@@ -65,7 +65,7 @@ test:lifecycle:
   image: php:8.5-cli
   stage: test
   variables:
-    NODE_VERSION: "24.21.0"
+    NODE_VERSION: "24.22.3"
   before_script:
     - apt-get update -qq && apt-get install -yqq --no-install-recommends curl ca-certificates xz-utils > /dev/null
     - curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" | tar xJ -C /usr/local --strip-components=1
@@ -84,7 +84,7 @@ test:lifecycle:
 
 deploy:
   stage: deploy
-  image: alpine:3.20
+  image: alpine:3.24
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   environment:
