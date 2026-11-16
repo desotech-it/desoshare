@@ -1,10 +1,11 @@
 // shares.js — link nominativi a scadenza: dialog di creazione e pannello dei link attivi.
-import { S, modalBg, $, CAN_WRITE } from './state.js';
+import { S, modalBg, $, CAN_WRITE, USER, rowsEl } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, isTextFile, copyText, fmtDuration, fmtBytes, slugify, iconFor } from './util.js';
 import { openModal, guardSubmit } from './modal.js';
 import { trashPanel } from './trash.js';
 import { shareAccessPanel } from './accesslog.js';
+import { load } from './listing.js';
 
 // Livelli d'accesso [valore, nome, spiegazione]. Per una nota `edit` è il co-editing.
 const DIR_LEVELS = [
@@ -39,6 +40,24 @@ function slugStamp(d = new Date()) {
     if (p.year && p.minute) return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}`;
   } catch (_) { /* fuso non supportato: ora locale */ }
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+}
+
+// Dopo creazione o revoca di un link: elenco ricaricato (pillola «condivisa» e icona
+// Accessi) e contatore della barra laterale, che index.php scrive solo al caricamento.
+// Il contatore conta i link attivi creati dall'utente, come shares_count_active().
+function setShareCount(r) {
+  const btn = $('#btnShares');
+  if (!btn || !r || !r.ok || !Array.isArray(r.shares)) return;
+  const now = typeof r.now === 'number' ? r.now : Date.now() / 1000;
+  const n = r.shares.filter(s => s.created_by === USER && Number(s.expires_at) > now).length;
+  let c = btn.querySelector('.sb-count');
+  if (!n) { if (c) c.remove(); return; }
+  if (!c) { c = document.createElement('span'); c.className = 'sb-count'; btn.appendChild(c); }
+  c.textContent = String(n);
+}
+function sharesChanged() {
+  if (rowsEl) load(S.cwd);   // assente nella pagina Registro
+  apiGet('share_list').then(setShareCount);
 }
 
 const LIMIT_OPTS = `<option value="100">100 MB</option>
@@ -116,6 +135,7 @@ export function shareDialog(rel, name, isDir = false) {
     const r = await apiPost('share_create', { path: rel, ttl: $('#sh_ttl', modalBg).value, mode, slug: slugEl.value.trim(),
       label, pin, upload_limit_mb: limitMb });
     if (!r || !r.ok) { showErr((r && r.error) || 'Errore nella creazione del link'); return; }
+    sharesChanged();
     const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
     const when = new Date(r.expires_at * 1000).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
     const cap = hasCap() ? (Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : ' · nessun tetto') : '';
@@ -160,6 +180,7 @@ export async function sharesPanel() {
   // Il conteggio del cestino è accessorio: se fallisce il pannello si apre lo stesso.
   const [r, t] = await Promise.all([apiGet('share_list'), apiGet('trash_list').catch(() => null)]);
   if (!r.ok) { toast(r.error || 'Errore', true); return; }
+  setShareCount(r);
   const nTrash = t && t.ok && Array.isArray(t.entries) ? t.entries.length : null;
   const body = r.shares.length ? `<div class="sh-scroll"><table class="utable sh-table"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${
     r.shares.map(s => `<tr data-exp="${Number(s.expires_at) || 0}">
@@ -183,7 +204,7 @@ export async function sharesPanel() {
     const who = s.label ? ` di «${s.label}»` : '';
     if (!confirm(`Revocare il link${who} a «${s.name || ''}»? Smetterà subito di funzionare.`)) return;
     const x = await apiPost('share_revoke', { token: b.dataset.revoke });
-    if (x.ok) { toast('Condivisione revocata'); sharesPanel(); } else toast(x.error || 'Errore', true);
+    if (x.ok) { toast('Condivisione revocata'); sharesPanel(); if (rowsEl) load(S.cwd); } else toast(x.error || 'Errore', true);
   });
   modalBg.querySelectorAll('[data-acc]').forEach(b => b.onclick = () => {
     const s = r.shares.find(x => x.token === b.dataset.acc);
@@ -213,7 +234,8 @@ export async function sharesPanel() {
       if (v.length < 4) { toast('Il PIN deve avere almeno 4 caratteri', true); inp.focus(); return; }
       send({ pin_action: 'set', pin: v }, s.has_pin ? 'PIN cambiato' : 'PIN impostato');
     };
-    inp.onkeydown = e => { if (e.key === 'Enter') box.querySelector('[data-act="set"]').onclick(); };
+    // Invio con l'invio già in corso (pulsante disabilitato) non deve ripetere share_update.
+    inp.onkeydown = e => { const b = box.querySelector('[data-act="set"]'); if (e.key === 'Enter' && !b.disabled) b.onclick(); };
     const rm = box.querySelector('[data-act="remove"]');
     if (rm) rm.onclick = () => { if (confirm('Togliere il PIN? Basterà l\'indirizzo per aprire il link.')) send({ pin_action: 'remove' }, 'PIN tolto'); };
     box.querySelector('[data-act="cancel"]').onclick = () => box.remove();

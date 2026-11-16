@@ -20,10 +20,9 @@ function upload_uid(string $uid): string {
 function upload_ctx(): array {
     static $ctx = null;
     if ($ctx !== null) return $ctx;
-    $t = $_REQUEST['t'] ?? '';
-    $rel = $_REQUEST['path'] ?? '';
-    if (!is_string($rel)) $rel = '';
-    if (is_string($t) && $t !== '') {
+    $t = req_str('t');
+    $rel = req_str('path');
+    if ($t !== '') {
         $s = share_lookup($t);
         if (!$s) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
         if (($s['type'] ?? '') !== 'dir') json_out(['ok' => false, 'error' => 'Questo link non è una cartella'], 400);
@@ -34,6 +33,11 @@ function upload_ctx(): array {
         }
         $base = share_join($s, $rel);
         if ($base === null) json_out(['ok' => false, 'error' => 'Percorso non consentito'], 400);
+        // La radice del link deve esistere ancora: la scrittura creerebbe le cartelle
+        // mancanti e farebbe «risorgere» una cartella condivisa sparita.
+        $root = storage()->existsCheck(share_base($s));
+        if ($root['type'] === false && !$root['sure']) json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova'], 503);
+        if ($root['type'] !== 'dir') json_out(['ok' => false, 'error' => 'La cartella condivisa non esiste più'], 404);
         return $ctx = ['link' => $s, 'base' => $base, 'owner' => (string) ($s['created_by'] ?? ''), 'skey' => 'share:' . $s['token'], 'actor' => share_actor($s)];
     }
     $u = require_write();
@@ -42,8 +46,7 @@ function upload_ctx(): array {
 // CSRF solo per la sessione: con un token di link non c'è sessione da proteggere
 // (chi ha il token può già fare la stessa richiesta direttamente).
 function upload_csrf(): void {
-    $t = $_REQUEST['t'] ?? '';
-    if (!is_string($t) || $t === '') csrf_check();
+    if (req_str('t') === '') csrf_check();
 }
 // Chiave di staging legata al PRINCIPALE (utente, oppure link): due utenti col
 // medesimo uid client (stesso nome/size/mtime) NON condividono mai lo stesso
@@ -56,7 +59,7 @@ function upload_part(string $uid): string { return upload_dir() . '/' . upload_s
 // Stato dell'upload: quali blocchi sono già stati ricevuti (per riprendere).
 function action_upload_status(): void {
     upload_ctx();
-    $uid = upload_uid($_GET['uid'] ?? '');
+    $uid = upload_uid(get_str('uid'));
     $m = manifest_read($uid);
     $parts = array_map('intval', array_keys($m['parts']));
     sort($parts);
@@ -66,7 +69,7 @@ function action_upload_status(): void {
 // Riceve un blocco e lo scrive al suo offset. Supporta invii paralleli e fuori ordine.
 function action_upload_chunk(): void {
     $cx = upload_ctx();
-    $uid = upload_uid($_POST['uid'] ?? '');
+    $uid = upload_uid(post_str('uid'));
     $index = (int) ($_POST['index'] ?? -1);
     $offset = (int) ($_POST['offset'] ?? -1);
     $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
@@ -85,17 +88,13 @@ function action_upload_chunk(): void {
     // quota non deve dare un 413 errato (upload_finish riverifica comunque).
     if (!is_file(upload_part($uid))) {
         $repl = 0;
-        $rn = basename(trim((string) ($_POST['name'] ?? '')));
+        $rn = basename(trim(post_str('name')));
         // Via link la versione sostituita finisce nel cestino (conta ancora) o il nome cambia: niente sconto.
         if ($rn !== '' && valid_name($rn) && !$cx['link']) {
             $dest = logical_join($cx['base'], $rn);
             if (storage()->typeOf($dest) === 'file') $repl = (int) storage()->sizeOf($dest);
         }
         quota_check_user($cx['owner'], $total, $repl, 413);
-        // Tetto del LINK: 413 (non 5xx) come la quota, così il client non ritenta.
-        if ($cx['link'] && ($rem = share_upload_remaining($cx['link'])) !== null && $total > $rem) {
-            json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito (restano ' . human_size($rem) . ')'], 413);
-        }
     }
     // Validazione RIGOROSA della geometria del blocco (niente offset arbitrari):
     $expectedCount = (int) ceil($total / $chunkSize);
@@ -107,6 +106,12 @@ function action_upload_chunk(): void {
     $m0 = manifest_read($uid);
     if ((int) $m0['size'] !== 0 && ((int) $m0['size'] !== $total || (int) $m0['chunk'] !== $chunkSize)) {
         json_out(['ok' => false, 'error' => 'Metadati del trasferimento incoerenti con i blocchi precedenti'], 409);
+    }
+    // Via link: tetto e numero di upload in corso, contando anche quelli non
+    // ancora finalizzati (prenotazione sotto lock, vedi link_upload_book).
+    if ($cx['link']) {
+        $bk = link_upload_book($cx['link'], upload_skey($uid), $total);
+        if ($bk !== null) json_out(['ok' => false, 'error' => $bk[0]], $bk[1]);
     }
     // scrive il blocco al suo offset; 'c+b' crea il file se assente e non lo tronca
     $part = upload_part($uid);
@@ -128,8 +133,8 @@ function action_upload_chunk(): void {
 // Finalizza: verifica che tutti i blocchi ci siano e sposta il file (creando le cartelle).
 function action_upload_finish(): void {
     $cx = upload_ctx();
-    $uid = upload_uid($_POST['uid'] ?? '');
-    $name = basename(trim($_POST['name'] ?? ''));
+    $uid = upload_uid(post_str('uid'));
+    $name = basename(trim(post_str('name')));
     $total = (int) ($_POST['total'] ?? -1);
     $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
@@ -173,17 +178,18 @@ function action_upload_finish(): void {
         $claimed = $part . '.fin.' . getmypid();
         if (!@rename($part, $claimed)) json_out(['ok' => false, 'error' => 'Questo caricamento è già in finalizzazione'], 409);
         $giveBack = function () use ($claimed, $part) { if (is_file($claimed)) @rename($claimed, $part); };   // il client può ritentare
-        // Quota del PROPRIETARIO: via link nulla viene «sostituito» gratis (la
-        // versione precedente va nel cestino e continua a contare).
-        $quota = user_quota($cx['owner']);
-        if ($quota > 0 && (usage_get($cx['owner']) + $total) > $quota) {
+        // Quota del PROPRIETARIO, prenotata sotto lock (usage_reserve): via link
+        // nulla viene «sostituito» gratis (la versione precedente va nel cestino
+        // e continua a contare). Restituita se poi la scrittura non avviene.
+        if (!usage_reserve($cx['owner'], $total)) {
             @unlink($claimed); @unlink(manifest_path($uid));
             json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
         }
         $target = link_claim($cx['link'], $cx['base'], $name);
-        if (isset($target['error'])) { $giveBack(); json_out(['ok' => false, 'error' => $target['error']], $target['code']); }
+        if (isset($target['error'])) { usage_bump($cx['owner'], -$total); $giveBack(); json_out(['ok' => false, 'error' => $target['error']], $target['code']); }
         // Tetto del LINK prenotato in modo atomico PRIMA di scrivere; restituito se la scrittura fallisce.
         if (!share_upload_reserve($cx['link']['token'], $total)) {
+            usage_bump($cx['owner'], -$total);
             link_upload_release($target['path']);
             @unlink($claimed); @unlink(manifest_path($uid));
             json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
@@ -191,11 +197,12 @@ function action_upload_finish(): void {
         $r = link_store($cx, $target, $claimed, $name);
         if (!$r['ok']) {
             share_upload_release($cx['link']['token'], $total);
+            usage_bump($cx['owner'], -$total);
             $giveBack();
             json_out(['ok' => false, 'error' => $r['error']], $r['code']);
         }
-        usage_bump($cx['owner'], $total);
         @unlink(manifest_path($uid));
+        link_upload_unbook($cx['link'], upload_skey($uid));
         upload_gc();
         audit('link_upload', $r['name'] . ' (' . human_size($total) . ') in "' . ($cx['link']['name'] ?? '') . '"', $cx['actor']);
         access_log('upload', access_link_fields($cx['link']) + ['path' => access_rel(logical_join($cx['base'], $r['name']), $cx['owner']), 'size' => $total]);
@@ -204,18 +211,18 @@ function action_upload_finish(): void {
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
     $dest = logical_join($cx['base'], $name);
     if (link_name_pending($dest)) json_out(['ok' => false, 'error' => 'Un caricamento tramite link sta scrivendo questo nome: riprova tra poco'], 409);
-    // Re-check quota del PROPRIETARIO (un altro upload può aver consumato spazio nel frattempo).
+    // Quota del PROPRIETARIO riverificata e PRENOTATA sotto lock (un altro upload
+    // può aver consumato spazio nel frattempo, o finalizzare in parallelo).
     $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
-    $quota = user_quota($cx['owner']);
-    if ($quota > 0 && (usage_get($cx['owner']) - $repl + $total) > $quota) {
+    if (!usage_reserve($cx['owner'], $total - $repl)) {
         @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
         json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
     }
     if (!storage()->putFromLocal($part, $dest)) {
+        usage_bump($cx['owner'], -($total - $repl));         // prenotazione restituita
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
     if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
-    usage_bump($cx['owner'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
     access_log('upload', ['path' => access_rel($dest, $cx['owner']), 'size' => $total]);
@@ -253,6 +260,70 @@ function link_store(array $cx, array $target, ?string $local, string $name): arr
     link_file_record($cx['link'], $dest);
     link_upload_release($dest);
     return ['ok' => true, 'name' => basename($dest), 'renamed' => basename($dest) !== $name];
+}
+
+// ─── Upload via link in corso: prenotazione sul tetto del link ──────────────
+// Un upload a blocchi occupa appdata/uploads finché non viene finalizzato (o
+// finché il gc delle 24 h non lo rimuove): senza contarlo, molti uid aperti e
+// mai finalizzati riempirebbero il disco oltre il tetto del link. Ogni upload
+// via link in corso PRENOTA la sua dimensione dichiarata (la geometria dei
+// blocchi impedisce di scriverne di più) in link_uploads.json, per link →
+// chiave di staging: controllo e prenotazione sotto lo stesso lock, così due
+// primi blocchi concorrenti non sforano il tetto. Si limita anche il NUMERO di
+// upload in corso per link (file vuoti o minuscoli a migliaia).
+const LINK_UPLOADS_MAX = 20;
+function link_uploads_file(): string { return DATA_DIR . '/link_uploads.json'; }
+// Prenotazione viva: appena fatta (il primo blocco si sta scrivendo) oppure con
+// lo staging ancora presente (.part, anche in finalizzazione) e non scaduto per
+// il gc. Si autoconvalida: upload falliti o rimossi smettono di contare da soli.
+function link_upload_live(string $skey, $e): bool {
+    if (!is_array($e)) return false;
+    if (time() - (int) ($e['ts'] ?? 0) < 120) return true;
+    foreach (glob(upload_dir() . '/' . $skey . '.part*') ?: [] as $f) {
+        if (time() - (int) @filemtime($f) <= 86400) return true;
+    }
+    return false;
+}
+// Prenota (o conferma) l'upload $skey di $total byte sul link. null = ok,
+// altrimenti [messaggio, codice HTTP] (4xx: il client non ritenta).
+function link_upload_book(array $s, string $skey, int $total): ?array {
+    $tok = (string) ($s['token'] ?? '');
+    $err = null;
+    with_json_lock(link_uploads_file(), function (array $d) use ($tok, $skey, $total, &$err) {
+        $changed = false;
+        foreach ($d as $t => $list) {   // via le prenotazioni morte, di tutti i link
+            foreach ((array) $list as $k => $e) if (!link_upload_live((string) $k, $e)) { unset($d[$t][$k]); $changed = true; }
+            if (empty($d[$t])) { unset($d[$t]); $changed = true; }
+        }
+        $mine = $d[$tok] ?? [];
+        $others = 0;
+        foreach ($mine as $k => $e) if ((string) $k !== $skey) $others += (int) ($e['bytes'] ?? 0);
+        // Byte già caricati letti ORA (non dalla richiesta): una finalizzazione
+        // concorrente può averli appena aumentati.
+        $cur = null;
+        foreach (shares_load()['shares'] ?? [] as $x) if (($x['token'] ?? '') === $tok) { $cur = $x; break; }
+        $rem = $cur ? share_upload_remaining($cur) : null;
+        if (!isset($mine[$skey]) && count($mine) >= LINK_UPLOADS_MAX) {
+            $err = ['Troppi caricamenti in corso tramite questo link: completa quelli aperti o riprova più tardi', 429];
+        } elseif ($rem !== null && $others + $total > $rem) {
+            $err = ['Spazio caricabile tramite questo link esaurito (restano ' . human_size(max(0, $rem - $others)) . ')', 413];
+        } elseif ((int) ($mine[$skey]['bytes'] ?? -1) !== $total) {
+            $d[$tok][$skey] = ['bytes' => $total, 'ts' => time()];
+            $changed = true;
+        }
+        return $changed ? $d : null;
+    });
+    return $err;
+}
+// Upload finalizzato: i suoi byte ora stanno nel contatore del link.
+function link_upload_unbook(array $s, string $skey): void {
+    $tok = (string) ($s['token'] ?? '');
+    with_json_lock(link_uploads_file(), function (array $d) use ($tok, $skey) {
+        if (!isset($d[$tok][$skey])) return null;
+        unset($d[$tok][$skey]);
+        if (empty($d[$tok])) unset($d[$tok]);
+        return $d;
+    });
 }
 
 // ─── Manifest dei blocchi ricevuti (resume con invii paralleli) ──────────────

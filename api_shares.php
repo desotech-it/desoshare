@@ -6,7 +6,7 @@
 // pin (facoltativo), upload_limit_mb (cartelle con caricamento).
 function action_share_create(): void {
     $u = require_login();
-    $p = user_path($_POST['path'] ?? '');               // percorso assoluto (con prefisso utente)
+    $p = user_path(post_str('path'));               // percorso assoluto (con prefisso utente)
     $kind = storage()->typeOf($p);                      // 'file' | 'dir' | false
     if ($kind === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $ttl = (int) ($_POST['ttl'] ?? 0);
@@ -167,7 +167,7 @@ function action_share_update(): void {
 // ─── Condivisioni: revoca ────────────────────────────────────────────────────
 function action_share_revoke(): void {
     $u = require_login();
-    $token = $_POST['token'] ?? '';
+    $token = post_str('token');
     $admin = is_admin();
     $removed = 0;
     with_json_lock(shares_file(), function (array $d) use ($token, $u, $admin, &$removed) {

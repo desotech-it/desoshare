@@ -3,6 +3,12 @@
 require_once __DIR__ . '/lib.php';
 require_once __DIR__ . '/oidc.php';   // helper config OIDC usati dalle impostazioni
 boot();
+// Rete di sicurezza: un errore non previsto risponde in JSON senza dettagli
+// (niente percorsi del server nel corpo); il dettaglio va nel log.
+set_exception_handler(function (Throwable $e): void {
+    error_log('api.php: ' . $e);
+    json_out(['ok' => false, 'error' => 'Errore interno'], 500);
+});
 // Moduli handler: DEVONO essere caricati PRIMA dello switch.
 require_once __DIR__ . '/api_files.php';
 require_once __DIR__ . '/api_upload.php';

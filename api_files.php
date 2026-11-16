@@ -4,7 +4,7 @@
 function action_list(): void {
     $u = require_login();
     trash_gc();   // scadenza del cestino, opportunistica (al più una volta l'ora)
-    $rel = clean_logical($_GET['path'] ?? '');
+    $rel = clean_logical(get_str('path'));
     $dir = logical_join(user_home(), $rel);            // percorso assoluto nello storage (sandbox utente)
     if ($rel === '') {                                  // la home dell'utente esiste sempre (auto-riparazione)
         if (storage()->typeOf($dir) !== 'dir') storage()->makeDir($dir);
@@ -36,8 +36,8 @@ function action_list(): void {
 // ─── File: crea cartella ─────────────────────────────────────────────────────
 function action_mkdir(): void {
     require_write();
-    $dir = user_path($_POST['path'] ?? '');
-    $name = trim($_POST['name'] ?? '');
+    $dir = user_path(post_str('path'));
+    $name = trim(post_str('name'));
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
     if (storage()->typeOf($target) !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
@@ -49,12 +49,12 @@ function action_mkdir(): void {
 // ─── File: crea file ─────────────────────────────────────────────────────────
 function action_newfile(): void {
     require_write();
-    $dir = user_path($_POST['path'] ?? '');
-    $name = trim($_POST['name'] ?? '');
+    $dir = user_path(post_str('path'));
+    $name = trim(post_str('name'));
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     $target = logical_join($dir, $name);
     if (storage()->typeOf($target) !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $name . '"'], 409);
-    $content = (string) ($_POST['content'] ?? '');
+    $content = post_str('content');
     quota_check(strlen($content));
     note_state_purge_path($target);   // relay stantio di un omonimo cancellato in passato
     if (!storage()->writeFile($target, $content)) {
@@ -128,10 +128,12 @@ function action_delete(): void {
     require_write();
     $paths = $_POST['paths'] ?? [];
     if (is_string($paths)) $paths = json_decode($paths, true) ?: [];
+    if (!is_array($paths)) $paths = [];
     $deleted = 0; $errors = [];
     $freed = 0; $removedPaths = [];
     foreach ($paths as $rel) {
-        $clean = clean_logical((string) $rel);
+        if (!is_string($rel)) { $errors[] = 'percorso non valido'; continue; }   // niente «Array» come percorso
+        $clean = clean_logical($rel);
         if ($clean === '') { $errors[] = 'la radice non è eliminabile'; continue; }
         $p = logical_join(user_home(), $clean);
         $t = storage()->typeOf($p);
@@ -157,8 +159,8 @@ function action_delete(): void {
 // ─── File: rinomina ──────────────────────────────────────────────────────────
 function action_rename(): void {
     require_write();
-    $fromRel = clean_logical($_POST['from'] ?? '');
-    $newName = trim($_POST['to'] ?? '');
+    $fromRel = clean_logical(post_str('from'));
+    $newName = trim(post_str('to'));
     if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
     if ($fromRel === '') json_out(['ok' => false, 'error' => 'Operazione non consentita'], 400);
     $from = logical_join(user_home(), $fromRel);
@@ -181,7 +183,7 @@ function action_rename(): void {
 // ─── File: download singolo (con supporto HTTP Range / resume) ───────────────
 function action_download(): void {
     require_login();
-    $p = user_path($_GET['path'] ?? '');
+    $p = user_path(get_str('path'));
     if (storage()->typeOf($p) !== 'file') json_out(['ok' => false, 'error' => 'Non è un file'], 400);
     $name = basename($p);
     access_log(access_dl_event(), ['path' => access_rel($p, user_home()), 'size' => (int) storage()->sizeOf($p), 'via' => access_dl_via()]);

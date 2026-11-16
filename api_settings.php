@@ -52,9 +52,11 @@ function action_settings_save(): void {
     // concorrenti non devono perdersi le modifiche a vicenda (lost update tra la
     // settings_load() e la scrittura). json_out nelle validazioni esce col lock
     // rilasciato alla chiusura del processo.
-    $saved = null;
-    with_json_lock(settings_file(), function (array $s) use (&$saved) {
-    $title = trim((string) ($_POST['site_title'] ?? ''));
+    // $prevBackend/$backend servono anche DOPO la sezione critica (audit del cambio):
+    // vanno esposte per riferimento, non definite solo nella closure.
+    $saved = null; $prevBackend = 'local'; $backend = 'local';
+    with_json_lock(settings_file(), function (array $s) use (&$saved, &$prevBackend, &$backend) {
+    $title = trim(post_str('site_title'));
     if ($title !== '') {
         if (mb_strlen($title) > 40) json_out(['ok' => false, 'error' => 'Titolo troppo lungo (max 40)'], 400);
         $s['site_title'] = $title;
@@ -63,14 +65,17 @@ function action_settings_save(): void {
     if ($poll > 0) { if ($poll < 500 || $poll > 60000) json_out(['ok' => false, 'error' => 'Intervallo 500–60000 ms'], 400); $s['note_poll_ms'] = $poll; }
     $maxmb = (int) ($_POST['note_max_mb'] ?? 0);
     if ($maxmb > 0) { if ($maxmb < 1 || $maxmb > 64) json_out(['ok' => false, 'error' => 'Dimensione nota 1–64 MB'], 400); $s['note_max_bytes'] = $maxmb * 1024 * 1024; }
-    if (isset($_POST['default_quota_mb']) && $_POST['default_quota_mb'] !== '') {
-        $dq = (int) $_POST['default_quota_mb'];
-        if ($dq < 0 || $dq > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Quota predefinita non valida'], 400);
+    $dqRaw = isset($_POST['default_quota_mb']) && is_string($_POST['default_quota_mb']) ? trim($_POST['default_quota_mb']) : '';
+    if ($dqRaw !== '') {
+        // Solo cifre, come in user_save: (int) 'abc' = 0 rimuoveva la quota in silenzio.
+        if (!preg_match('/^\d+$/', $dqRaw)) json_out(['ok' => false, 'error' => 'Quota predefinita non valida: inserisci un numero intero di MB (0 = illimitata)'], 400);
+        $dq = (int) $dqRaw;
+        if ($dq > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Quota predefinita non valida'], 400);
         if ($dq > 0) $s['default_quota_bytes'] = $dq * 1024 * 1024; else unset($s['default_quota_bytes']);
     }
 
     // ─ Storage: backend locale o S3-compatibile (Wasabi) ─
-    $prevBackend = (settings_load()['storage_backend'] ?? 'local');
+    $prevBackend = (($s['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local';   // letto sotto lock
     $backend = (($_POST['storage_backend'] ?? 'local') === 's3') ? 's3' : 'local';
     if ($backend === 's3') {
         $cfg = s3_config_from_post($s['s3'] ?? []);
@@ -106,8 +111,8 @@ function action_settings_save(): void {
 
 // Compone la config OIDC dai campi POST, conservando il secret cifrato se non reinserito.
 function oidc_config_from_post(array $prev): array {
-    $secretIn = (string) ($_POST['oidc_secret'] ?? '');
-    $t = fn(string $k) => trim((string) ($_POST[$k] ?? ''));
+    $secretIn = post_str('oidc_secret');
+    $t = fn(string $k) => trim(post_str($k));
     return [
         'enabled'     => ($_POST['oidc_enabled'] ?? '') === '1',
         'client_id'   => $t('oidc_client_id'),
@@ -131,7 +136,7 @@ function action_oidc_test(): void {
     require_admin();
     $saved = is_array(settings_load()['oidc'] ?? null) ? settings_load()['oidc'] : [];
     $pick = function (string $postKey, string $savedKey, string $const) use ($saved) {
-        $v = trim((string) ($_POST[$postKey] ?? ''));
+        $v = trim(post_str($postKey));
         if ($v !== '') return $v;
         if (($saved[$savedKey] ?? '') !== '') return (string) $saved[$savedKey];
         return $const;
@@ -140,7 +145,7 @@ function action_oidc_test(): void {
     $tokenUrl = $pick('oidc_token', 'token', OIDC_TOKEN);
     $jwksUrl  = $pick('oidc_jwks', 'jwks', OIDC_JWKS);
     $redirect = $pick('oidc_redirect', 'redirect', OIDC_REDIRECT);
-    $secretIn = (string) ($_POST['oidc_secret'] ?? '');
+    $secretIn = post_str('oidc_secret');
     $secret = $secretIn !== '' ? $secretIn
             : ((($saved['secret'] ?? '') !== '') ? secret_decrypt((string) $saved['secret']) : OIDC_CLIENT_SECRET);
     if ($clientId === '' || $secret === '') json_out(['ok' => false, 'error' => 'Inserisci Client ID e Client Secret prima di provare'], 400);
@@ -181,7 +186,7 @@ function action_oidc_test(): void {
 // ─── SSO: discovery (.well-known) per auto-compilare gli endpoint dall'issuer ──
 function action_oidc_discovery(): void {
     require_admin();
-    $issuer = rtrim(trim((string) ($_POST['issuer'] ?? '')), '/');
+    $issuer = rtrim(trim(post_str('issuer')), '/');
     if (!preg_match('#^https://#', $issuer)) json_out(['ok' => false, 'error' => 'Inserisci un issuer https valido'], 400);
     $url = $issuer . '/.well-known/openid-configuration';
     $ch = curl_init($url);
@@ -203,12 +208,12 @@ function action_oidc_discovery(): void {
 
 // Compone la config S3 dai campi POST, conservando il secret esistente se non reinserito.
 function s3_config_from_post(array $prev): array {
-    $secretIn = (string) ($_POST['s3_secret'] ?? '');
+    $secretIn = post_str('s3_secret');
     return [
-        'endpoint' => trim((string) ($_POST['s3_endpoint'] ?? '')),
-        'region'   => trim((string) ($_POST['s3_region'] ?? '')),
-        'bucket'   => trim((string) ($_POST['s3_bucket'] ?? '')),
-        'key'      => trim((string) ($_POST['s3_key'] ?? '')),
+        'endpoint' => trim(post_str('s3_endpoint')),
+        'region'   => trim(post_str('s3_region')),
+        'bucket'   => trim(post_str('s3_bucket')),
+        'key'      => trim(post_str('s3_key')),
         // se il campo secret è vuoto, mantieni quello già salvato (cifrato)
         'secret'   => $secretIn !== '' ? secret_encrypt($secretIn) : (string) ($prev['secret'] ?? ''),
     ];

@@ -82,15 +82,15 @@ if (isset($_GET['zipmanifest']) && $type === 'dir') {
 if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'dir') { http_response_code(404); echo 'Cartella non trovata'; exit; }
+    // Pochi ZIP alla volta per link: ognuno occupa disco e CPU finché non è inviato.
+    if (!zip_slot('share:' . $share['token'], ZIP_LINK_CONCURRENT)) {
+        http_response_code(429); header('Retry-After: 30');
+        echo 'Troppi download ZIP in corso con questo link: riprova tra poco'; exit;
+    }
     access_log('zip', access_link_fields($share) + ['path' => access_rel($target, (string) ($share['created_by'] ?? '')), 'via' => 'server']);
     $tmp = zip_logical([$target]);
     $dl = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
-    while (ob_get_level()) ob_end_clean();
-    header('Content-Type: application/zip');
-    header('Content-Disposition: ' . content_disposition($dl));   // RFC 6266, come stream_file
-    header('Content-Length: ' . filesize($tmp));
-    header('Cache-Control: no-store');
-    readfile($tmp); @unlink($tmp); exit;
+    zip_send($tmp, $dl);   // elimina il temporaneo anche se il client abbandona
 }
 
 // Pagina HTML
@@ -193,7 +193,7 @@ function share_file_page(array $s, string $abs): void {
        . '<a class="btn btn-primary" style="justify-content:center;width:100%;margin-top:10px" href="' . h($dl) . '"><i class="ti ti-download"></i> Scarica</a>'
        . '</div></div>';
     if (preview_kind(basename($abs))) {
-        echo preview_script() . '<script>document.getElementById("pvOpen").onclick=function(){Preview.open({url:' . json_encode($dl) . ',name:' . json_encode(basename($abs)) . ',size:' . (int) storage()->sizeOf($abs) . '});};</script>';
+        echo preview_script() . '<script>document.getElementById("pvOpen").onclick=function(){Preview.open({url:' . js_val($dl) . ',name:' . js_val(basename($abs)) . ',size:' . (int) storage()->sizeOf($abs) . '});};</script>';
     }
     share_footer();
 }
@@ -218,7 +218,7 @@ function share_editor_page(array $s, string $abs): void {
        . '</div>'
        . '<script src="assets/note-editor.js?v=' . h($nv) . '"></script>'
        . '<script>(async function(){'
-       . 'var t=' . json_encode($tok) . ',BV=' . json_encode($bv) . ',CS=' . json_encode(csrf_token()) . ';'
+       . 'var t=' . js_val($tok) . ',BV=' . js_val($bv) . ',CS=' . js_val(csrf_token()) . ';'
        . 'var host=document.getElementById("ed_host"),st=document.getElementById("ed_status"),pr=document.getElementById("ed_pres");'
        . 'function post(a,d){var b=new FormData();b.append("t",t);for(var k in d){var v=d[k];b.append(k,Array.isArray(v)?JSON.stringify(v):v);}return fetch("api.php?action="+a,{method:"POST",headers:{"X-CSRF":CS},body:b}).then(function(r){return r.json();});}'
        . 'function reopen(){return fetch("api.php?action=note_open&t="+encodeURIComponent(t)).then(function(r){return r.json();});}'
@@ -316,7 +316,7 @@ function share_folder_page(array $s, string $dir, string $p): void {
     // originale) su mode:'server' o qualsiasi errore di rete/CORS/JSZip.
     echo '<script>(function(){'
        . 'var btn=document.getElementById("zipAll");if(!btn)return;'
-       . 'var MAN=' . json_encode($zipManUrl) . ',JV=' . json_encode($jszipV) . ',srv=btn.getAttribute("href");'
+       . 'var MAN=' . js_val($zipManUrl) . ',JV=' . js_val($jszipV) . ',srv=btn.getAttribute("href");'
        . 'var jz=null;function loadJZ(){if(window.JSZip)return Promise.resolve(window.JSZip);if(jz)return jz;'
        . 'jz=new Promise(function(res,rej){var s=document.createElement("script");s.src="assets/vendor/jszip.min.js?v="+JV;'
        . 's.onload=function(){window.JSZip?res(window.JSZip):rej(new Error("no jszip"));};s.onerror=function(){rej(new Error("load"));};document.head.appendChild(s);});return jz;}'
@@ -334,7 +334,7 @@ function share_folder_page(array $s, string $dir, string $p): void {
        . '})();</script>';
     // Upload via link: stesso protocollo a blocchi dell'app, autenticato dal token
     // (vedi assets/share-upload.js e upload_ctx in api_upload.php).
-    $cfg = json_encode(['token' => $s['token'], 'path' => trim($p, '/'), 'csrf' => csrf_token(), 'days' => TRASH_DAYS]);
+    $cfg = js_val(['token' => $s['token'], 'path' => trim($p, '/'), 'csrf' => csrf_token(), 'days' => TRASH_DAYS]);
     if ($canUpload) {
         echo '<script src="assets/share-upload.js?v=' . h($upV) . '"></script>'
            . '<script>ShareUpload.mount(Object.assign(' . $cfg . ',{input:"#shUpInput",list:"#shUp"}));</script>';

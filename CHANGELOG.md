@@ -6,6 +6,57 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.31.2] - 2026-11-16
+
+Correzioni dalla revisione del 15/11 (issue #77–#97).
+
+### Sicurezza
+- **Elimina utente** con cancellazione dei file: nome validato e utente esistente
+  prima di qualunque effetto. Con «..» la purge cancellava l'intera installazione,
+  con «.» i file di tutti gli utenti (#77). [api_users.php, lib_users.php]
+- **Sessione ancorata all'id dell'utente**, non al nome: dopo una rinomina la vecchia
+  sessione non passa a un nuovo utente omonimo e l'eliminazione chiude le sessioni.
+  I record esistenti ricevono l'id alla prima rinomina; le sessioni aperte restano
+  valide (#79). [lib_auth.php, api_users.php, oidc.php]
+- **ZIP** costruiti in `appdata/zip-tmp`, cancellati appena aperti per l'invio e
+  ripuliti anche se la richiesta si interrompe; massimo 2 ZIP contemporanei per link
+  (prima un link in sola lettura poteva riempire `/tmp` interrompendo i download) (#80).
+- **Tetto di caricamento dei link**: conta anche gli upload in corso (prenotati sotto
+  lock); massimo 20 upload in corso per link (#85).
+- **Pagina pubblica del link**: valori negli script codificati con `JSON_HEX_*` (una
+  cartella chiamata «<!--<script>» disattivava gli script della pagina) (#86).
+
+### Corretto
+- Ripristino dal cestino: un nome prenotato da un upload via link conta come occupato
+  (prima l'upload sovrascriveva il file appena ripristinato) (#78).
+- Voci del cestino rimaste «in spostamento» (processo interrotto) tornano
+  ripristinabili ed eliminabili dopo 2 ore; la quota scala solo ciò che c'è (#83).
+- Registro accessi: segue la rinomina dell'utente; alla cancellazione le righe si
+  eliminano con i file o restano all'admin come «nome (eliminato)» (#82).
+- Cambio di backend dello storage di nuovo registrato nel registro di gestione (#84).
+- Quota predefinita non numerica rifiutata (diventava illimitata) (#93); password
+  minima di 6 caratteri anche in modifica (#94).
+- Upload via link su una cartella condivisa sparita: rifiutato invece di ricrearla (#89).
+- Parametri ricevuti come array (`name[]=…`): 400 invece di errore 500 con il percorso
+  del server; `api.php` risponde a ogni errore imprevisto con JSON generico (#90).
+- Quota del creatore prenotata sotto lock agli upload (finish paralleli la superavano) (#91).
+- Rinomina via link collaboratore: origine e destinazione prenotate prima della
+  verifica di provenienza (#92).
+- Anteprima dei fogli di calcolo limitata anche nelle colonne (100) e nelle celle
+  (50.000): un foglio con una cella in XFD2000 bloccava la scheda (#81).
+- Anteprime: nessuna risorsa esterna caricata dai documenti (CSP nell'iframe), avviso
+  sulle righe stabile tornando su un foglio, PIN inviato una volta sola (#97).
+- Download falliti (file sparito, sessione scaduta) mostrati come errore senza
+  lasciare l'app, anche dal pulsante «Scarica» dell'anteprima (#87).
+- Filtro di ricerca svuotato al cambio cartella (la cartella sembrava vuota) (#88).
+- Ripristino dal cestino nella pagina Registro senza errore (#95); elenco e contatore
+  dei link aggiornati dopo creazione e revoca (#96).
+
+### Test
+- api_test da 556 a 684 casi; nuove verifiche negli smoke anteprima, elenco e layout.
+- `s3_test.sh`: utente di prova con nome univoco ed eliminato con i file a fine test
+  (una home rimasta da un'esecuzione precedente faceva fallire 8 casi).
+
 ## [0.31.1] - 2026-11-15
 
 ### Modificato

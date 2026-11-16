@@ -32,6 +32,11 @@
   const MAX_TEXT = 2 * 1024 * 1024;
   const MAX_PAGES = 300;
   const MAX_ROWS = 2000;
+  // Fogli: il costo (HTML, DOMPurify, layout) cresce con le celle dell'intervallo, anche
+  // vuote: una sola cella in XFD2000 in un file di pochi KB ne vale 32 milioni. Oltre
+  // 25 colonne le righe mostrate calano per restare entro MAX_CELLS (~1-2 s di resa).
+  const MAX_COLS = 100;
+  const MAX_CELLS = 50000;
   const KINDS = {
     pdf: 'pdf', md: 'md', markdown: 'md', txt: 'txt', log: 'txt', docx: 'docx', rtf: 'rtf',
     xlsx: 'sheet', xlsm: 'sheet', xls: 'sheet', ods: 'sheet', csv: 'sheet', doc: 'doc',
@@ -69,13 +74,18 @@
 
   // iframe isolato: allow-same-origin per poterci scrivere dal genitore, niente
   // allow-scripts (nessun codice del documento può girare), niente popup né navigazione.
+  // La CSP del documento blocca ogni risorsa esterna (<img src="https://…">, url() nei
+  // CSS): aprire l'anteprima non rivela a terzi l'IP di chi guarda. Immagini e font
+  // dei documenti arrivano come data:/blob:; i link restano cliccabili.
+  const FRAME_CSP = "default-src 'none'; img-src data: blob:; font-src data: blob:; style-src 'unsafe-inline'";
   function frame(body) {
     return new Promise(res => {
       const f = document.createElement('iframe');
       f.className = 'pv-frame';
       f.setAttribute('sandbox', 'allow-same-origin');
       f.setAttribute('referrerpolicy', 'no-referrer');
-      f.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><style>'
+      f.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
+        + '<meta http-equiv="Content-Security-Policy" content="' + FRAME_CSP + '"><style>'
         + 'body{font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2328;margin:0;padding:24px;background:#fff;word-wrap:break-word}'
         + 'img{max-width:100%}pre,code{font-family:ui-monospace,Menlo,Consolas,monospace;background:#f6f8fa;border-radius:4px}pre{padding:12px;overflow:auto}'
         + 'table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top;white-space:nowrap}'
@@ -155,12 +165,19 @@
       const show = (sn, btn) => {
         tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
         const ws = wb.Sheets[sn];
-        let cut = '';
+        let cut = '', html = '<p>Foglio vuoto.</p>';
         if (ws && ws['!ref']) {
-          const r = X.utils.decode_range(ws['!ref']);
-          if (r.e.r - r.s.r + 1 > MAX_ROWS) { cut = '<p>Mostrate le prime ' + MAX_ROWS + ' righe su ' + (r.e.r - r.s.r + 1) + '.</p>'; r.e.r = r.s.r + MAX_ROWS - 1; ws['!ref'] = X.utils.encode_range(r); }
+          // Righe e colonne limitate PRIMA di generare l'HTML. Il riferimento ridotto vale
+          // solo per questa resa: il foglio resta intatto e tornandoci l'avviso ricompare.
+          const ref = ws['!ref'], r = X.utils.decode_range(ref);
+          const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1, cuts = [];
+          const nc = Math.min(cols, MAX_COLS), nr = Math.min(rows, MAX_ROWS, Math.floor(MAX_CELLS / nc));
+          if (rows > nr) { cuts.push('le prime ' + nr + ' righe su ' + rows); r.e.r = r.s.r + nr - 1; }
+          if (cols > nc) { cuts.push('le prime ' + nc + ' colonne su ' + cols); r.e.c = r.s.c + nc - 1; }
+          if (cuts.length) cut = '<p>Mostrate ' + cuts.join(' e ') + '.</p>';
+          ws['!ref'] = X.utils.encode_range(r);
+          try { html = X.utils.sheet_to_html(ws, { header: '', footer: '' }); } finally { ws['!ref'] = ref; }
         }
-        const html = ws && ws['!ref'] ? X.utils.sheet_to_html(ws, { header: '', footer: '' }) : '<p>Foglio vuoto.</p>';
         doc.body.innerHTML = window.DOMPurify.sanitize(cut + html);
       };
       wb.SheetNames.forEach((sn, i) => {
@@ -205,6 +222,28 @@
     current = el;
     document.addEventListener('keydown', onKey, true);
     el.querySelector('.pv-close').onclick = close;
+    // «Scarica» in un iframe nascosto: un errore (file sparito, sessione o link scaduti)
+    // diventa un messaggio nell'anteprima invece di sostituire la pagina.
+    el.querySelector('.pv-dl').onclick = ev => {
+      ev.preventDefault();
+      const f = document.createElement('iframe');
+      f.hidden = true; f.setAttribute('aria-hidden', 'true');
+      f.onload = () => {
+        let t = null;
+        try { const d = f.contentDocument; if (d && d.location.href !== 'about:blank') t = d.body ? d.body.textContent : ''; } catch (_) {}
+        if (t === null) return;                               // download partito (o risposta di S3)
+        let m = '';
+        try { m = JSON.parse(t).error || ''; } catch (_) { m = t.trim().slice(0, 200); }
+        const b = el.querySelector('.pv-body'), p = document.createElement('p');
+        p.className = 'pv-msg pv-dl-err';
+        p.textContent = 'Download non riuscito' + (m ? ': ' + m : '') + '.';
+        b.insertBefore(p, b.firstChild);
+        setTimeout(() => f.remove(), 0);
+      };
+      document.body.appendChild(f);
+      f.src = o.url;
+      setTimeout(() => f.remove(), 30 * 60 * 1000);           // i download riusciti non generano load
+    };
     if (o.onEdit) el.querySelector('.pv-edit').onclick = () => { close(); o.onEdit(); };
     const body = el.querySelector('.pv-body'), msg = el.querySelector('.pv-msg');
     if (kind === 'doc') { msg.textContent = 'L\'anteprima non è disponibile per i documenti .doc (Word 97-2003): scarica il file.'; return; }
