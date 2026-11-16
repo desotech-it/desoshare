@@ -32,6 +32,11 @@
   const MAX_TEXT = 2 * 1024 * 1024;
   const MAX_PAGES = 300;
   const MAX_ROWS = 2000;
+  // Fogli: il costo (HTML, DOMPurify, layout) cresce con le celle dell'intervallo, anche
+  // vuote: una sola cella in XFD2000 in un file di pochi KB ne vale 32 milioni. Oltre
+  // 25 colonne le righe mostrate calano per restare entro MAX_CELLS (~1-2 s di resa).
+  const MAX_COLS = 100;
+  const MAX_CELLS = 50000;
   const KINDS = {
     pdf: 'pdf', md: 'md', markdown: 'md', txt: 'txt', log: 'txt', docx: 'docx', rtf: 'rtf',
     xlsx: 'sheet', xlsm: 'sheet', xls: 'sheet', ods: 'sheet', csv: 'sheet', doc: 'doc',
@@ -155,12 +160,18 @@
       const show = (sn, btn) => {
         tabs.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
         const ws = wb.Sheets[sn];
-        let cut = '';
+        let cut = '', html = '<p>Foglio vuoto.</p>';
         if (ws && ws['!ref']) {
+          // Righe e colonne limitate PRIMA di generare l'HTML.
           const r = X.utils.decode_range(ws['!ref']);
-          if (r.e.r - r.s.r + 1 > MAX_ROWS) { cut = '<p>Mostrate le prime ' + MAX_ROWS + ' righe su ' + (r.e.r - r.s.r + 1) + '.</p>'; r.e.r = r.s.r + MAX_ROWS - 1; ws['!ref'] = X.utils.encode_range(r); }
+          const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1, cuts = [];
+          const nc = Math.min(cols, MAX_COLS), nr = Math.min(rows, MAX_ROWS, Math.floor(MAX_CELLS / nc));
+          if (rows > nr) { cuts.push('le prime ' + nr + ' righe su ' + rows); r.e.r = r.s.r + nr - 1; }
+          if (cols > nc) { cuts.push('le prime ' + nc + ' colonne su ' + cols); r.e.c = r.s.c + nc - 1; }
+          if (cuts.length) cut = '<p>Mostrate ' + cuts.join(' e ') + '.</p>';
+          ws['!ref'] = X.utils.encode_range(r);
+          html = X.utils.sheet_to_html(ws, { header: '', footer: '' });
         }
-        const html = ws && ws['!ref'] ? X.utils.sheet_to_html(ws, { header: '', footer: '' }) : '<p>Foglio vuoto.</p>';
         doc.body.innerHTML = window.DOMPurify.sanitize(cut + html);
       };
       wb.SheetNames.forEach((sn, i) => {

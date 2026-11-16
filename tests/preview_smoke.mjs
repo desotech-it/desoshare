@@ -58,6 +58,12 @@ function sheet(type) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Secondo foglio ' + type]]), 'Secondo');
   return XLSX.write(wb, { type: 'buffer', bookType: type });
 }
+// #81: una sola cella in XFD2000 (file di pochi KB) → 2000 × 16384 celle se le colonne non sono limitate.
+function wideSheet() {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, { A1: { t: 's', v: 'Inizio largo' }, XFD2000: { t: 's', v: 'Fine' }, '!ref': 'A1:XFD2000' }, 'Largo');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 const files = {
   'doc.pdf': pdf('Ciao PDF'),
   'nota.md': Buffer.from('# Titolo MD\n\nTesto **forte**.\n\n<script>parent.__xss=1</script><img src=x onerror="parent.__xss=1">\n'),
@@ -68,6 +74,7 @@ const files = {
   'vecchio.xls': sheet('xls'),
   'dati.csv': Buffer.from('Nome;Valore\nCella CSV;7\n'),
   'antico.doc': Buffer.from('\xd0\xcf\x11\xe0 finto doc', 'latin1'),
+  'largo.xlsx': wideSheet(),
 };
 const EXPECT = {
   'doc.pdf': { canvas: true }, 'nota.md': { text: 'Titolo MD', frame: true }, 'lettera.docx': { text: 'Ciao DOCX', frame: true },
@@ -148,6 +155,25 @@ await app.click('#rows .row .label:text("docs")');
 await app.waitForSelector('#rows .row .label:text("doc.pdf")');
 console.log('\nApp (sessione)');
 await check(app, 'app', n => app.click(`#rows .row .label:text("${n}")`));
+// #81: foglio larghissimo → colonne limitate e risposta in pochi secondi (prima ~30 s di
+// blocco). Pagina a parte: senza il limite resta bloccata e si chiude e basta.
+{
+  const wp = await ctx.newPage();
+  wp.on('pageerror', e => errs.push('app: ' + e.message));
+  await wp.goto(B + '/');
+  await wp.click('#rows .row .label:text("docs")');
+  const t0 = Date.now();
+  try {
+    await wp.click('#rows .row .label:text("largo.xlsx")');
+    const fr = await (await wp.waitForSelector('.pv-frame', { timeout: 8000 })).contentFrame();
+    await fr.waitForFunction(() => document.body.innerText.includes('Inizio largo'), null, { timeout: 8000 });
+    const ms = Date.now() - t0;
+    const info = await fr.evaluate(() => ({ cols: document.querySelector('tr').children.length, note: document.body.innerText }));
+    ms < 5000 && info.cols <= 100 && /prime 500 righe su 2000 e le prime 100 colonne su 16384/.test(info.note)
+      ? ok(`app: largo.xlsx (cella in XFD2000) in ${ms} ms, ${info.cols} colonne e avviso`) : bad(`app: largo.xlsx in ${ms} ms, ${info.cols} colonne, avviso ${/colonne/.test(info.note)}`);
+  } catch (e) { bad(`app: largo.xlsx non mostrato dopo ${Date.now() - t0} ms (scheda bloccata)`); }
+  await wp.close({ runBeforeUnload: false });
+}
 await app.click('#rows .row .label:text("nota.md")');
 (await app.$('.pv-edit')) ? ok('app: nota.md ha «Modifica» (apre l\'editor)') : bad('app: manca «Modifica» per la nota');
 await app.keyboard.press('Escape');
