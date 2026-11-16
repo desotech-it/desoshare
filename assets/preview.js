@@ -74,13 +74,18 @@
 
   // iframe isolato: allow-same-origin per poterci scrivere dal genitore, niente
   // allow-scripts (nessun codice del documento può girare), niente popup né navigazione.
+  // La CSP del documento blocca ogni risorsa esterna (<img src="https://…">, url() nei
+  // CSS): aprire l'anteprima non rivela a terzi l'IP di chi guarda. Immagini e font
+  // dei documenti arrivano come data:/blob:; i link restano cliccabili.
+  const FRAME_CSP = "default-src 'none'; img-src data: blob:; font-src data: blob:; style-src 'unsafe-inline'";
   function frame(body) {
     return new Promise(res => {
       const f = document.createElement('iframe');
       f.className = 'pv-frame';
       f.setAttribute('sandbox', 'allow-same-origin');
       f.setAttribute('referrerpolicy', 'no-referrer');
-      f.srcdoc = '<!doctype html><html><head><meta charset="utf-8"><style>'
+      f.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
+        + '<meta http-equiv="Content-Security-Policy" content="' + FRAME_CSP + '"><style>'
         + 'body{font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2328;margin:0;padding:24px;background:#fff;word-wrap:break-word}'
         + 'img{max-width:100%}pre,code{font-family:ui-monospace,Menlo,Consolas,monospace;background:#f6f8fa;border-radius:4px}pre{padding:12px;overflow:auto}'
         + 'table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top;white-space:nowrap}'
@@ -162,15 +167,16 @@
         const ws = wb.Sheets[sn];
         let cut = '', html = '<p>Foglio vuoto.</p>';
         if (ws && ws['!ref']) {
-          // Righe e colonne limitate PRIMA di generare l'HTML.
-          const r = X.utils.decode_range(ws['!ref']);
+          // Righe e colonne limitate PRIMA di generare l'HTML. Il riferimento ridotto vale
+          // solo per questa resa: il foglio resta intatto e tornandoci l'avviso ricompare.
+          const ref = ws['!ref'], r = X.utils.decode_range(ref);
           const rows = r.e.r - r.s.r + 1, cols = r.e.c - r.s.c + 1, cuts = [];
           const nc = Math.min(cols, MAX_COLS), nr = Math.min(rows, MAX_ROWS, Math.floor(MAX_CELLS / nc));
           if (rows > nr) { cuts.push('le prime ' + nr + ' righe su ' + rows); r.e.r = r.s.r + nr - 1; }
           if (cols > nc) { cuts.push('le prime ' + nc + ' colonne su ' + cols); r.e.c = r.s.c + nc - 1; }
           if (cuts.length) cut = '<p>Mostrate ' + cuts.join(' e ') + '.</p>';
           ws['!ref'] = X.utils.encode_range(r);
-          html = X.utils.sheet_to_html(ws, { header: '', footer: '' });
+          try { html = X.utils.sheet_to_html(ws, { header: '', footer: '' }); } finally { ws['!ref'] = ref; }
         }
         doc.body.innerHTML = window.DOMPurify.sanitize(cut + html);
       };

@@ -213,7 +213,8 @@ export async function sharesPanel() {
       if (v.length < 4) { toast('Il PIN deve avere almeno 4 caratteri', true); inp.focus(); return; }
       send({ pin_action: 'set', pin: v }, s.has_pin ? 'PIN cambiato' : 'PIN impostato');
     };
-    inp.onkeydown = e => { if (e.key === 'Enter') box.querySelector('[data-act="set"]').onclick(); };
+    // Invio con l'invio già in corso (pulsante disabilitato) non deve ripetere share_update.
+    inp.onkeydown = e => { const b = box.querySelector('[data-act="set"]'); if (e.key === 'Enter' && !b.disabled) b.onclick(); };
     const rm = box.querySelector('[data-act="remove"]');
     if (rm) rm.onclick = () => { if (confirm('Togliere il PIN? Basterà l\'indirizzo per aprire il link.')) send({ pin_action: 'remove' }, 'PIN tolto'); };
     box.querySelector('[data-act="cancel"]').onclick = () => box.remove();

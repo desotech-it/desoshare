@@ -874,7 +874,8 @@
         send({ pin_action: "set", pin: v }, s.has_pin ? "PIN cambiato" : "PIN impostato");
       };
       inp.onkeydown = (e) => {
-        if (e.key === "Enter") box.querySelector('[data-act="set"]').onclick();
+        const b2 = box.querySelector('[data-act="set"]');
+        if (e.key === "Enter" && !b2.disabled) b2.onclick();
       };
       const rm = box.querySelector('[data-act="remove"]');
       if (rm) rm.onclick = () => {
