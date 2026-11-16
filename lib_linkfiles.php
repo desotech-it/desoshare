@@ -157,6 +157,20 @@ function link_claim(array $s, string $dir, string $name): array {
     }
     return ['error' => 'Cartella molto attiva: riprova', 'code' => 409];
 }
+// Prenota INSIEME più percorsi (rinomina via link: origine e destinazione):
+// false se uno è già prenotato da un upload o da un'altra rinomina via link.
+function link_reserve_paths(array $paths): bool {
+    $ok = false;
+    with_json_lock(linkfiles_file(), function (array $d) use ($paths, &$ok) {
+        $pending = link_pending($d);
+        foreach ($paths as $p) if (isset($pending[$p])) return null;
+        foreach ($paths as $p) $pending[$p] = time();
+        $d['pending'] = $pending;
+        $ok = true;
+        return $d;
+    });
+    return $ok;
+}
 function link_upload_release(string $abs): void {
     with_json_lock(linkfiles_file(), function (array $d) use ($abs) {
         if (!isset($d['pending'][$abs])) return null;

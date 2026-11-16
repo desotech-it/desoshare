@@ -1284,8 +1284,25 @@ eq "via link: prima finalizzazione da 600 KB entra" "$(jv "$(q91fin $QA a.bin)" 
 eq "via link: seconda finalizzazione → quota superata (507)" "$(jv "$(q91fin $QB b.bin)" ok error)" "false|Quota superata: il file non entra nello spazio disponibile"
 eq "consumo dopo la finalizzazione (non contato due volte)" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; echo usage_get("q91");')" 614400
 
+echo "=== Rinomina via link collaboratore: verifica e rinomina con il nome prenotato (#92) ==="
+mk "" ren92
+R92=$(jv "$(mkshare ren92 contrib)" token)
+mkf r92.txt "mio"
+eq "contrib carica r92.txt" "$(jv "$(lchunk "$R92" r92.txt r92.txt)" ok)" true
+# r92.txt in scrittura (prenotato) da un altro caricamento: la rinomina aspetta
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; with_json_lock(linkfiles_file(), function ($d) { $d["pending"]["admin/ren92/r92.txt"] = time(); return $d; });'
+lop link_rename "$R92" --data-urlencode from=r92.txt --data-urlencode to=r92b.txt
+eq "rinomina di un nome in scrittura → 409" "$HC" 409
+has "… il file non è stato toccato" "$(olist ren92)" '"name":"r92.txt"'
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; link_upload_release("admin/ren92/r92.txt");'
+lop link_rename "$R92" --data-urlencode from=r92.txt --data-urlencode to=r92b.txt
+eq "rinomina a nome libero → ok" "$HC|$(jv "$BODY" ok)" "200|true"
+eq "… nessuna prenotazione residua (origine e destinazione)" "$(php -r '$d=json_decode(file_get_contents($argv[1]),true); echo count(array_filter(array_keys($d["pending"]??[]), fn($k)=>str_starts_with($k,"admin/ren92/")));' "$AD/link_files.json")" 0
+lop link_rename "$R92" --data-urlencode from=r92b.txt --data-urlencode to=r92c.txt
+eq "il file rinominato resta del link (seconda rinomina ok)" "$HC|$(jv "$BODY" ok)" "200|true"
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."
