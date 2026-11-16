@@ -9,6 +9,15 @@
 // scadute è opportunistica (trash_gc, al più una volta l'ora).
 function trash_file(): string { return DATA_DIR . '/trash.json'; }
 function trash_root(string $owner): string { return TRASH_PREFIX . '/' . user_prefix($owner); }
+// Lo stato 'moving' protegge uno spostamento in corso. Se il processo muore a metà
+// (timeout su S3, kill) resterebbe per sempre: dopo TRASH_MOVING_TTL (come le
+// prenotazioni dei link) la voce vale «parziale» e torna ripristinabile ed eliminabile.
+const TRASH_MOVING_TTL = 7200;
+function trash_state(array $e): string {
+    $st = (string) ($e['state'] ?? '');
+    if ($st === 'moving' && time() - (int) ($e['at'] ?? 0) >= TRASH_MOVING_TTL) return 'partial';
+    return $st;
+}
 
 // Sposta $abs nel cestino di $owner. Ritorna la voce creata, null se non riesce.
 function trash_move(string $owner, string $abs, string $by): ?array {
@@ -78,7 +87,8 @@ function trash_forget(array $ids): void {
 function trash_restore(string $owner, string $id): array {
     $e = trash_entry($owner, $id);
     if (!$e) return ['ok' => false, 'error' => 'Elemento non trovato nel cestino', 'code' => 404];
-    if (($e['state'] ?? '') === 'moving') return ['ok' => false, 'error' => 'Elemento in fase di spostamento nel cestino: riprova tra poco', 'code' => 409];
+    $state = trash_state($e);
+    if ($state === 'moving') return ['ok' => false, 'error' => 'Elemento in fase di spostamento nel cestino: riprova tra poco', 'code' => 409];
     $orig = (string) ($e['orig'] ?? '');
     $home = user_prefix($owner);
     if ($home === '' || !str_starts_with($orig, $home . '/')) return ['ok' => false, 'error' => 'Percorso d\'origine non valido', 'code' => 400];
@@ -87,6 +97,8 @@ function trash_restore(string $owner, string $id): array {
     if ($have['type'] === false) {
         if (!$have['sure']) return ['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova', 'code' => 503];
         trash_forget([$id => true]);
+        // Spostamento interrotto prima di cominciare: l'elemento non ha mai lasciato l'origine.
+        if (($e['state'] ?? '') === 'moving') return ['ok' => false, 'error' => 'L\'elemento non era stato spostato: è ancora al suo posto', 'code' => 410];
         return ['ok' => false, 'error' => 'L\'elemento non è più presente nel cestino', 'code' => 410];
     }
     $parent = link_parent($orig);
@@ -131,7 +143,7 @@ function trash_purge(string $owner, ?string $id = null, ?array $ids = null): int
     with_json_lock(trash_file(), function (array $d) use ($owner, $id, $ids, &$claimed) {
         $keep = [];
         foreach ($d['entries'] ?? [] as $e) {
-            $match = ($e['owner'] ?? '') === $owner && ($e['state'] ?? '') !== 'moving'
+            $match = ($e['owner'] ?? '') === $owner && trash_state($e) !== 'moving'
                 && ($id === null || ($e['id'] ?? '') === $id)
                 && ($ids === null || isset($ids[(string) ($e['id'] ?? '')]));
             if ($match) $claimed[] = $e; else $keep[] = $e;
@@ -143,11 +155,17 @@ function trash_purge(string $owner, ?string $id = null, ?array $ids = null): int
     $freed = 0; $back = []; $n = 0;
     foreach ($claimed as $e) {
         $dir = trash_root($owner) . '/' . $e['id'];
+        $size = (int) ($e['size'] ?? 0);
+        // Spostamento interrotto: una parte può essere ancora all'origine (resta lì e
+        // continua a contare), quindi si scala solo ciò che c'è davvero nel cestino.
+        if (trash_state($e) === 'partial') {
+            try { $size = storage()->usageOf($dir); } catch (RuntimeException $ex) { /* resta la stima della voce */ }
+        }
         storage()->deletePath($dir, true);
         // Su S3 la DELETE di una chiave inesistente risponde 204: l'esito vero si
         // verifica sempre, e solo «non esiste, con certezza» conta come eliminato.
         $c = storage()->existsCheck($dir);
-        if ($c['type'] === false && $c['sure']) { $freed += (int) ($e['size'] ?? 0); $n++; }
+        if ($c['type'] === false && $c['sure']) { $freed += $size; $n++; }
         else $back[] = $e;
     }
     if ($back) with_json_lock(trash_file(), function (array $d) use ($back) { foreach ($back as $e) $d['entries'][] = $e; return $d; });
