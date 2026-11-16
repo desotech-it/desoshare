@@ -1029,8 +1029,11 @@ has "link: caricamento registrato" "$L" '"event":"upload","actor":"link:Revisore
 hasnt "il PIN non compare mai nel registro" "$(cat $ADIR/*.jsonl)" '98765'
 hasnt "il token completo non compare mai" "$(cat $ADIR/*.jsonl)" "$ATOK"
 rm -f "$SBX/appdata/share_attempts.json"
+# Solo le righe nuove, a minuto azzerato: quelle delle sezioni precedenti dipendono dai tempi.
+rm -f "$ADIR/.lookup.json"
+NLF0=$(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l)
 for i in 1 2 3; do curl -s -o /dev/null "$B/share.php?t=acc-inesistente-$i"; done
-NLF=$(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l)
+NLF=$(( $(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l) - NLF0 ))
 [ "$NLF" -ge 1 ] && [ "$NLF" -le 2 ] && ok "indirizzi inesistenti aggregati ($NLF righe per 3 tentativi)" || no "aggregazione indirizzi inesistenti" "$NLF righe"
 rm -f "$SBX/appdata/share_attempts.json"
 LJ="$SBX/acclogin"; curl -s -c $LJ -b $LJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=sbagliata --data-urlencode "csrf=$(precsrf $LJ)" "$B/index.php" -o /dev/null
