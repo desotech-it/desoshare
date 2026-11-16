@@ -1140,6 +1140,16 @@ has "settings_get (admin)" "$SG" '"ok":true'
 has "settings espone site_title" "$SG" 'site_title'
 has "settings_save (admin)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode site_title='DesoLabs Test' --data-urlencode note_poll_ms=2000 --data-urlencode note_max_mb=4 "$B/api.php?action=settings_save")" '"ok":true'
 has "settings_get riflette il salvataggio" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"note_poll_ms":2000'
+# Cambio di backend: evento settings_storage_switch e risposta JSON pulita (#84).
+# S3 fittizio (nessuna chiamata di rete al salvataggio), poi subito di nuovo locale.
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=s3 --data-urlencode s3_endpoint=https://s3.invalid --data-urlencode s3_region=eu --data-urlencode s3_bucket=b --data-urlencode s3_key=k --data-urlencode s3_secret=s "$B/api.php?action=settings_save"
+eq "settings_save locale → s3: risposta JSON pulita" "$HC|$BODY" '200|{"ok":true}'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=local "$B/api.php?action=settings_save"
+eq "settings_save s3 → locale: risposta JSON pulita" "$HC|$BODY" '200|{"ok":true}'
+grep -qF "$(printf '\tsettings_storage_switch\tlocal → s3')" "$AD/audit.log" && ok "audit: cambio locale → s3" || no "audit: cambio locale → s3" "$(grep storage_switch "$AD/audit.log")"
+grep -qF "$(printf '\tsettings_storage_switch\ts3 → local')" "$AD/audit.log" && ok "audit: cambio s3 → locale" || no "audit: cambio s3 → locale"
+eq "nessun cambio: nessun nuovo evento" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=local "$B/api.php?action=settings_save" >/dev/null; grep -c settings_storage_switch "$AD/audit.log")" '2'
+has "di nuovo su storage locale" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"backend":"local"'
 has "note_open usa il poll configurato" "$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md")" '"poll_ms":2000'
 has "audit_list contiene le modifiche impostazioni" "$(curl -s -b $JAR "$B/api.php?action=audit_list")" 'settings_update'
 has "non-admin NON vede le impostazioni (403)" "$(curl -s -b $RJAR "$B/api.php?action=settings_get")" 'amministratori'
