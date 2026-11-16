@@ -82,15 +82,15 @@ if (isset($_GET['zipmanifest']) && $type === 'dir') {
 if (isset($_GET['zip']) && $type === 'dir') {
     $target = share_resolve($share, $p);
     if ($target === null || storage()->typeOf($target) !== 'dir') { http_response_code(404); echo 'Cartella non trovata'; exit; }
+    // Pochi ZIP alla volta per link: ognuno occupa disco e CPU finché non è inviato.
+    if (!zip_slot('share:' . $share['token'], ZIP_LINK_CONCURRENT)) {
+        http_response_code(429); header('Retry-After: 30');
+        echo 'Troppi download ZIP in corso con questo link: riprova tra poco'; exit;
+    }
     access_log('zip', access_link_fields($share) + ['path' => access_rel($target, (string) ($share['created_by'] ?? '')), 'via' => 'server']);
     $tmp = zip_logical([$target]);
     $dl = (($b = basename($target)) === '' ? $share['name'] : $b) . '.zip';   // "0" è un nome valido
-    while (ob_get_level()) ob_end_clean();
-    header('Content-Type: application/zip');
-    header('Content-Disposition: ' . content_disposition($dl));   // RFC 6266, come stream_file
-    header('Content-Length: ' . filesize($tmp));
-    header('Cache-Control: no-store');
-    readfile($tmp); @unlink($tmp); exit;
+    zip_send($tmp, $dl);   // elimina il temporaneo anche se il client abbandona
 }
 
 // Pagina HTML

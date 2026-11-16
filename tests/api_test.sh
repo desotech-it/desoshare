@@ -68,7 +68,8 @@ formcsrf(){ printf '%s' "$1" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p'
 # CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
 precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
-php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 &
+mkdir -p "$SBX/systmp"   # temporanei di sistema dell'istanza: residui verificabili (sezione ZIP)
+php -d sys_temp_dir="$SBX/systmp" -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 &
 SRV=$!
 cleanup(){ kill $SRV 2>/dev/null; rm -rf "$SBX"; }
 trap cleanup EXIT
@@ -1301,8 +1302,34 @@ eq "… nessuna prenotazione residua (origine e destinazione)" "$(php -r '$d=jso
 lop link_rename "$R92" --data-urlencode from=r92b.txt --data-urlencode to=r92c.txt
 eq "il file rinominato resta del link (seconda rinomina ok)" "$HC|$(jv "$BODY" ok)" "200|true"
 
+echo "=== ZIP di un link: niente residui su disco, slot per link (#80) ==="
+mk "" zip80
+head -c 31457280 /dev/urandom > "$ST/admin/zip80/grande.bin"   # 30 MB non comprimibili
+Z80=$(jv "$(mkshare zip80 view)" token)
+# zipres → file temporanei ZIP rimasti (temporanei di sistema + cartella dedicata, slot esclusi)
+zipres(){ { ls "$SBX/systmp" | grep -E '^sh[rz]'; ls "$AD/zip-tmp" 2>/dev/null | grep -v '^slot$'; } | grep -c .; }   # (in systmp anche le sessioni)
+for i in 1 2 3; do curl -s --limit-rate 300k --max-time 2 -o /dev/null "$B/share.php?t=$Z80&zip=1"; done
+curl -s -o /dev/null "$B/share.php?t=$Z80"   # il server (un processo) ha chiuso le richieste interrotte
+eq "3 download ZIP interrotti dal client: nessun file rimasto" "$(zipres)" 0
+curl -s -o "$SBX/z80.zip" "$B/share.php?t=$Z80&zip=1"
+eq "ZIP completo: valido e intero" "$(head -c2 "$SBX/z80.zip")|$(php -r '$z=new ZipArchive; $z->open($argv[1]); echo $z->statName("zip80/grande.bin")["size"];' "$SBX/z80.zip")" "PK|31457280"
+eq "… e nessun temporaneo dopo l'invio" "$(zipres)" 0
+curl -s -b $JAR "$B/api.php?action=zip&paths[]=zip80" -o /dev/null
+eq "ZIP dall'app: nessun temporaneo dopo l'invio" "$(zipres)" 0
+mkdir -p "$AD/zip-tmp"; : > "$AD/zip-tmp/shrVECCHIO"; touch -d '-1 day' "$AD/zip-tmp/shrVECCHIO"
+curl -s -o /dev/null "$B/share.php?t=$Z80&zip=1"
+[ -e "$AD/zip-tmp/shrVECCHIO" ] && no "residuo vecchio rimosso dal gc" || ok "residuo vecchio rimosso dal gc"
+# Slot per link: con i 2 slot occupati il terzo ZIP aspetta (429), poi riparte.
+rm -f "$SBX/slot80.ok"
+PUB="$PUB" T="$Z80" OK="$SBX/slot80.ok" php -r 'require getenv("PUB")."/lib.php"; if (zip_slot("share:".getenv("T"), 2) && zip_slot("share:".getenv("T"), 2)) touch(getenv("OK")); sleep(4);' &
+SLP=$!
+for i in $(seq 1 30); do [ -e "$SBX/slot80.ok" ] && break; sleep 0.1; done
+eq "slot del link occupati → 429" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 429
+wait $SLP
+eq "slot liberati → ZIP servito" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 200
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92","zip80"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

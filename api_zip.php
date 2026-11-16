@@ -18,14 +18,7 @@ function action_zip(): void {
     $tmp = zip_logical($logical);   // zip via storage (Local o S3), confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
     $dlname = (count($logical) === 1) ? ($b === '' ? 'cartella' : $b) . '.zip' : 'share-download.zip';
-    while (ob_get_level()) ob_end_clean();
-    header('Content-Type: application/zip');
-    header('Content-Disposition: ' . content_disposition($dlname));   // RFC 6266: niente header rotti da CR/LF o apostrofi, UTF-8 via filename*
-    header('Content-Length: ' . filesize($tmp));
-    header('Cache-Control: no-store');
-    readfile($tmp);
-    @unlink($tmp);
-    exit;
+    zip_send($tmp, $dlname);   // elimina il temporaneo anche se il client abbandona
 }
 
 // ─── ZIP: manifest per il download diretto da S3 (client-zip) ────────────────
