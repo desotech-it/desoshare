@@ -170,6 +170,15 @@ await app.click('#rows .row .label:text("docs")');
 await app.waitForSelector('#rows .row .label:text("doc.pdf")');
 console.log('\nApp (sessione)');
 await check(app, 'app', n => app.click(`#rows .row .label:text("${n}")`));
+// «Scarica» nell'anteprima con risposta d'errore: messaggio, l'app resta.
+await app.route(u => u.href.includes('action=download') && u.href.includes('doc.pdf') && !u.href.includes('purpose='), r => r.fulfill({ status: 400, contentType: 'application/json', body: '{"ok":false,"error":"Non è un file"}' }));
+await app.click('#rows .row .label:text("doc.pdf")');
+await app.waitForSelector('.pv-pages canvas', { timeout: 15000 });
+await app.click('.pv-dl');
+(await app.waitForSelector('.pv-dl-err', { timeout: 5000 }).then(() => true, () => false)) && (await app.$('#rows'))
+  ? ok('app: «Scarica» fallito → messaggio nell\'anteprima, l\'app resta') : bad('app: «Scarica» fallito ha lasciato l\'app o nessun messaggio');
+await app.keyboard.press('Escape');
+await app.unroute(u => u.href.includes('action=download') && u.href.includes('doc.pdf') && !u.href.includes('purpose='));
 // #81: foglio larghissimo → colonne limitate e risposta in pochi secondi (prima ~30 s di
 // blocco). Pagina a parte: senza il limite resta bloccata e si chiude e basta.
 {

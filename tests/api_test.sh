@@ -552,6 +552,8 @@ lop link_delete "$C1" --data-urlencode 'paths=["capo.txt"]'
 eq "contrib: NON elimina il file del proprietario" "$(jv "$BODY" deleted)|$(own lv-contrib/capo.txt)" '0|del capo'
 lop link_rename "$C1" --data-urlencode from=capo.txt --data-urlencode to=preso.txt
 eq "contrib: NON rinomina il file del proprietario (403)" "$HC" '403'
+lop link_rename "$C1" --data-urlencode from=capo.txt --data-urlencode to=capo.txt
+eq "contrib: link_rename di un file altrui con lo STESSO nome → 403 (permessi prima del caso banale)" "$HC" '403'
 lop link_rename "$C1" --data-urlencode from=suo.txt --data-urlencode to=preso.txt
 eq "contrib: NON rinomina il file di un altro link (403)" "$HC" '403'
 lop link_mkdir "$C1" --data-urlencode path= --data-urlencode name=sotto

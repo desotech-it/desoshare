@@ -491,7 +491,7 @@
           return;
         }
         toast("Ripristinato in /" + x.path);
-        load(S.cwd);
+        if (rowsEl) load(S.cwd);
         await refresh();
       });
       tr.querySelector(".tr-purge").onclick = act(async () => {

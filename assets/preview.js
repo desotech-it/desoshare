@@ -222,6 +222,28 @@
     current = el;
     document.addEventListener('keydown', onKey, true);
     el.querySelector('.pv-close').onclick = close;
+    // «Scarica» in un iframe nascosto: un errore (file sparito, sessione o link scaduti)
+    // diventa un messaggio nell'anteprima invece di sostituire la pagina.
+    el.querySelector('.pv-dl').onclick = ev => {
+      ev.preventDefault();
+      const f = document.createElement('iframe');
+      f.hidden = true; f.setAttribute('aria-hidden', 'true');
+      f.onload = () => {
+        let t = null;
+        try { const d = f.contentDocument; if (d && d.location.href !== 'about:blank') t = d.body ? d.body.textContent : ''; } catch (_) {}
+        if (t === null) return;                               // download partito (o risposta di S3)
+        let m = '';
+        try { m = JSON.parse(t).error || ''; } catch (_) { m = t.trim().slice(0, 200); }
+        const b = el.querySelector('.pv-body'), p = document.createElement('p');
+        p.className = 'pv-msg pv-dl-err';
+        p.textContent = 'Download non riuscito' + (m ? ': ' + m : '') + '.';
+        b.insertBefore(p, b.firstChild);
+        setTimeout(() => f.remove(), 0);
+      };
+      document.body.appendChild(f);
+      f.src = o.url;
+      setTimeout(() => f.remove(), 30 * 60 * 1000);           // i download riusciti non generano load
+    };
     if (o.onEdit) el.querySelector('.pv-edit').onclick = () => { close(); o.onEdit(); };
     const body = el.querySelector('.pv-body'), msg = el.querySelector('.pv-msg');
     if (kind === 'doc') { msg.textContent = 'L\'anteprima non è disponibile per i documenti .doc (Word 97-2003): scarica il file.'; return; }

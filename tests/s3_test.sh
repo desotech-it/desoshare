@@ -131,10 +131,13 @@ DL=$(curl -s -b $JAR -L "$B/api.php?action=download&path=$DIR/sub/nota.md")
 has "nota materializzata su S3" "$DL" 'Aggiornato su Wasabi'
 
 echo "=== HOME ROOT + utente NON-admin col PUNTO (regressione doppio-slash) ==="
-# Crea un utente con username che contiene un punto (come gli SSO tipo n.decandia)
-post --data-urlencode action=user_save --data-urlencode username=tester.dot --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php" >/dev/null
+# Crea un utente con username che contiene un punto (come gli SSO tipo n.decandia).
+# Nome univoco per esecuzione: una home rimasta da un'esecuzione interrotta bloccherebbe
+# la creazione («cartella residua»); a fine test l'utente si elimina con i file.
+TDU="tester.dot$(date +%s)"
+post --data-urlencode action=user_save --data-urlencode "username=$TDU" --data-urlencode password=secret123 --data-urlencode permission=write --data-urlencode role=user "$B/api.php" >/dev/null
 TDJAR="$SBX/tdjar"
-curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode username=tester.dot --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $TDJAR)" "$B/index.php"
+curl -s -c $TDJAR -b $TDJAR --data-urlencode action=login --data-urlencode "username=$TDU" --data-urlencode password=secret123 -o /dev/null --data-urlencode "csrf=$(precsrf $TDJAR)" "$B/index.php"
 TDCSRF=$(curl -s -b $TDJAR "$B/" | sed -n 's/.*data-csrf="\([^"]*\)".*/\1/p' | head -1)
 tdpost(){ curl -s -b $TDJAR -H "X-CSRF: $TDCSRF" "$@"; }
 # crea file NELLA HOME ROOT (path='') — è qui che viveva il bug del doppio slash
@@ -149,8 +152,8 @@ has "note_open su file in root ok" "$(curl -s -b $TDJAR "$B/api.php?action=note_
 DS=$(AK="$AK" SK="$SK" php -r '
 require "'"$APP_DIR"'/config.php"; require "'"$APP_DIR"'/storage.php";
 $cfg=["endpoint"=>"'"$ENDPOINT"'","region"=>"'"$REGION"'","bucket"=>"'"$BUCKET"'","key"=>getenv("AK"),"secret"=>getenv("SK")];
-$r=s3_request($cfg,"GET","",["list-type"=>"2","prefix"=>"tester.dot/","max-keys"=>"1000"]);
-echo (strpos($r["body"],"tester.dot//")!==false)?"DOPPIOSLASH":"pulito";')
+$r=s3_request($cfg,"GET","",["list-type"=>"2","prefix"=>"'"$TDU"'/","max-keys"=>"1000"]);
+echo (strpos($r["body"],"'"$TDU"'//")!==false)?"DOPPIOSLASH":"pulito";')
 has "nessuna chiave col doppio slash nel bucket" "$DS" 'pulito'
 
 echo "=== sizeOf ancorato alla Key esatta (no prefix-match) ==="
@@ -175,8 +178,8 @@ REOPEN=$(curl -s -b $TDJAR "$B/api.php?action=note_open&path=appunti.md")
 has "dopo il save il relay è azzerato (offset 0)" "$REOPEN" '"offset":0'
 EXPV2=$(printf 'v2 salvato' | openssl base64 -A)   # confronto sul base64 (evita quirk di decode su macOS)
 has "riapertura mostra il testo salvato (v2)" "$REOPEN" "\"text\":\"$EXPV2\""
-# pulizia file di tester.dot
-tdpost --data-urlencode action=delete --data-urlencode 'paths=["test.md","test","appunti.md"]' "$B/api.php" >/dev/null
+# pulizia: utente di prova eliminato insieme alla sua home nel bucket
+has "utente di prova eliminato con i file" "$(post --data-urlencode action=user_delete --data-urlencode "username=$TDU" --data-urlencode purge=1 "$B/api.php")" '"purged":true'
 
 echo "=== Pulizia (delete ricorsivo su S3) ==="
 has "delete $DIR ricorsivo" "$(post --data-urlencode action=delete --data-urlencode "paths=[\"$DIR\"]" "$B/api.php")" '"deleted":1'
