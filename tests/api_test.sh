@@ -950,6 +950,29 @@ has "eliminazione dell'utente «nuovo» con purge" "$(curl -s -b $JAR -H "X-CSRF
 [ ! -e "$ST/~cestino/nuovo" ] && ok "… il suo cestino sparisce dallo storage" || no "… il suo cestino sparisce dallo storage"
 eq "… e da trash.json" "$(AD="$AD" php -r 'echo count(array_filter(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"]??[], fn($e)=>($e["owner"]??"")==="nuovo"));')" '0'
 
+echo "=== Sessione ancorata all'utente, non al nome (#79) ==="
+has "utente carla" "$(mkuser carla write)" '"ok":true'
+SJ="$SBX/s79carla"; SC=$(login "$SJ" carla)
+has "admin rinomina carla → carla2" "$(mkuser carla2 write --data-urlencode original=carla)" '"ok":true'
+has "nuovo utente omonimo «carla»" "$(mkuser carla read)" '"ok":true'
+curl -s -b $SJ -H "X-CSRF: $SC" --data-urlencode path= --data-urlencode name=dopo.txt --data-urlencode content=mio "$B/api.php?action=newfile" >/dev/null
+[ -f "$ST/carla2/dopo.txt" ] && [ ! -e "$ST/carla/dopo.txt" ] && ok "la vecchia sessione segue carla2, non passa al nuovo «carla»" || no "la vecchia sessione segue carla2" "$(ls "$ST/carla" "$ST/carla2" 2>&1 | tr '\n' ' ')"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=carla2 --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+eq "utente eliminato: la sua sessione non vale più (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $SJ "$B/api.php?action=list&path=")" '401'
+has "utente dora" "$(mkuser dora write)" '"ok":true'
+DJ="$SBX/s79dora"; login "$DJ" dora >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=dora --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+has "dora ricreata con lo stesso nome" "$(mkuser dora write)" '"ok":true'
+eq "la sessione della dora eliminata non passa alla nuova (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $DJ "$B/api.php?action=list&path=")" '401'
+# Record legacy (senza id): il login funziona; dopo rinomina e omonimo la vecchia sessione non passa.
+has "utente legacy" "$(mkuser legacy1 write)" '"ok":true'
+AD="$AD" php -r '$f=getenv("AD")."/users.json";$d=json_decode(file_get_contents($f),true);foreach($d["users"] as &$u) if($u["username"]==="legacy1") unset($u["id"]);file_put_contents($f,json_encode($d));'
+LGJ="$SBX/s79legacy"; login "$LGJ" legacy1 >/dev/null
+eq "record legacy: login e sessione funzionano" "$(curl -s -o /dev/null -w '%{http_code}' -b $LGJ "$B/api.php?action=list&path=")" '200'
+mkuser legacy2 write --data-urlencode original=legacy1 >/dev/null; mkuser legacy1 write >/dev/null
+eq "record legacy rinominato + omonimo: la vecchia sessione non passa (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $LGJ "$B/api.php?action=list&path=")" '401'
+for N in carla dora legacy1 legacy2; do curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$N" --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null; done
+
 echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
 CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')

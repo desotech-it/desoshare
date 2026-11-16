@@ -144,6 +144,9 @@ function action_user_save(): void {
         foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username && $i !== $idx) { $err = 'Username già esistente'; $code = 409; return null; }
         if ($idx >= 0) {
             $wasAdmin = ($data['users'][$idx]['role'] ?? '') === 'admin';
+            // Alla rinomina un record legacy riceve l'id: le sessioni aperte col
+            // vecchio nome non passano a un futuro omonimo.
+            if ($original !== $username && empty($data['users'][$idx]['id'])) $data['users'][$idx]['id'] = user_new_id();
             $data['users'][$idx]['username']   = $username;
             $data['users'][$idx]['role']       = $role;
             $data['users'][$idx]['permission'] = $permission;
@@ -156,7 +159,7 @@ function action_user_save(): void {
             if (strlen($password) < 6) { $err = 'Password obbligatoria (min 6 caratteri)'; return null; }
             $quotaBytes = ($quotaMbIn !== -1) ? $quotaMbIn * 1024 * 1024 : (int) setting('default_quota_bytes', 0);
             $data['users'][] = [
-                'username' => $username, 'password_hash' => $pwHash,
+                'id' => user_new_id(), 'username' => $username, 'password_hash' => $pwHash,
                 'role' => $role, 'permission' => $permission, 'quota_bytes' => $quotaBytes,
             ];
             $auditMsg = ['user_create', $username . ' (' . $role . '/' . $permission . ') quota=' . ($quotaBytes ? human_size($quotaBytes) : 'illimitata')];
@@ -195,8 +198,12 @@ function action_user_save(): void {
             if (isset($c[$original])) { $c[$username] = $c[$original]; unset($c[$original]); return $c; }
             return null;
         });
-        // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome.
-        if (($me['username'] ?? '') === $original) $_SESSION['username'] = $username;
+        // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome
+        // (e l'id appena assegnato, se il record era legacy).
+        if (($me['username'] ?? '') === $original && ($nu = find_user($username))) {
+            $_SESSION['username'] = $username;
+            if (!empty($nu['id'])) $_SESSION['user_id'] = (string) $nu['id'];
+        }
         migration_guard_end();
         audit('user_rename', $original . ' → ' . $username);
     }

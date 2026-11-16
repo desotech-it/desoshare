@@ -16,6 +16,11 @@ function find_user(string $username): ?array {
 }
 
 
+// Identificativo stabile dell'utente: non cambia con la rinomina e non si
+// ripete fra un utente eliminato e un omonimo creato dopo (ancora della sessione).
+// I record precedenti ne sono privi e lo ricevono alla prima rinomina.
+function user_new_id(): string { return bin2hex(random_bytes(12)); }
+
 // Formato ammesso per gli username: un solo segmento di percorso sicuro.
 // Da usare su OGNI nome ricevuto in input prima di costruirci un percorso:
 // «.», «..» e «~cestino» puntano a radice dello storage, installazione e cestino.

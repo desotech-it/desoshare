@@ -33,13 +33,12 @@ if (!users_exist()) {
                 if (!empty($data['users'])) return null;         // qualcuno ha già completato il setup
                 $won = true;
                 return ['users' => [[
-                    'username' => $u, 'password_hash' => password_hash($p, PASSWORD_DEFAULT),
+                    'id' => user_new_id(), 'username' => $u, 'password_hash' => password_hash($p, PASSWORD_DEFAULT),
                     'role' => 'admin', 'permission' => 'write',
                 ]]];
             });
             if (!$won) { header('Location: index.php'); exit; }  // setup già fatto: vai al login
-            session_regenerate_id(true);
-            $_SESSION['username'] = $u;
+            session_login(find_user($u) ?? ['username' => $u]);
             ensure_user_home($u);                    // crea la home (sandbox) dell'admin
             audit('setup_admin', $u);
             header('Location: index.php'); exit;
@@ -93,8 +92,7 @@ if (!current_user()) {
                 $err = 'Questo utente accede tramite SSO desoauth, usa il pulsante "Accedi con desoauth".';
             } elseif ($u && !empty($u['password_hash']) && password_verify($pw, $u['password_hash'])) {
                 login_reset();
-                session_regenerate_id(true);
-                $_SESSION['username'] = $u['username'];
+                session_login($u);
                 ensure_user_home($u['username']);        // crea la home (sandbox) se non esiste
                 audit('login');
                 access_log('login');
