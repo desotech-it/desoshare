@@ -973,6 +973,28 @@ mkuser legacy2 write --data-urlencode original=legacy1 >/dev/null; mkuser legacy
 eq "record legacy rinominato + omonimo: la vecchia sessione non passa (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $LGJ "$B/api.php?action=list&path=")" '401'
 for N in carla dora legacy1 legacy2; do curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$N" --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null; done
 
+echo "=== Registro accessi: segue rinomina ed eliminazione dell'utente (#82) ==="
+racc(){ curl -s -b "$1" "$B/api.php?action=access_list&limit=500"; }
+mkuser regi write >/dev/null
+RJ1="$SBX/r82a"; RC1=$(login "$RJ1" regi)
+curl -s -b $RJ1 -H "X-CSRF: $RC1" --data-urlencode path= --data-urlencode name=privato-regi.txt --data-urlencode content=x "$B/api.php?action=newfile" >/dev/null
+has "regi vede il proprio evento" "$(racc $RJ1)" 'privato-regi.txt'
+mkuser regi2 write --data-urlencode original=regi >/dev/null
+mkuser regi write >/dev/null
+RJ2="$SBX/r82b"; login "$RJ2" regi >/dev/null
+hasnt "rinomina: il nuovo omonimo «regi» non vede le righe del vecchio" "$(racc $RJ2)" 'privato-regi.txt'
+has "rinomina: le righe seguono regi2 (vecchia sessione)" "$(racc $RJ1)" 'privato-regi.txt'
+has "… anche l'attore" "$(curl -s -b $JAR "$B/api.php?action=access_list&owner=regi2&event=upload")" '"actor":"user:regi2","owner":"regi2"'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi2 "$B/api.php?action=user_delete" >/dev/null
+rm -rf "$ST/regi2"; mkuser regi2 write >/dev/null
+RJ3="$SBX/r82c"; login "$RJ3" regi2 >/dev/null
+hasnt "eliminazione senza purge: il nuovo omonimo non vede le righe" "$(racc $RJ3)" 'privato-regi.txt'
+eq "… che restano all'admin" "$(jv "$(jfind "$(curl -s -b $JAR "$B/api.php?action=access_list&event=upload")" rows path privato-regi.txt)" owner)" 'regi2 (eliminato)'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+eq "eliminazione con purge: righe dell'utente rimosse dal registro" "$(cat "$AD"/access/*.jsonl | grep -c '"owner":"regi"')" '0'
+has "… le altre restano" "$(cat "$AD"/access/*.jsonl)" '"owner":"admin"'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi2 --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+
 echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
 CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')

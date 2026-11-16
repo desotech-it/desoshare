@@ -204,6 +204,7 @@ function action_user_save(): void {
             $_SESSION['username'] = $username;
             if (!empty($nu['id'])) $_SESSION['user_id'] = (string) $nu['id'];
         }
+        access_owner_rewrite($original, $username, true);   // il registro accessi segue il nuovo nome
         migration_guard_end();
         audit('user_rename', $original . ' → ' . $username);
     }
@@ -256,6 +257,9 @@ function action_user_delete(): void {
         $purged = storage()->deletePath(user_prefix($username), true);
         trash_drop_owner($username);
     }
+    // Registro accessi: con la purge le righe se ne vanno; senza, restano all'admin
+    // sotto un proprietario che nessun nuovo utente può avere (spazio e parentesi).
+    access_owner_rewrite($username, $purged ? null : $username . ' (eliminato)');
 
     audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));
     json_out(['ok' => true, 'deleted' => $deleted, 'revoked_shares' => $revoked, 'purged' => $purged]);
