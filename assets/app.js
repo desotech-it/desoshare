@@ -188,25 +188,56 @@
   }
 
   // zip.js
-  function downloadZip(paths) {
-    if (!paths.length) {
-      toast("Niente da scaricare", true);
+  var dlSeq = 0;
+  function downloadInFrame(url, fields = null) {
+    const f = document.createElement("iframe");
+    f.name = "dl" + ++dlSeq + "_" + Date.now();
+    f.hidden = true;
+    f.setAttribute("aria-hidden", "true");
+    document.body.appendChild(f);
+    f.onload = () => {
+      let txt = null;
+      try {
+        const d = f.contentDocument;
+        if (d && d.location.href !== "about:blank") txt = d.body ? d.body.textContent : "";
+      } catch (_) {
+      }
+      if (txt === null) return;
+      let err = "";
+      try {
+        err = JSON.parse(txt).error || "";
+      } catch (_) {
+      }
+      toast("Download non riuscito: " + (err || "errore del server"), true);
+      setTimeout(() => f.remove(), 0);
+    };
+    setTimeout(() => f.remove(), 30 * 60 * 1e3);
+    if (!fields) {
+      f.src = url;
       return;
     }
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = "api.php?action=zip";
+    form.action = url;
+    form.target = f.name;
     form.style.display = "none";
-    for (const p of paths) {
+    for (const [k, v] of fields) {
       const i = document.createElement("input");
       i.type = "hidden";
-      i.name = "paths[]";
-      i.value = p;
+      i.name = k;
+      i.value = v;
       form.appendChild(i);
     }
     document.body.appendChild(form);
     form.submit();
     form.remove();
+  }
+  function downloadZip(paths) {
+    if (!paths.length) {
+      toast("Niente da scaricare", true);
+      return;
+    }
+    downloadInFrame("api.php?action=zip", paths.map((p) => ["paths[]", p]));
   }
   var _jszipLoading = null;
   function loadJSZip() {
@@ -1072,7 +1103,7 @@
       if (isText) row.querySelector(".ti-edit").onclick = () => openEditor(rel, it.name);
       row.querySelector(".ti-download").onclick = () => {
         if (isDir) startZip([rel]);
-        else window.location = "api.php?action=download&path=" + encodeURIComponent(rel);
+        else downloadInFrame("api.php?action=download&path=" + encodeURIComponent(rel));
       };
       row.querySelector(".ti-share").onclick = () => shareDialog(rel, it.name, isDir);
       if (shared) row.querySelector(".ti-acc").onclick = () => {

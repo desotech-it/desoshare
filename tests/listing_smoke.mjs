@@ -7,7 +7,8 @@
 //
 // Cosa verifica, a 1440, 1084 e 390 px: su ogni riga tutte le icone azione
 // (cestino compreso) sono dentro l'elenco, i cestini sono allineati, e con una
-// selezione la barra «Elimina» è visibile nella finestra.
+// selezione la barra «Elimina» è visibile nella finestra. Con API simulate: download
+// di file e ZIP falliti mostrati come toast senza lasciare l'app (#87).
 //
 // Uso: node tests/listing_smoke.mjs   (atteso: "SMOKE ELENCO OK ✓")
 // Richiede Playwright + Chromium e la rete per il font delle icone (CDN): fuori
@@ -104,6 +105,57 @@ for (const [w, h] of [[1440, 900], [1084, 595], [390, 844]]) {
   (m.rows.every(r => r.trashRight !== null) && new Set(m.rows.map(r => r.trashRight)).size === 1)
     ? ok('cestino presente e allineato su ogni riga') : bad(`cestini: ${JSON.stringify(m.rows.map(r => r.trashRight))}`);
   m.selbarInView ? ok('con una selezione la barra «Elimina» è nella finestra') : bad('barra di selezione non visibile');
+  errors.length ? bad('errori di pagina: ' + errors.join('; ')) : ok('nessun errore di pagina');
+  await page.close();
+}
+
+// ─── Comportamento (API simulate): download falliti senza lasciare l'app ──────
+console.log('\nDownload con errore (#87)');
+{
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const tree = {
+    '': [{ name: 'Originali', type: 'dir', size: 0, size_h: '', mtime: '08/10/2026' },
+         { name: 'sparito.pdf', type: 'file', size: 1, size_h: '1 B', mtime: '08/10/2026' },
+         { name: 'buono.bin', type: 'file', size: 2, size_h: '2 B', mtime: '08/10/2026' }],
+    'Originali': [{ name: 'dentro.pdf', type: 'file', size: 1, size_h: '1 B', mtime: '08/10/2026' }],
+  };
+  const json = (o, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(o) });
+  await page.route('**/*', route => {
+    const u = new URL(route.request().url());
+    if (u.host === 'cdn.jsdelivr.net') return route.continue();
+    if (u.pathname === '/') return route.fulfill({ contentType: 'text/html', body: html });
+    if (u.pathname.startsWith('/assets/')) return route.fulfill({ body: readFileSync(join(app, u.pathname)), contentType: u.pathname.endsWith('.css') ? 'text/css' : 'application/javascript' });
+    const a = u.searchParams.get('action'), path = u.searchParams.get('path') || '';
+    if (a === 'list') return route.fulfill(json({ ok: true, path: '/' + path, items: tree[path] || [] }));
+    if (a === 'download' && path === 'buono.bin') return route.fulfill({ contentType: 'application/octet-stream', headers: { 'Content-Disposition': 'attachment; filename="buono.bin"' }, body: 'ok' });
+    if (a === 'download') return route.fulfill(json({ ok: false, error: 'File non trovato' }, 404));
+    if (a === 'zip_manifest') return route.fulfill(json({ ok: true, mode: 'server' }));
+    if (a === 'zip') return route.fulfill(json({ ok: false, error: 'Non autenticato' }, 401));
+    return route.fulfill({ status: 404, body: '' });
+  });
+  await page.goto('http://desoshare.test/');
+  await page.waitForSelector('#rows .row');
+  const row = name => page.locator(`#rows .row:has(.label[title="${name}"])`);
+  const toastText = () => page.waitForSelector('.toast.err', { timeout: 4000 }).then(t => t.textContent(), () => '');
+  const alive = async () => page.url() === 'http://desoshare.test/' && await page.locator('#rows .row').count() === 3;
+  // Senza la correzione la pagina naviga sul JSON: si torna all'app per le verifiche seguenti.
+  const back = async () => { if (!(await alive())) { await page.goto('http://desoshare.test/'); await page.waitForSelector('#rows .row'); } };
+  await row('sparito.pdf').locator('.ti-download').click();
+  const t1 = await toastText();
+  /File non trovato/.test(t1) && await alive() ? ok('file sparito: toast d\'errore, l\'app resta') : bad(`file sparito: toast «${t1}», url ${page.url()}`);
+  await back();
+  await page.evaluate(() => document.querySelectorAll('.toast').forEach(t => t.remove()));
+  const dl = page.waitForEvent('download', { timeout: 4000 }).catch(() => null);
+  await row('buono.bin').locator('.ti-download').click();
+  const d = await dl;
+  d && d.suggestedFilename() === 'buono.bin' && !(await page.$('.toast.err')) && await alive() ? ok('file presente: download avviato, nessun errore') : bad('download riuscito non rilevato');
+  await back();
+  await row('Originali').locator('.ti-download').click();
+  const t2 = await toastText();
+  /Non autenticato/.test(t2) && await alive() ? ok('ZIP con sessione scaduta: toast d\'errore, l\'app resta') : bad(`ZIP: toast «${t2}», url ${page.url()}`);
+  await back();
   errors.length ? bad('errori di pagina: ' + errors.join('; ')) : ok('nessun errore di pagina');
   await page.close();
 }
