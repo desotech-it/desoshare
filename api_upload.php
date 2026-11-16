@@ -33,6 +33,11 @@ function upload_ctx(): array {
         }
         $base = share_join($s, $rel);
         if ($base === null) json_out(['ok' => false, 'error' => 'Percorso non consentito'], 400);
+        // La radice del link deve esistere ancora: la scrittura creerebbe le cartelle
+        // mancanti e farebbe «risorgere» una cartella condivisa sparita.
+        $root = storage()->existsCheck(share_base($s));
+        if ($root['type'] === false && !$root['sure']) json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova'], 503);
+        if ($root['type'] !== 'dir') json_out(['ok' => false, 'error' => 'La cartella condivisa non esiste più'], 404);
         return $ctx = ['link' => $s, 'base' => $base, 'owner' => (string) ($s['created_by'] ?? ''), 'skey' => 'share:' . $s['token'], 'actor' => share_actor($s)];
     }
     $u = require_write();

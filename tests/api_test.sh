@@ -1218,6 +1218,18 @@ done
 rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode 'paths=[["x"],"nonc"]' "$B/api.php?action=delete"
 eq "delete con un percorso non stringa: errore per elemento, niente 500" "$HC|$(jv "$BODY" ok deleted)" "200|true|0"
 
+echo "=== Upload via link in una cartella condivisa sparita: niente «resurrezione» (#89) ==="
+mk "" gone89
+G89=$(jv "$(mkshare gone89 edit)" token)
+rm -rf "$ST/admin/gone89"                     # sparita fuori dall'app (il link resta attivo)
+eq "pagina del link: 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$G89")" 404
+mkf g89.txt "ciao"
+eq "upload a blocchi via link → 404" "$(jv "$(lchunk "$G89" g89.txt g89.txt)" ok error)" "false|La cartella condivisa non esiste più"
+lup "$G89" g89.txt g89b.txt sub
+eq "upload (files[]) via link in sottocartella → 404" "$HC" 404
+[ -e "$ST/admin/gone89" ] && no "la cartella condivisa non deve essere ricreata" || ok "la cartella condivisa non viene ricreata"
+eq "pagina del link: ancora 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$G89")" 404
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90"]' "$B/api.php?action=delete")" '"ok":true'
 
