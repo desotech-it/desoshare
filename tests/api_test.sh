@@ -995,6 +995,17 @@ eq "eliminazione con purge: righe dell'utente rimosse dal registro" "$(cat "$AD"
 has "… le altre restano" "$(cat "$AD"/access/*.jsonl)" '"owner":"admin"'
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi2 --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
 
+echo "=== Modifica utente: lunghezza minima della password (#94) ==="
+mkuser pwmin write >/dev/null
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode original=pwmin --data-urlencode password=a --data-urlencode permission=write "$B/api.php?action=user_save"
+eq "modifica con password di 1 carattere → 400" "$HC" '400'
+PWJ="$SBX/pwminjar"; curl -s -c $PWJ -b $PWJ --data-urlencode action=login --data-urlencode username=pwmin --data-urlencode password=a -o /dev/null --data-urlencode "csrf=$(precsrf $PWJ)" "$B/index.php"
+eq "… la password corta non è stata impostata" "$(curl -s -o /dev/null -w '%{http_code}' -b $PWJ "$B/api.php?action=list&path=")" '401'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode original=pwmin --data-urlencode password=nuova6 --data-urlencode permission=write "$B/api.php?action=user_save"
+eq "modifica con password di 6 caratteri → ok" "$HC|$BODY" '200|{"ok":true}'
+eq "modifica senza password (invariata) → ok" "$(mkuser pwmin read --data-urlencode original=pwmin --data-urlencode password=)" '{"ok":true}'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+
 echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
 CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')

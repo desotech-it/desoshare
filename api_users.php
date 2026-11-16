@@ -73,6 +73,10 @@ function action_user_save(): void {
     if ($quotaMbIn !== -1 && ($quotaMbIn < 0 || $quotaMbIn > QUOTA_MAX_MB)) {
         json_out(['ok' => false, 'error' => 'Quota non valida (0 = illimitata, max ' . QUOTA_MAX_MB . ' MB)'], 400);
     }
+    // Stesso minimo della creazione anche quando la password viene CAMBIATA (vuota = invariata).
+    if ($password !== '' && strlen($password) < 6) {
+        json_out(['ok' => false, 'error' => 'Password troppo corta (min 6 caratteri)'], 400);
+    }
     // Calcola l'hash FUORI dalla sezione critica (bcrypt è lento; non tenere il lock).
     $pwHash = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : '';
     // Creazione (non rinomina né modifica): niente cartelle residue con quel nome.
