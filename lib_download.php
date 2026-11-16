@@ -83,13 +83,75 @@ function make_zip(array $absPaths): string {
     $zip->close();
     return $tmp;
 }
+// ─── ZIP temporanei: cartella dedicata, pulizia garantita, slot per link ─────
+// Lo ZIP si costruisce per intero su disco prima di essere servito: se il client
+// chiude la connessione o lo script viene interrotto, il file non deve restare.
+// Cartella dedicata (appdata/zip-tmp): i residui sono riconoscibili e il gc non
+// tocca file di altri in /tmp.
+const ZIP_TMP_MAX_AGE = 21600;     // 6 h: oltre, un file della cartella è un residuo
+const ZIP_LINK_CONCURRENT = 2;     // ZIP in preparazione/invio contemporanei per link
+function zip_tmp_dir(): string {
+    $d = DATA_DIR . '/zip-tmp';
+    if (!is_dir($d)) @mkdir($d, 0700, true);
+    return $d;
+}
+// Residui di processi uccisi senza shutdown (kill, crash): via dopo ZIP_TMP_MAX_AGE.
+function zip_tmp_gc(): void {
+    foreach (glob(zip_tmp_dir() . '/*') ?: [] as $f) {
+        if (is_file($f) && time() - (int) @filemtime($f) > ZIP_TMP_MAX_AGE) @unlink($f);
+    }
+}
+// Occupa uno degli $max slot di $key (flock non bloccante, tenuto fino alla fine
+// del processo: il sistema lo rilascia anche se il processo muore). false = tutti occupati.
+function zip_slot(string $key, int $max): bool {
+    $dir = zip_tmp_dir() . '/slot';
+    if (!is_dir($dir)) @mkdir($dir, 0700, true);
+    $h = substr(hash('sha256', $key), 0, 16);
+    for ($i = 0; $i < $max; $i++) {
+        $fh = @fopen("$dir/$h.$i", 'c');
+        if ($fh === false) return true;   // slot non disponibili (permessi): non bloccare il download
+        if (flock($fh, LOCK_EX | LOCK_NB)) { $GLOBALS['zip_slots'][] = $fh; return true; }
+        fclose($fh);
+    }
+    return false;
+}
+// Invia lo ZIP e lo elimina SUBITO dopo l'apertura: su POSIX il file resta
+// leggibile dal descrittore e lo spazio torna libero alla chiusura, anche se il
+// client abbandona o il processo viene ucciso a metà invio.
+function zip_send(string $tmp, string $dlname): void {
+    $fp = fopen($tmp, 'rb');
+    $size = (int) filesize($tmp);
+    @unlink($tmp);
+    if ($fp === false) { http_response_code(500); echo 'Impossibile leggere lo ZIP'; exit; }
+    while (ob_get_level()) ob_end_clean();
+    @set_time_limit(0);
+    header('Content-Type: application/zip');
+    header('Content-Disposition: ' . content_disposition($dlname));   // RFC 6266: niente header rotti da CR/LF o apostrofi, UTF-8 via filename*
+    header('Content-Length: ' . $size);
+    header('Cache-Control: no-store');
+    while (!feof($fp) && !connection_aborted()) {
+        $data = fread($fp, 262144);
+        if ($data === false || $data === '') break;
+        echo $data;
+        flush();
+    }
+    fclose($fp);
+    exit;
+}
 // Crea uno ZIP da percorsi LOGICI usando il backend storage (Local o S3). Ritorna il path del tmp.
 function zip_logical(array $logicalPaths): string {
     if (!class_exists('ZipArchive')) { http_response_code(500); echo 'ZipArchive non disponibile'; exit; }
-    $tmp = tempnam(sys_get_temp_dir(), 'shr');
+    zip_tmp_gc();
+    $tmp = tempnam(zip_tmp_dir(), 'shr');
+    $temps = [];
+    // Pulizia anche se la costruzione si interrompe (timeout, errore fatale):
+    // archivio e copie temporanee dei file non restano su disco.
+    register_shutdown_function(function () use ($tmp, &$temps) {
+        foreach ($temps as $tf) @unlink($tf);
+        foreach (glob($tmp . '*') ?: [] as $f) @unlink($f);   // anche il temporaneo di ZipArchive::close()
+    });
     $zip = new ZipArchive();
     if ($zip->open($tmp, ZipArchive::OVERWRITE) !== true) { http_response_code(500); echo 'Impossibile creare lo ZIP'; exit; }
-    $temps = [];
     // Un fetch fallito NON può essere ignorato: l'archivio risulterebbe valido ma
     // INCOMPLETO e verrebbe servito con 200 senza che l'utente possa accorgersene.
     $fail = function (string $logical) use ($zip, &$temps, $tmp) {
@@ -110,7 +172,7 @@ function zip_logical(array $logicalPaths): string {
             if (!$items) { $zip->addEmptyDir($zipPath); return; }
             foreach ($items as $e) $add(logical_join($logical, $e['name']), $zipPath . '/' . $e['name']);
         } elseif ($chk['type'] === 'file') {
-            $tf = tempnam(sys_get_temp_dir(), 'shz');
+            $tf = tempnam(zip_tmp_dir(), 'shz');
             if (!storage()->fetchToLocal($logical, $tf)) { @unlink($tf); $fail($logical); }
             $zip->addFile($tf, $zipPath); $temps[] = $tf;
         }

@@ -68,7 +68,8 @@ formcsrf(){ printf '%s' "$1" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p'
 # CSRF pre-login: i form di login/setup ora richiedono il token emesso nella pagina.
 precsrf(){ curl -s -c "$1" -b "$1" "$B/index.php" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1; }
 command -v php >/dev/null || { echo "php non trovato"; exit 2; }
-php -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 &
+mkdir -p "$SBX/systmp"   # temporanei di sistema dell'istanza: residui verificabili (sezione ZIP)
+php -d sys_temp_dir="$SBX/systmp" -S 127.0.0.1:$PORT -t "$PUB" >"$SBX/srv.log" 2>&1 &
 SRV=$!
 cleanup(){ kill $SRV 2>/dev/null; rm -rf "$SBX"; }
 trap cleanup EXIT
@@ -1338,8 +1339,151 @@ PRES=$(APP="$APP_DIR" F="$SBX/persist.json" php "$SBX/punit.php" 2>&1)
 has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
+echo "=== Parametri array (name[]=x): 400, mai un errore fatale col percorso del server (#90) ==="
+mk "" arr90
+A90=$(jv "$(mkshare arr90 edit)" token)
+U90=$(openssl rand -hex 16)
+rq --data-urlencode "uid=$U90" --data-urlencode "name[]=x" --data-urlencode total=0 --data-urlencode chunk_size=1 "$B/api.php?action=upload_finish&t=$A90"
+eq "upload_finish via link con name[] → 400" "$HC" 400
+hasnt "upload_finish via link: nessun percorso del server nel corpo" "$BODY" "$SBX"
+for c in "mkdir|path=arr90|name[]=x" "newfile|path=arr90|name[]=x" "mkdir|path[]=arr90|name=y" "rename|from=arr90|to[]=z" \
+         "upload_finish|uid=$U90|name[]=x" "share_create|path[]=arr90|ttl=3600" "note_save|path[]=a.txt|content=x" "note_save|path=a.txt|content[]=x"; do
+  IFS='|' read -r a p1 p2 <<<"$c"
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "$p1" --data-urlencode "$p2" "$B/api.php?action=$a"
+  eq "$a ($p1, $p2) → 400" "$HC" 400
+  hasnt "$a: nessun percorso del server nel corpo" "$BODY" "$SBX"
+done
+for q in "list&path[]=x" "download&path[]=x" "upload_status&uid[]=x" "usage_list&refresh[]=x" "upload_status&t[]=x&uid=$U90"; do
+  rq -b $JAR "$B/api.php?action=$q"; eq "GET $q → 400" "$HC" 400; hasnt "GET $q: nessun percorso del server" "$BODY" "$SBX"
+done
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode 'paths=[["x"],"nonc"]' "$B/api.php?action=delete"
+eq "delete con un percorso non stringa: errore per elemento, niente 500" "$HC|$(jv "$BODY" ok deleted)" "200|true|0"
+
+echo "=== Upload via link in una cartella condivisa sparita: niente «resurrezione» (#89) ==="
+mk "" gone89
+G89=$(jv "$(mkshare gone89 edit)" token)
+rm -rf "$ST/admin/gone89"                     # sparita fuori dall'app (il link resta attivo)
+eq "pagina del link: 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$G89")" 404
+mkf g89.txt "ciao"
+eq "upload a blocchi via link → 404" "$(jv "$(lchunk "$G89" g89.txt g89.txt)" ok error)" "false|La cartella condivisa non esiste più"
+lup "$G89" g89.txt g89b.txt sub
+eq "upload (files[]) via link in sottocartella → 404" "$HC" 404
+[ -e "$ST/admin/gone89" ] && no "la cartella condivisa non deve essere ricreata" || ok "la cartella condivisa non viene ricreata"
+eq "pagina del link: ancora 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$G89")" 404
+
+echo "=== Tetto del link: contano anche gli upload non finalizzati (#85) ==="
+mk "" cap85
+C85=$(jv "$(mkshare cap85 edit --data-urlencode upload_limit_mb=1)" token)
+head -c 307200 /dev/urandom > "$SBX/c85.bin"   # blocco da 300 KB
+# c85 UID TOTALE → primo blocco (300 KB) di un upload a blocchi via link, senza finalizzarlo
+c85(){ rq -F "uid=$1" -F index=0 -F offset=0 -F chunk_size=307200 -F "total=$2" -F path= -F name=c.bin -F "chunk=@$SBX/c85.bin" "$B/api.php?action=upload_chunk&t=${3:-$C85}"; }
+UA=$(openssl rand -hex 16); UB=$(openssl rand -hex 16); UC=$(openssl rand -hex 16)
+c85 "$UA" 614400; eq "uid A (600 KB dichiarati, tetto 1 MB): primo blocco accettato" "$HC" 200
+c85 "$UB" 614400; eq "uid B (600 KB): rifiutato, A non finalizzato occupa il tetto → 413" "$HC" 413
+has "… messaggio sul tetto" "$BODY" 'Spazio caricabile tramite questo link esaurito'
+c85 "$UC" 307200; eq "uid C (300 KB): entra nel residuo → 200" "$HC" 200
+c85 "$UA" 614400; eq "uid A: ripetere un blocco non raddoppia la prenotazione" "$HC" 200
+c85 "$UC" 307200; eq "uid C: idem" "$HC" 200
+[ "$(ls "$AD/uploads" | grep -c '\.part$')" -ge 2 ] && ok "staging presente (A e C)" || no "staging presente (A e C)"
+# Finalizzato C (300 KB), il suo posto passa nel contatore del link: B resta fuori.
+eq "uid C finalizzato" "$(jv "$(curl -s --data-urlencode uid=$UC --data-urlencode path= --data-urlencode name=c.bin --data-urlencode total=307200 --data-urlencode chunk_size=307200 "$B/api.php?action=upload_finish&t=$C85")" ok)" true
+c85 "$UB" 614400; eq "uid B ancora fuori dal tetto (300 caricati + 600 in corso)" "$HC" 413
+# Upload in corso per link: al più 20 (anche su un link senza tetto proprio).
+N85=$(jv "$(mkshare cap85 edit --data-urlencode upload_limit_mb=0)" token)
+printf 'x' > "$SBX/c85one.bin"; codes=""
+for i in $(seq 1 21); do
+  rq -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=1 -F total=2 -F path= -F name=n.bin -F "chunk=@$SBX/c85one.bin" "$B/api.php?action=upload_chunk&t=$N85"
+  codes="$codes$HC "
+done
+eq "20 upload in corso accettati, il 21° → 429" "$codes" "$(printf '200 %.0s' $(seq 1 20))429 "
+
+echo "=== Quota prenotata sotto lock alla finalizzazione (#91) ==="
+mkuser q91 write --data-urlencode quota_mb=1 >/dev/null
+# 8 finalizzazioni «parallele» da 600 KB sulla quota di 1 MB: ne passa UNA sola.
+cat > "$SBX/q91.php" <<'PHP'
+<?php require getenv("PUB")."/lib.php";
+while (microtime(true) < (float) getenv("T0")) usleep(1000);   // partenza comune
+echo usage_reserve("q91", 614400) ? "OK" : "NO";
+PHP
+T0=$(php -r 'echo microtime(true)+1;')
+QP=""; for i in $(seq 1 8); do PUB="$PUB" T0="$T0" php "$SBX/q91.php" > "$SBX/q91.$i" 2>&1 & QP="$QP $!"; done; wait $QP   # non il server
+eq "usage_reserve concorrente: una sola prenotazione entra nella quota" "$(cat "$SBX"/q91.? | grep -o 'OK' | wc -l | tr -d ' ')|$(cat "$SBX"/q91.? | grep -o 'NO' | wc -l | tr -d ' ')" "1|7"
+eq "… e il consumo registrato è quello prenotato" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; echo usage_get("q91");')" 614400
+eq "usage_reserve: rilascio e nuova prenotazione" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; usage_bump("q91", -614400); echo usage_reserve("q91", 614400) ? "OK" : "NO", usage_get("q91");')" "OK614400"
+# Finalizzazione via link: la quota resta rispettata e il consumo non è contato due volte.
+rm -f "$AD/login_attempts.json"                # il test del rate-limit ha bloccato 127.0.0.1
+Q91J="$SBX/q91jar"; Q91C=$(login "$Q91J" q91)
+curl -s -b $Q91J -H "X-CSRF: $Q91C" --data-urlencode path= --data-urlencode name=in "$B/api.php?action=mkdir" >/dev/null
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; usage_invalidate("q91");'
+Q91T=$(jv "$(curl -s -b $Q91J -H "X-CSRF: $Q91C" --data-urlencode path=in --data-urlencode ttl=3600 --data-urlencode mode=edit --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create")" token)
+head -c 614400 /dev/urandom > "$SBX/q91.bin"
+# due upload completi PRIMA di finalizzare: entrambi passano il controllo sul primo blocco
+QA=$(openssl rand -hex 16); QB=$(openssl rand -hex 16)
+for u in $QA $QB; do curl -s -F "uid=$u" -F index=0 -F offset=0 -F chunk_size=614400 -F total=614400 -F path= -F "chunk=@$SBX/q91.bin" "$B/api.php?action=upload_chunk&t=$Q91T" >/dev/null; done
+q91fin(){ curl -s --data-urlencode "uid=$1" --data-urlencode path= --data-urlencode "name=$2" --data-urlencode total=614400 --data-urlencode chunk_size=614400 "$B/api.php?action=upload_finish&t=$Q91T"; }
+eq "via link: prima finalizzazione da 600 KB entra" "$(jv "$(q91fin $QA a.bin)" ok)" true
+eq "via link: seconda finalizzazione → quota superata (507)" "$(jv "$(q91fin $QB b.bin)" ok error)" "false|Quota superata: il file non entra nello spazio disponibile"
+eq "consumo dopo la finalizzazione (non contato due volte)" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; echo usage_get("q91");')" 614400
+
+echo "=== Rinomina via link collaboratore: verifica e rinomina con il nome prenotato (#92) ==="
+mk "" ren92
+R92=$(jv "$(mkshare ren92 contrib)" token)
+mkf r92.txt "mio"
+eq "contrib carica r92.txt" "$(jv "$(lchunk "$R92" r92.txt r92.txt)" ok)" true
+# r92.txt in scrittura (prenotato) da un altro caricamento: la rinomina aspetta
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; with_json_lock(linkfiles_file(), function ($d) { $d["pending"]["admin/ren92/r92.txt"] = time(); return $d; });'
+lop link_rename "$R92" --data-urlencode from=r92.txt --data-urlencode to=r92b.txt
+eq "rinomina di un nome in scrittura → 409" "$HC" 409
+has "… il file non è stato toccato" "$(olist ren92)" '"name":"r92.txt"'
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; link_upload_release("admin/ren92/r92.txt");'
+lop link_rename "$R92" --data-urlencode from=r92.txt --data-urlencode to=r92b.txt
+eq "rinomina a nome libero → ok" "$HC|$(jv "$BODY" ok)" "200|true"
+eq "… nessuna prenotazione residua (origine e destinazione)" "$(php -r '$d=json_decode(file_get_contents($argv[1]),true); echo count(array_filter(array_keys($d["pending"]??[]), fn($k)=>str_starts_with($k,"admin/ren92/")));' "$AD/link_files.json")" 0
+lop link_rename "$R92" --data-urlencode from=r92b.txt --data-urlencode to=r92c.txt
+eq "il file rinominato resta del link (seconda rinomina ok)" "$HC|$(jv "$BODY" ok)" "200|true"
+
+echo "=== ZIP di un link: niente residui su disco, slot per link (#80) ==="
+mk "" zip80
+head -c 31457280 /dev/urandom > "$ST/admin/zip80/grande.bin"   # 30 MB non comprimibili
+Z80=$(jv "$(mkshare zip80 view)" token)
+# zipres → file temporanei ZIP rimasti (temporanei di sistema + cartella dedicata, slot esclusi)
+zipres(){ { ls "$SBX/systmp" | grep -E '^sh[rz]'; ls "$AD/zip-tmp" 2>/dev/null | grep -v '^slot$'; } | grep -c .; }   # (in systmp anche le sessioni)
+for i in 1 2 3; do curl -s --limit-rate 300k --max-time 2 -o /dev/null "$B/share.php?t=$Z80&zip=1"; done
+curl -s -o /dev/null "$B/share.php?t=$Z80"   # il server (un processo) ha chiuso le richieste interrotte
+eq "3 download ZIP interrotti dal client: nessun file rimasto" "$(zipres)" 0
+curl -s -o "$SBX/z80.zip" "$B/share.php?t=$Z80&zip=1"
+eq "ZIP completo: valido e intero" "$(head -c2 "$SBX/z80.zip")|$(php -r '$z=new ZipArchive; $z->open($argv[1]); echo $z->statName("zip80/grande.bin")["size"];' "$SBX/z80.zip")" "PK|31457280"
+eq "… e nessun temporaneo dopo l'invio" "$(zipres)" 0
+curl -s -b $JAR "$B/api.php?action=zip&paths[]=zip80" -o /dev/null
+eq "ZIP dall'app: nessun temporaneo dopo l'invio" "$(zipres)" 0
+mkdir -p "$AD/zip-tmp"; : > "$AD/zip-tmp/shrVECCHIO"; touch -d '-1 day' "$AD/zip-tmp/shrVECCHIO"
+curl -s -o /dev/null "$B/share.php?t=$Z80&zip=1"
+[ -e "$AD/zip-tmp/shrVECCHIO" ] && no "residuo vecchio rimosso dal gc" || ok "residuo vecchio rimosso dal gc"
+# Slot per link: con i 2 slot occupati il terzo ZIP aspetta (429), poi riparte.
+rm -f "$SBX/slot80.ok"
+PUB="$PUB" T="$Z80" OK="$SBX/slot80.ok" php -r 'require getenv("PUB")."/lib.php"; if (zip_slot("share:".getenv("T"), 2) && zip_slot("share:".getenv("T"), 2)) touch(getenv("OK")); sleep(4);' &
+SLP=$!
+for i in $(seq 1 30); do [ -e "$SBX/slot80.ok" ] && break; sleep 0.1; done
+eq "slot del link occupati → 429" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 429
+wait $SLP
+eq "slot liberati → ZIP servito" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 200
+
+echo "=== Pagina pubblica: nomi con «<!--<script>» non rompono gli script (#86) ==="
+mk "" html86; mk html86 '<!--<script>'
+nf html86 '<!--<script>.pdf' 'x'
+H86=$(jv "$(mkshare html86 contrib)" token)
+P86=$(curl -s -G --data-urlencode "t=$H86" --data-urlencode 'p=<!--<script>' "$B/share.php")
+has "pagina della sottocartella servita (configurazione degli script presente)" "$P86" 'ShareUpload.mount('
+hasnt "nessun «<!--» letterale nella pagina" "$P86" '<!--'
+eq "tag <script> tutti chiusi (nessuno aperto dai dati)" "$(printf '%s' "$P86" | grep -o '<script' | wc -l | tr -d ' ')" "$(printf '%s' "$P86" | grep -o '</script>' | wc -l | tr -d ' ')"
+has "il percorso arriva agli script come \\u003C!--" "$P86" '\u003C!--\u003Cscript\u003E'
+F86=$(jv "$(mkshare 'html86/<!--<script>.pdf' view)" token)
+P86F=$(curl -s "$B/share.php?t=$F86")
+has "pagina del file (anteprima) servita" "$P86F" 'Preview.open('
+hasnt "pagina del file: nessun «<!--» letterale" "$P86F" '<!--'
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92","zip80","html86"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

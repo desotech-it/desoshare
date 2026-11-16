@@ -10,6 +10,17 @@ function json_out($data, int $code = 200): void {
     exit;
 }
 
+// ─── Parametri della richiesta ───────────────────────────────────────────────
+// Un parametro atteso come stringa può arrivare come array (name[]=x): niente
+// TypeError fatale (500 con il percorso del server nel corpo), ma un 400.
+function param_str(array $src, string $key, string $default = ''): string {
+    $v = $src[$key] ?? $default;
+    if (!is_string($v)) json_out(['ok' => false, 'error' => 'Parametro non valido: ' . $key], 400);
+    return $v;
+}
+function post_str(string $key, string $default = ''): string { return param_str($_POST, $key, $default); }
+function get_str(string $key, string $default = ''): string { return param_str($_GET, $key, $default); }
+function req_str(string $key, string $default = ''): string { return param_str($_REQUEST, $key, $default); }
 
 // ─── Utilità ─────────────────────────────────────────────────────────────────
 function human_size(int $b): string {
@@ -32,6 +43,11 @@ function rrmdir(string $dir): void {
     @rmdir($dir);
 }
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+// Valore JS da inserire in un <script> della pagina: < > & ' " come \uXXXX, così
+// un nome come «<!--<script>» o «</script>» non cambia lo stato del parser HTML.
+function js_val($v): string {
+    return (string) json_encode($v, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+}
 
 // Header di sicurezza per le pagine HTML. `frame-ancestors 'self'` + X-Frame-Options
 // proteggono da clickjacking senza limitare gli script/style inline usati dall'app.

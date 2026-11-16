@@ -56,15 +56,23 @@ function action_link_rename(): void {
     if ($from === share_base($s)) json_out(['ok' => false, 'error' => 'La cartella condivisa non si può rinominare dal link'], 400);
     $newName = is_string($_POST['to'] ?? null) ? trim($_POST['to']) : '';
     if (!valid_name($newName)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);
+    $target = logical_join(link_parent($from), $newName);
+    if ($target === $from) json_out(['ok' => true]);
+    // Origine e destinazione PRENOTATE prima della verifica: finché la rinomina
+    // non è conclusa, upload (del proprietario o via link) e altre rinomine via
+    // link su questi nomi vengono respinti, così il file verificato «del link» è
+    // quello che viene rinominato (niente lock globale tenuto durante le
+    // chiamate allo storage).
+    if (link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
+    if (!link_reserve_paths([$from, $target])) json_out(['ok' => false, 'error' => 'Elemento in uso da un caricamento tramite link: riprova tra poco'], 409);
+    register_shutdown_function(function () use ($from, $target) { link_upload_release($from); link_upload_release($target); });
     $ftype = storage()->typeOf($from);
     if ($ftype === false) json_out(['ok' => false, 'error' => 'Elemento non trovato'], 404);
     $own = $ftype === 'file' && link_file_is_own($s, $from);
     if (!share_can($s, 'any') && !$own) json_out(['ok' => false, 'error' => 'Puoi rinominare solo i file caricati con questo link'], 403);
-    $target = logical_join(link_parent($from), $newName);
-    if ($target === $from) json_out(['ok' => true]);
     $chk = storage()->existsCheck($target);
     if ($chk['type'] === false && !$chk['sure']) json_out(['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova'], 503);
-    if ($chk['type'] !== false || link_name_pending($target)) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
+    if ($chk['type'] !== false) json_out(['ok' => false, 'error' => 'Esiste già un elemento chiamato "' . $newName . '"'], 409);
     // Stato collaborativo delle note e condivisioni seguono la rinomina come nell'app.
     if ($ftype === 'dir') note_state_purge_tree($from); else note_state_purge_path($from);
     note_state_purge_path($target);
