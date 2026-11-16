@@ -693,6 +693,27 @@
     }
     return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
   }
+  function setShareCount(r) {
+    const btn = $("#btnShares");
+    if (!btn || !r || !r.ok || !Array.isArray(r.shares)) return;
+    const now = typeof r.now === "number" ? r.now : Date.now() / 1e3;
+    const n = r.shares.filter((s) => s.created_by === USER && Number(s.expires_at) > now).length;
+    let c = btn.querySelector(".sb-count");
+    if (!n) {
+      if (c) c.remove();
+      return;
+    }
+    if (!c) {
+      c = document.createElement("span");
+      c.className = "sb-count";
+      btn.appendChild(c);
+    }
+    c.textContent = String(n);
+  }
+  function sharesChanged() {
+    if (rowsEl) load(S.cwd);
+    apiGet("share_list").then(setShareCount);
+  }
   var LIMIT_OPTS = `<option value="100">100 MB</option>
       <option value="500">500 MB</option>
       <option value="1024" selected>1 GB</option>
@@ -780,6 +801,7 @@
         showErr(r && r.error || "Errore nella creazione del link");
         return;
       }
+      sharesChanged();
       const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
       const when2 = new Date(r.expires_at * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
       const cap = hasCap() ? Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : " · nessun tetto" : "";
@@ -828,6 +850,7 @@
       toast(r.error || "Errore", true);
       return;
     }
+    setShareCount(r);
     const nTrash = t && t.ok && Array.isArray(t.entries) ? t.entries.length : null;
     const body = r.shares.length ? `<div class="sh-scroll"><table class="utable sh-table"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${r.shares.map((s) => `<tr data-exp="${Number(s.expires_at) || 0}">
       <td><div class="sh-name"><i class="ti ${iconFor({ type: s.type === "dir" ? "dir" : "file", name: String(s.name || "") })}"></i> ${esc(s.name)}</div>
@@ -855,6 +878,7 @@
       if (x.ok) {
         toast("Condivisione revocata");
         sharesPanel();
+        if (rowsEl) load(S.cwd);
       } else toast(x.error || "Errore", true);
     });
     modalBg.querySelectorAll("[data-acc]").forEach((b) => b.onclick = () => {
