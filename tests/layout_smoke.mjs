@@ -21,7 +21,7 @@ let failures = 0;
 const ok = m => console.log('  ✓ ' + m);
 const bad = m => { failures++; console.log('  ✗ ' + m); };
 
-const PORT = 8413, B = `http://127.0.0.1:${PORT}`;
+const PORT = Number(process.env.PORT || 8413), B = `http://127.0.0.1:${PORT}`;
 const SBX = mkdtempSync(join(tmpdir(), 'shlayout-'));
 const PUB = join(SBX, 'public_html');
 cpSync(APP, PUB, { recursive: true, filter: s => !/node_modules|\/tests\/|\.git(\/|$)|app-src|editor-src/.test(s) });
@@ -104,6 +104,14 @@ await p.click('#accScope [data-scope="mine"]'); await p.waitForTimeout(400);
 !(await p.$('#listing')) && !(await p.$('#btnUpload')) ? ok('pagina Registro senza elenco file né toolbar') : bad('elementi dell\'elenco presenti nel registro');
 await p.goto(B + '/?view=registro&token=' + share.token.slice(0, 8)); await p.waitForSelector('#registro .acc-table');
 /solo il link/.test(await p.textContent('.acc-fixed')) ? ok('filtro per link indicato con rimando a tutti gli eventi') : bad('indicazione del link assente');
+// Ripristino dal cestino aperto nella pagina Registro: niente elenco file da ricaricare (#95)
+await api(admin, CSRF, 'newfile', { path: 'Privata', name: 'via.txt', content: 'x' });
+const mshare = await api(admin, CSRF, 'share_create', { path: 'Privata', ttl: '86400', mode: 'manage', label: 'Gestore' });
+await fetch(B + '/api.php?action=link_delete', { method: 'POST', body: new URLSearchParams({ t: mshare.token, paths: '["via.txt"]' }) });
+await p.click('#btnTrash'); await p.waitForSelector('.tr-modal .tr-restore');
+await p.click('.tr-modal .tr-restore'); await p.waitForSelector('.toast');
+const toasts = await p.$$eval('.toast', ts => ts.map(t => (t.classList.contains('err') ? 'ERR ' : '') + t.textContent));
+toasts.length === 1 && /^Ripristinato in \/Privata\/via\.txt$/.test(toasts[0]) ? ok('Registro: ripristino dal cestino senza errori') : bad('Registro: toast dopo il ripristino: ' + toasts.join(' · '));
 await p.close();
 
 console.log('\nAdmin, 390px');
