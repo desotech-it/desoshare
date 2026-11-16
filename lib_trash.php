@@ -92,20 +92,30 @@ function trash_restore(string $owner, string $id): array {
     $parent = link_parent($orig);
     $target = $orig;
     for ($n = 2; ; $n++) {
-        $c = storage()->existsCheck($target);   // «non verificabile» ≠ «libero»: mai sovrascrivere al buio
-        if ($c['type'] === false) {
-            if (!$c['sure']) return ['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova', 'code' => 503];
-            break;
+        // Il nome si PRENOTA prima di verificarlo, sotto il lock degli upload via link:
+        // uno in corso lo tiene occupato (la sua scrittura sovrascriverebbe il
+        // ripristino) e uno nuovo, finché il ripristino non è concluso, non lo sceglie.
+        if (link_name_reserve($target)) {
+            $c = storage()->existsCheck($target);   // «non verificabile» ≠ «libero»: mai sovrascrivere al buio
+            if ($c['type'] === false) {
+                if ($c['sure']) break;
+                link_upload_release($target);
+                return ['ok' => false, 'error' => 'Storage non verificabile in questo momento: riprova', 'code' => 503];
+            }
+            link_upload_release($target);
         }
         if ($n > 500) return ['ok' => false, 'error' => 'Troppi elementi con lo stesso nome', 'code' => 409];
         $target = logical_join($parent, link_name_variant((string) $e['name'], $n));
     }
-    if (!storage()->renamePath($src, $target)) {
+    try {
+        $moved = storage()->renamePath($src, $target);
         // Spostamento interrotto (S3): ciò che è passato torna nel cestino, così un
         // nuovo tentativo non divide l'elemento fra «nome» e «nome (2)».
-        if (storage()->existsCheck($target)['type'] !== false) storage()->renamePath($target, $src);
-        return ['ok' => false, 'error' => 'Ripristino non riuscito: riprova', 'code' => 500];
+        if (!$moved && storage()->existsCheck($target)['type'] !== false) storage()->renamePath($target, $src);
+    } finally {
+        link_upload_release($target);
     }
+    if (!$moved) return ['ok' => false, 'error' => 'Ripristino non riuscito: riprova', 'code' => 500];
     if (($e['type'] ?? '') === 'dir') note_state_purge_tree($target); else note_state_purge_path($target);
     storage()->deletePath(trash_root($owner) . '/' . $id, true);   // la cartellina dell'id, ora vuota
     trash_forget([$id => true]);

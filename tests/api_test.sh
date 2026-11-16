@@ -967,6 +967,22 @@ TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | php -r '$d=json_decode(s
 has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
 has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
 
+echo "=== Cestino: il ripristino rispetta i nomi prenotati dagli upload via link (#78) ==="
+mk '' rsvfix
+RT=$(mkshare rsvfix manage | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+mkf rep.txt 'originale'; lup "$RT" rep.txt rep.txt
+lop link_delete "$RT" --data-urlencode 'paths=["rep.txt"]'
+RID=$(jv "$(jfind "$(trash_l)" entries orig rsvfix/rep.txt)" id)
+RORIG=$(AD="$AD" RID="$RID" php -r 'foreach(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"] as $e) if($e["id"]===getenv("RID")) echo $e["orig"];')
+# Prenotazione come la fa upload_finish via link (link_claim) mentre scrive rep.txt.
+AD="$AD" P="$RORIG" php -r '$f=getenv("AD")."/link_files.json"; $d=is_file($f)?json_decode(file_get_contents($f),true):[];
+$d["pending"][getenv("P")]=time(); file_put_contents($f,json_encode($d));'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$RID" "$B/api.php?action=trash_restore"
+eq "nome prenotato da un upload via link → ripristino come «rep (2).txt»" "$HC|$(jv "$BODY" path)" '200|rsvfix/rep (2).txt'
+eq "… col contenuto originale" "$(own 'rsvfix/rep (2).txt')" 'originale'
+eq "… la prenotazione dell'upload resta, quella del ripristino è rilasciata" "$(AD="$AD" php -r 'echo implode(",", array_map("basename", array_keys(json_decode(file_get_contents(getenv("AD")."/link_files.json"),true)["pending"]??[])));')" 'rep.txt'
+AD="$AD" php -r '$f=getenv("AD")."/link_files.json"; $d=json_decode(file_get_contents($f),true); $d["pending"]=[]; file_put_contents($f,json_encode($d));'
+
 echo "=== Nuova scadenza di un link ==="
 UT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=3600 --data-urlencode mode=view "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
 UR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$UT --data-urlencode ttl=2592000 "$B/api.php?action=share_update")
