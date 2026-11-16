@@ -1040,7 +1040,9 @@
       toast(res.error || "Errore", true);
       return;
     }
-    S.cwd = res.path === "/" ? "" : res.path.replace(/^\//, "");
+    const cwd = res.path === "/" ? "" : res.path.replace(/^\//, "");
+    if (cwd !== S.cwd) searchEl.value = "";
+    S.cwd = cwd;
     S.items = res.items;
     selected.clear();
     renderCrumbs();

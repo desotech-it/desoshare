@@ -8,7 +8,8 @@
 // Cosa verifica, a 1440, 1084 e 390 px: su ogni riga tutte le icone azione
 // (cestino compreso) sono dentro l'elenco, i cestini sono allineati, e con una
 // selezione la barra «Elimina» è visibile nella finestra. Con API simulate: download
-// di file e ZIP falliti mostrati come toast senza lasciare l'app (#87).
+// di file e ZIP falliti mostrati come toast senza lasciare l'app (#87), filtro di
+// ricerca svuotato entrando in un'altra cartella (#88).
 //
 // Uso: node tests/listing_smoke.mjs   (atteso: "SMOKE ELENCO OK ✓")
 // Richiede Playwright + Chromium e la rete per il font delle icone (CDN): fuori
@@ -156,6 +157,14 @@ console.log('\nDownload con errore (#87)');
   const t2 = await toastText();
   /Non autenticato/.test(t2) && await alive() ? ok('ZIP con sessione scaduta: toast d\'errore, l\'app resta') : bad(`ZIP: toast «${t2}», url ${page.url()}`);
   await back();
+  // #88: filtro scritto nella cartella di partenza, poi si entra in una sottocartella
+  console.log('\nFiltro di ricerca e cambio cartella (#88)');
+  await page.fill('#search', 'Orig');
+  (await page.locator('#rows .row').count()) === 1 ? ok('filtro applicato nella cartella corrente') : bad('filtro non applicato');
+  await row('Originali').locator('.label').click();
+  await page.waitForSelector('#crumbs .cur');
+  const st = await page.evaluate(() => ({ q: document.getElementById('search').value, rows: document.querySelectorAll('#rows .row').length, empty: !document.getElementById('empty').hidden }));
+  st.q === '' && st.rows === 1 && !st.empty ? ok('entrando in una cartella il filtro si svuota e il contenuto si vede') : bad(`dopo il cambio cartella: filtro «${st.q}», ${st.rows} righe, «vuota» ${st.empty}`);
   errors.length ? bad('errori di pagina: ' + errors.join('; ')) : ok('nessun errore di pagina');
   await page.close();
 }
