@@ -1230,8 +1230,34 @@ eq "upload (files[]) via link in sottocartella → 404" "$HC" 404
 [ -e "$ST/admin/gone89" ] && no "la cartella condivisa non deve essere ricreata" || ok "la cartella condivisa non viene ricreata"
 eq "pagina del link: ancora 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$G89")" 404
 
+echo "=== Tetto del link: contano anche gli upload non finalizzati (#85) ==="
+mk "" cap85
+C85=$(jv "$(mkshare cap85 edit --data-urlencode upload_limit_mb=1)" token)
+head -c 307200 /dev/urandom > "$SBX/c85.bin"   # blocco da 300 KB
+# c85 UID TOTALE → primo blocco (300 KB) di un upload a blocchi via link, senza finalizzarlo
+c85(){ rq -F "uid=$1" -F index=0 -F offset=0 -F chunk_size=307200 -F "total=$2" -F path= -F name=c.bin -F "chunk=@$SBX/c85.bin" "$B/api.php?action=upload_chunk&t=${3:-$C85}"; }
+UA=$(openssl rand -hex 16); UB=$(openssl rand -hex 16); UC=$(openssl rand -hex 16)
+c85 "$UA" 614400; eq "uid A (600 KB dichiarati, tetto 1 MB): primo blocco accettato" "$HC" 200
+c85 "$UB" 614400; eq "uid B (600 KB): rifiutato, A non finalizzato occupa il tetto → 413" "$HC" 413
+has "… messaggio sul tetto" "$BODY" 'Spazio caricabile tramite questo link esaurito'
+c85 "$UC" 307200; eq "uid C (300 KB): entra nel residuo → 200" "$HC" 200
+c85 "$UA" 614400; eq "uid A: ripetere un blocco non raddoppia la prenotazione" "$HC" 200
+c85 "$UC" 307200; eq "uid C: idem" "$HC" 200
+[ "$(ls "$AD/uploads" | grep -c '\.part$')" -ge 2 ] && ok "staging presente (A e C)" || no "staging presente (A e C)"
+# Finalizzato C (300 KB), il suo posto passa nel contatore del link: B resta fuori.
+eq "uid C finalizzato" "$(jv "$(curl -s --data-urlencode uid=$UC --data-urlencode path= --data-urlencode name=c.bin --data-urlencode total=307200 --data-urlencode chunk_size=307200 "$B/api.php?action=upload_finish&t=$C85")" ok)" true
+c85 "$UB" 614400; eq "uid B ancora fuori dal tetto (300 caricati + 600 in corso)" "$HC" 413
+# Upload in corso per link: al più 20 (anche su un link senza tetto proprio).
+N85=$(jv "$(mkshare cap85 edit --data-urlencode upload_limit_mb=0)" token)
+printf 'x' > "$SBX/c85one.bin"; codes=""
+for i in $(seq 1 21); do
+  rq -F "uid=$(openssl rand -hex 16)" -F index=0 -F offset=0 -F chunk_size=1 -F total=2 -F path= -F name=n.bin -F "chunk=@$SBX/c85one.bin" "$B/api.php?action=upload_chunk&t=$N85"
+  codes="$codes$HC "
+done
+eq "20 upload in corso accettati, il 21° → 429" "$codes" "$(printf '200 %.0s' $(seq 1 20))429 "
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."
