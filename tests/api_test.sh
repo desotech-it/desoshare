@@ -1328,8 +1328,22 @@ eq "slot del link occupati → 429" "$(curl -s -o /dev/null -w '%{http_code}' "$
 wait $SLP
 eq "slot liberati → ZIP servito" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 200
 
+echo "=== Pagina pubblica: nomi con «<!--<script>» non rompono gli script (#86) ==="
+mk "" html86; mk html86 '<!--<script>'
+nf html86 '<!--<script>.pdf' 'x'
+H86=$(jv "$(mkshare html86 contrib)" token)
+P86=$(curl -s -G --data-urlencode "t=$H86" --data-urlencode 'p=<!--<script>' "$B/share.php")
+has "pagina della sottocartella servita (configurazione degli script presente)" "$P86" 'ShareUpload.mount('
+hasnt "nessun «<!--» letterale nella pagina" "$P86" '<!--'
+eq "tag <script> tutti chiusi (nessuno aperto dai dati)" "$(printf '%s' "$P86" | grep -o '<script' | wc -l | tr -d ' ')" "$(printf '%s' "$P86" | grep -o '</script>' | wc -l | tr -d ' ')"
+has "il percorso arriva agli script come \\u003C!--" "$P86" '\u003C!--\u003Cscript\u003E'
+F86=$(jv "$(mkshare 'html86/<!--<script>.pdf' view)" token)
+P86F=$(curl -s "$B/share.php?t=$F86")
+has "pagina del file (anteprima) servita" "$P86F" 'Preview.open('
+hasnt "pagina del file: nessun «<!--» letterale" "$P86F" '<!--'
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92","zip80"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85","ren92","zip80","html86"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."
