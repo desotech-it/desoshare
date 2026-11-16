@@ -1150,6 +1150,15 @@ grep -qF "$(printf '\tsettings_storage_switch\tlocal → s3')" "$AD/audit.log" &
 grep -qF "$(printf '\tsettings_storage_switch\ts3 → local')" "$AD/audit.log" && ok "audit: cambio s3 → locale" || no "audit: cambio s3 → locale"
 eq "nessun cambio: nessun nuovo evento" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=local "$B/api.php?action=settings_save" >/dev/null; grep -c settings_storage_switch "$AD/audit.log")" '2'
 has "di nuovo su storage locale" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"backend":"local"'
+# Quota predefinita: valori non numerici o negativi rifiutati, la quota resta (#93)
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode default_quota_mb=100 "$B/api.php?action=settings_save" >/dev/null
+for V in abc 12abc -5 1.5; do
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "default_quota_mb=$V" "$B/api.php?action=settings_save"
+  eq "quota predefinita «$V» → 400" "$HC" '400'
+done
+has "… la quota predefinita resta 100 MB" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"default_quota_bytes":104857600'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode default_quota_mb=0 "$B/api.php?action=settings_save" >/dev/null
+has "0 = illimitata (quota rimossa)" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"default_quota_bytes":0'
 has "note_open usa il poll configurato" "$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md")" '"poll_ms":2000'
 has "audit_list contiene le modifiche impostazioni" "$(curl -s -b $JAR "$B/api.php?action=audit_list")" 'settings_update'
 has "non-admin NON vede le impostazioni (403)" "$(curl -s -b $RJAR "$B/api.php?action=settings_get")" 'amministratori'

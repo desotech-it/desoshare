@@ -65,9 +65,12 @@ function action_settings_save(): void {
     if ($poll > 0) { if ($poll < 500 || $poll > 60000) json_out(['ok' => false, 'error' => 'Intervallo 500–60000 ms'], 400); $s['note_poll_ms'] = $poll; }
     $maxmb = (int) ($_POST['note_max_mb'] ?? 0);
     if ($maxmb > 0) { if ($maxmb < 1 || $maxmb > 64) json_out(['ok' => false, 'error' => 'Dimensione nota 1–64 MB'], 400); $s['note_max_bytes'] = $maxmb * 1024 * 1024; }
-    if (isset($_POST['default_quota_mb']) && $_POST['default_quota_mb'] !== '') {
-        $dq = (int) $_POST['default_quota_mb'];
-        if ($dq < 0 || $dq > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Quota predefinita non valida'], 400);
+    $dqRaw = isset($_POST['default_quota_mb']) && is_string($_POST['default_quota_mb']) ? trim($_POST['default_quota_mb']) : '';
+    if ($dqRaw !== '') {
+        // Solo cifre, come in user_save: (int) 'abc' = 0 rimuoveva la quota in silenzio.
+        if (!preg_match('/^\d+$/', $dqRaw)) json_out(['ok' => false, 'error' => 'Quota predefinita non valida: inserisci un numero intero di MB (0 = illimitata)'], 400);
+        $dq = (int) $dqRaw;
+        if ($dq > QUOTA_MAX_MB) json_out(['ok' => false, 'error' => 'Quota predefinita non valida'], 400);
         if ($dq > 0) $s['default_quota_bytes'] = $dq * 1024 * 1024; else unset($s['default_quota_bytes']);
     }
 
