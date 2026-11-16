@@ -1,5 +1,5 @@
 // trash.js — cestino del proprietario: ciò che i link hanno eliminato o sostituito.
-import { S, modalBg, $, CAN_WRITE } from './state.js';
+import { S, modalBg, $, CAN_WRITE, rowsEl } from './state.js';
 import { apiGet, apiPost } from './net.js';
 import { toast, esc, iconFor, fmtBytes, fmtDuration } from './util.js';
 import { openModal } from './modal.js';
@@ -50,7 +50,7 @@ export async function trashPanel() {
       const x = await apiPost('trash_restore', { id: e.id });
       if (!x.ok) { toast(x.error || 'Errore', true); await refresh(); return; }
       toast('Ripristinato in /' + x.path);
-      load(S.cwd);
+      if (rowsEl) load(S.cwd);   // l'elenco file c'è solo nella vista File (non nel Registro)
       await refresh();
     });
     tr.querySelector('.tr-purge').onclick = act(async () => {

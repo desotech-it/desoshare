@@ -1023,6 +1023,59 @@ TIDS=$(curl -s -b $JAR "$B/api.php?action=trash_list" | php -r '$d=json_decode(s
 has "svuota solo gli id indicati" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "ids=$TIDS" "$B/api.php?action=trash_purge")" '"purged":1'
 has "la voce non indicata resta nel cestino" "$(curl -s -b $JAR "$B/api.php?action=trash_list")" '"name":"b.txt"'
 
+echo "=== Cestino: il ripristino rispetta i nomi prenotati dagli upload via link (#78) ==="
+mk '' rsvfix
+RT=$(mkshare rsvfix manage | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+mkf rep.txt 'originale'; lup "$RT" rep.txt rep.txt
+lop link_delete "$RT" --data-urlencode 'paths=["rep.txt"]'
+RID=$(jv "$(jfind "$(trash_l)" entries orig rsvfix/rep.txt)" id)
+RORIG=$(AD="$AD" RID="$RID" php -r 'foreach(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"] as $e) if($e["id"]===getenv("RID")) echo $e["orig"];')
+# Prenotazione come la fa upload_finish via link (link_claim) mentre scrive rep.txt.
+AD="$AD" P="$RORIG" php -r '$f=getenv("AD")."/link_files.json"; $d=is_file($f)?json_decode(file_get_contents($f),true):[];
+$d["pending"][getenv("P")]=time(); file_put_contents($f,json_encode($d));'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$RID" "$B/api.php?action=trash_restore"
+eq "nome prenotato da un upload via link → ripristino come «rep (2).txt»" "$HC|$(jv "$BODY" path)" '200|rsvfix/rep (2).txt'
+eq "… col contenuto originale" "$(own 'rsvfix/rep (2).txt')" 'originale'
+eq "… la prenotazione dell'upload resta, quella del ripristino è rilasciata" "$(AD="$AD" php -r 'echo implode(",", array_map("basename", array_keys(json_decode(file_get_contents(getenv("AD")."/link_files.json"),true)["pending"]??[])));')" 'rep.txt'
+AD="$AD" php -r '$f=getenv("AD")."/link_files.json"; $d=json_decode(file_get_contents($f),true); $d["pending"]=[]; file_put_contents($f,json_encode($d));'
+
+echo "=== Cestino: voce rimasta in stato «moving» (processo morto a metà, #83) ==="
+# tstate ID ETÀ-IN-SECONDI: simula lo stato lasciato da trash_move interrotto (gc_at=0 forza la pulizia).
+tstate(){ AD="$AD" I="$1" A="$2" php -r '$f=getenv("AD")."/trash.json"; $d=json_decode(file_get_contents($f),true);
+foreach($d["entries"] as $i=>$e) if($e["id"]===getenv("I")){ $d["entries"][$i]["state"]="moving"; $d["entries"][$i]["at"]=time()-(int)getenv("A"); }
+$d["gc_at"]=0; file_put_contents($f,json_encode($d));'; }
+torig(){ AD="$AD" I="$1" php -r 'foreach(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"] as $e) if($e["id"]===getenv("I")) echo $e["orig"];'; }
+mk '' stuck; mk stuck d; nf stuck/d f1.txt uno; nf stuck/d f2.txt due
+for n in g h k; do nf stuck $n.txt "$n$n"; done
+KT=$(mkshare stuck manage | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+lop link_delete "$KT" --data-urlencode 'paths=["d","g.txt","h.txt","k.txt"]'
+eq "quattro elementi nel cestino" "$(jv "$BODY" deleted)" '4'
+TLS=$(trash_l); SD=$(jv "$(jfind "$TLS" entries orig stuck/d)" id); SG=$(jv "$(jfind "$TLS" entries orig stuck/g.txt)" id)
+SH=$(jv "$(jfind "$TLS" entries orig stuck/h.txt)" id); SK=$(jv "$(jfind "$TLS" entries orig stuck/k.txt)" id)
+# d: spostata a metà (f1 nel cestino, f2 ancora all'origine); k: mai partita (tutto all'origine).
+mkdir -p "$ST/$(torig "$SD")"; mv "$ST/~cestino/admin/$SD/d/f2.txt" "$ST/$(torig "$SD")/"
+mv "$ST/~cestino/admin/$SK/k.txt" "$ST/$(torig "$SK")"; rm -rf "$ST/~cestino/admin/$SK"
+tstate "$SD" 60
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$SD" "$B/api.php?action=trash_restore"
+eq "spostamento appena iniziato: ripristino rimandato (409)" "$HC" '409'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$SD" "$B/api.php?action=trash_purge"
+eq "… ed eliminazione rimandata (404)" "$HC" '404'
+tstate "$SD" 7300; tstate "$SG" 7300; tstate "$SK" 7300; tstate "$SH" $((31*86400))
+TLS=$(trash_l)
+hasnt "«moving» scaduto oltre i 30 giorni: il gc lo elimina" "$TLS" "$SH"
+[ -n "$SH" ] && [ ! -e "$ST/~cestino/admin/$SH" ] && ok "… anche dallo storage" || no "… anche dallo storage" "$SH"
+eq "«moving» da oltre 2 ore: la voce risulta parziale" "$(jv "$(jfind "$TLS" entries id "$SD")" state)" 'partial'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$SD" "$B/api.php?action=trash_restore"
+eq "… ripristino di ciò che è nel cestino (origine occupata dal resto)" "$HC|$(jv "$BODY" path)" '200|stuck/d (2)'
+eq "… nessun file perso" "$(own 'stuck/d (2)/f1.txt')|$(own stuck/d/f2.txt)" 'uno|due'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$SG" "$B/api.php?action=trash_purge"
+eq "… eliminazione definitiva" "$HC|$BODY" '200|{"ok":true,"purged":1}'
+[ -n "$SG" ] && [ ! -e "$ST/~cestino/admin/$SG" ] && ok "… rimossa dallo storage" || no "… rimossa dallo storage" "$SG"
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "id=$SK" "$B/api.php?action=trash_restore"
+eq "spostamento mai partito: la voce sparisce (410)" "$HC|$(jv "$BODY" error)" "410|L'elemento non era stato spostato: è ancora al suo posto"
+eq "… e il file è ancora al suo posto" "$(own stuck/k.txt)" 'kk'
+hasnt "… niente più voci di stuck/ nel cestino" "$(trash_l)" '"orig":"stuck/'
+
 echo "=== Nuova scadenza di un link ==="
 UT=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=docs --data-urlencode ttl=3600 --data-urlencode mode=view "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
 UR=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode token=$UT --data-urlencode ttl=2592000 "$B/api.php?action=share_update")

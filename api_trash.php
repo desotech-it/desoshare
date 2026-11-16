@@ -13,7 +13,7 @@ function action_trash_list(): void {
             'orig' => user_strip((string) $e['orig'], $u['username']),     // relativo alla home
             'at' => (int) $e['at'], 'by' => (string) ($e['by'] ?? ''),
             'expires_in' => max(0, (int) $e['at'] + TRASH_DAYS * 86400 - $now),
-            'state' => (string) ($e['state'] ?? ''),    // 'partial': spostamento interrotto (S3), ripristinabile
+            'state' => trash_state($e),    // 'partial': spostamento interrotto (S3, o 'moving' scaduto), ripristinabile
         ];
     }
     json_out(['ok' => true, 'entries' => $out, 'days' => TRASH_DAYS]);

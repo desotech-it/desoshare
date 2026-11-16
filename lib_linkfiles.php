@@ -157,6 +157,21 @@ function link_claim(array $s, string $dir, string $name): array {
     }
     return ['error' => 'Cartella molto attiva: riprova', 'code' => 409];
 }
+// Prenota un nome LIBERO per chi scrive fuori dagli upload via link (ripristino dal
+// cestino), sotto lo stesso lock di link_upload_target(): false se è già prenotato.
+// Il chiamante ricontrolla poi lo storage e rilascia con link_upload_release().
+function link_name_reserve(string $abs): bool {
+    $ok = false;
+    with_json_lock(linkfiles_file(), function (array $d) use ($abs, &$ok) {
+        $pending = link_pending($d);
+        if (isset($pending[$abs])) return null;
+        $pending[$abs] = time();
+        $d['pending'] = $pending;
+        $ok = true;
+        return $d;
+    });
+    return $ok;
+}
 function link_upload_release(string $abs): void {
     with_json_lock(linkfiles_file(), function (array $d) use ($abs) {
         if (!isset($d['pending'][$abs])) return null;
