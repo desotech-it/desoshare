@@ -8,12 +8,12 @@ function action_zip(): void {
     $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);
     if (is_string($paths)) $paths = [$paths];
     $raw = count((array) $paths);
-    $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
+    $paths = array_values(array_filter((array) $paths, fn($x) => is_string($x) && $x !== ''));
     // paths[]='' = ZIP della RADICE della propria home (bottone «Scarica ZIP»
     // senza selezione): il filtro degli elementi vuoti non deve renderlo un 400.
     if (empty($paths)) { if ($raw > 0) $paths = ['']; else json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400); }
 
-    $logical = array_map(fn($rel) => user_path((string) $rel), $paths);
+    $logical = array_map(fn($rel) => user_path($rel), $paths);
     foreach ($logical as $lp) access_log('zip', ['path' => access_rel($lp, user_home()), 'via' => 'server']);
     $tmp = zip_logical($logical);   // zip via storage (Local o S3), confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
@@ -38,10 +38,10 @@ function action_zip_manifest(): void {
     $paths = $_POST['paths'] ?? ($_GET['paths'] ?? []);   // anche via POST (selezioni ampie)
     if (is_string($paths)) $paths = [$paths];
     $raw = count((array) $paths);
-    $paths = array_values(array_filter((array) $paths, fn($x) => $x !== ''));
+    $paths = array_values(array_filter((array) $paths, fn($x) => is_string($x) && $x !== ''));
     if (empty($paths)) { if ($raw > 0) $paths = ['']; else json_out(['ok' => false, 'error' => 'Niente da comprimere'], 400); }   // '' = radice
 
-    $logical = array_map(fn($rel) => user_path((string) $rel), $paths);   // confinato alla home utente
+    $logical = array_map(fn($rel) => user_path($rel), $paths);   // confinato alla home utente
     $b = basename($logical[0]);     // confronto esplicito con '': "0" è un nome valido (falsy per ?:)
     $zipname = (count($logical) === 1) ? ($b === '' ? 'cartella' : $b) . '.zip' : 'share-download.zip';
     $man = zip_manifest_build($logical, $zipname, ZIP_PRESIGN_TTL);

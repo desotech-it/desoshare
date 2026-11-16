@@ -10,6 +10,17 @@ function json_out($data, int $code = 200): void {
     exit;
 }
 
+// ─── Parametri della richiesta ───────────────────────────────────────────────
+// Un parametro atteso come stringa può arrivare come array (name[]=x): niente
+// TypeError fatale (500 con il percorso del server nel corpo), ma un 400.
+function param_str(array $src, string $key, string $default = ''): string {
+    $v = $src[$key] ?? $default;
+    if (!is_string($v)) json_out(['ok' => false, 'error' => 'Parametro non valido: ' . $key], 400);
+    return $v;
+}
+function post_str(string $key, string $default = ''): string { return param_str($_POST, $key, $default); }
+function get_str(string $key, string $default = ''): string { return param_str($_GET, $key, $default); }
+function req_str(string $key, string $default = ''): string { return param_str($_REQUEST, $key, $default); }
 
 // ─── Utilità ─────────────────────────────────────────────────────────────────
 function human_size(int $b): string {

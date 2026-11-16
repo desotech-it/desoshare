@@ -20,10 +20,9 @@ function upload_uid(string $uid): string {
 function upload_ctx(): array {
     static $ctx = null;
     if ($ctx !== null) return $ctx;
-    $t = $_REQUEST['t'] ?? '';
-    $rel = $_REQUEST['path'] ?? '';
-    if (!is_string($rel)) $rel = '';
-    if (is_string($t) && $t !== '') {
+    $t = req_str('t');
+    $rel = req_str('path');
+    if ($t !== '') {
         $s = share_lookup($t);
         if (!$s) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
         if (($s['type'] ?? '') !== 'dir') json_out(['ok' => false, 'error' => 'Questo link non è una cartella'], 400);
@@ -42,8 +41,7 @@ function upload_ctx(): array {
 // CSRF solo per la sessione: con un token di link non c'è sessione da proteggere
 // (chi ha il token può già fare la stessa richiesta direttamente).
 function upload_csrf(): void {
-    $t = $_REQUEST['t'] ?? '';
-    if (!is_string($t) || $t === '') csrf_check();
+    if (req_str('t') === '') csrf_check();
 }
 // Chiave di staging legata al PRINCIPALE (utente, oppure link): due utenti col
 // medesimo uid client (stesso nome/size/mtime) NON condividono mai lo stesso
@@ -56,7 +54,7 @@ function upload_part(string $uid): string { return upload_dir() . '/' . upload_s
 // Stato dell'upload: quali blocchi sono già stati ricevuti (per riprendere).
 function action_upload_status(): void {
     upload_ctx();
-    $uid = upload_uid($_GET['uid'] ?? '');
+    $uid = upload_uid(get_str('uid'));
     $m = manifest_read($uid);
     $parts = array_map('intval', array_keys($m['parts']));
     sort($parts);
@@ -66,7 +64,7 @@ function action_upload_status(): void {
 // Riceve un blocco e lo scrive al suo offset. Supporta invii paralleli e fuori ordine.
 function action_upload_chunk(): void {
     $cx = upload_ctx();
-    $uid = upload_uid($_POST['uid'] ?? '');
+    $uid = upload_uid(post_str('uid'));
     $index = (int) ($_POST['index'] ?? -1);
     $offset = (int) ($_POST['offset'] ?? -1);
     $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
@@ -85,7 +83,7 @@ function action_upload_chunk(): void {
     // quota non deve dare un 413 errato (upload_finish riverifica comunque).
     if (!is_file(upload_part($uid))) {
         $repl = 0;
-        $rn = basename(trim((string) ($_POST['name'] ?? '')));
+        $rn = basename(trim(post_str('name')));
         // Via link la versione sostituita finisce nel cestino (conta ancora) o il nome cambia: niente sconto.
         if ($rn !== '' && valid_name($rn) && !$cx['link']) {
             $dest = logical_join($cx['base'], $rn);
@@ -128,8 +126,8 @@ function action_upload_chunk(): void {
 // Finalizza: verifica che tutti i blocchi ci siano e sposta il file (creando le cartelle).
 function action_upload_finish(): void {
     $cx = upload_ctx();
-    $uid = upload_uid($_POST['uid'] ?? '');
-    $name = basename(trim($_POST['name'] ?? ''));
+    $uid = upload_uid(post_str('uid'));
+    $name = basename(trim(post_str('name')));
     $total = (int) ($_POST['total'] ?? -1);
     $chunkSize = (int) ($_POST['chunk_size'] ?? 0);
     if (!valid_name($name)) json_out(['ok' => false, 'error' => 'Nome non valido'], 400);

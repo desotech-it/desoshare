@@ -23,7 +23,7 @@ function action_users_list(): void {
 // o quelle indicate da ?refresh=<username|all> (bottone "Aggiorna").
 function action_usage_list(): void {
     require_admin();
-    $refresh = (string) ($_GET['refresh'] ?? '');
+    $refresh = get_str('refresh');
     $cap = 8; $recalc = 0; $out = [];
     foreach (users_load()['users'] as $u) {
         $name = (string) $u['username'];
@@ -54,9 +54,9 @@ function action_usage_list(): void {
 // ─── Utenti: crea/modifica (admin) ───────────────────────────────────────────
 function action_user_save(): void {
     $me = require_admin();
-    $username = trim($_POST['username'] ?? '');
-    $original = trim($_POST['original'] ?? '');
-    $password = (string) ($_POST['password'] ?? '');
+    $username = trim(post_str('username'));
+    $original = trim(post_str('original'));
+    $password = post_str('password');
     $role = (($_POST['role'] ?? 'user') === 'admin') ? 'admin' : 'user';
     $permission = (($_POST['permission'] ?? 'read') === 'write') ? 'write' : 'read';
     if (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $username)) {
@@ -208,7 +208,7 @@ function action_user_save(): void {
 // ─── Utenti: elimina (admin) ─────────────────────────────────────────────────
 function action_user_delete(): void {
     $me = require_admin();
-    $username = trim($_POST['username'] ?? '');
+    $username = trim(post_str('username'));
     if ($username === $me['username']) json_out(['ok' => false, 'error' => 'Non puoi eliminare te stesso'], 400);
     $err = null; $deleted = 0;
     with_json_lock(USERS_FILE, function (array $data) use ($username, &$err, &$deleted) {

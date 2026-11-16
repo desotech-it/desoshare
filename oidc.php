@@ -203,20 +203,21 @@ function oidc_callback(): void {
     if (!oidc_enabled()) { header('Location: index.php'); exit; }
     $c = oidc_cfg();
 
-    if (!empty($_GET['error'])) {
-        $e = preg_replace('/[^a-zA-Z0-9_\-]/', '', (string) $_GET['error']);
-        $desc = trim(mb_substr(preg_replace('/[\x00-\x1F]+/', ' ', (string) ($_GET['error_description'] ?? '')), 0, 200));
+    $g = fn(string $k): string => is_string($_GET[$k] ?? null) ? $_GET[$k] : '';   // error[]= ecc.: niente «Array»
+    if ($g('error') !== '') {
+        $e = preg_replace('/[^a-zA-Z0-9_\-]/', '', $g('error'));
+        $desc = trim(mb_substr(preg_replace('/[\x00-\x1F]+/', ' ', $g('error_description')), 0, 200));
         oidc_fail('accesso negato dal provider (' . $e . ($desc !== '' ? ': ' . $desc : '') . ').');
     }
 
     // CSRF: lo state deve combaciare con quello in sessione, poi va azzerato.
-    $state = (string) ($_GET['state'] ?? '');
+    $state = $g('state');
     $sessState = (string) ($_SESSION['oidc_state'] ?? '');
     $nonce = (string) ($_SESSION['oidc_nonce'] ?? '');
     unset($_SESSION['oidc_state']);
     if ($state === '' || !hash_equals($sessState, $state)) oidc_fail('stato non valido, riprova.');
 
-    $code = (string) ($_GET['code'] ?? '');
+    $code = $g('code');
     if ($code === '') oidc_fail('codice di autorizzazione mancante.');
 
     // Scambio del code (client_secret_basic) con code_verifier (PKCE).

@@ -1198,8 +1198,28 @@ PRES=$(APP="$APP_DIR" F="$SBX/persist.json" php "$SBX/punit.php" 2>&1)
 has "persistenza: 50 RMW sotto lock accumulano (n=51)" "$PRES" "n=51;"
 has "persistenza: scrittura atomica senza .tmp residui" "$PRES" "tmp=0;"
 
+echo "=== Parametri array (name[]=x): 400, mai un errore fatale col percorso del server (#90) ==="
+mk "" arr90
+A90=$(jv "$(mkshare arr90 edit)" token)
+U90=$(openssl rand -hex 16)
+rq --data-urlencode "uid=$U90" --data-urlencode "name[]=x" --data-urlencode total=0 --data-urlencode chunk_size=1 "$B/api.php?action=upload_finish&t=$A90"
+eq "upload_finish via link con name[] → 400" "$HC" 400
+hasnt "upload_finish via link: nessun percorso del server nel corpo" "$BODY" "$SBX"
+for c in "mkdir|path=arr90|name[]=x" "newfile|path=arr90|name[]=x" "mkdir|path[]=arr90|name=y" "rename|from=arr90|to[]=z" \
+         "upload_finish|uid=$U90|name[]=x" "share_create|path[]=arr90|ttl=3600" "note_save|path[]=a.txt|content=x" "note_save|path=a.txt|content[]=x"; do
+  IFS='|' read -r a p1 p2 <<<"$c"
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "$p1" --data-urlencode "$p2" "$B/api.php?action=$a"
+  eq "$a ($p1, $p2) → 400" "$HC" 400
+  hasnt "$a: nessun percorso del server nel corpo" "$BODY" "$SBX"
+done
+for q in "list&path[]=x" "download&path[]=x" "upload_status&uid[]=x" "usage_list&refresh[]=x" "upload_status&t[]=x&uid=$U90"; do
+  rq -b $JAR "$B/api.php?action=$q"; eq "GET $q → 400" "$HC" 400; hasnt "GET $q: nessun percorso del server" "$BODY" "$SBX"
+done
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode 'paths=[["x"],"nonc"]' "$B/api.php?action=delete"
+eq "delete con un percorso non stringa: errore per elemento, niente 500" "$HC|$(jv "$BODY" ok deleted)" "200|true|0"
+
 echo "=== Cleanup operazioni ==="
-has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt"]' "$B/api.php?action=delete")" '"ok":true'
+has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90"]' "$B/api.php?action=delete")" '"ok":true'
 
 echo ""
 echo "Risultato: $PASS superati, $FAIL falliti."

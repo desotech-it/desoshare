@@ -1,9 +1,9 @@
 <?php
 // api_notes.php — note collaborative (modulo di api.php, incluso dal dispatcher)
 function note_context(bool $checkCsrf): array {
-    $token = $_REQUEST['t'] ?? '';
+    $token = req_str('t');
     if ($token !== '') {
-        $share = is_string($token) ? share_lookup($token) : null;
+        $share = share_lookup($token);
         if (!$share || (($share['type'] ?? '') !== 'file')) json_out(['ok' => false, 'error' => 'Link non valido o scaduto'], 404);
         share_require_access($share, $checkCsrf);   // PIN: sessione sbloccata (+ CSRF per le scritture)
         $logical = share_base($share);
@@ -15,7 +15,7 @@ function note_context(bool $checkCsrf): array {
     }
     $u = require_login();
     if ($checkCsrf) csrf_check();
-    return ['logical' => user_path($_REQUEST['path'] ?? ''), 'editable' => can_write(), 'user' => $u['username'], 'owner' => (string) $u['username']];
+    return ['logical' => user_path(req_str('path')), 'editable' => can_write(), 'user' => $u['username'], 'owner' => (string) $u['username']];
 }
 
 // ─── Note: apertura nell'editor (sessione o link condiviso) ──────────────────
@@ -46,7 +46,7 @@ function action_note_open(): void {
 // ─── Note: relay di sincronizzazione (Yjs updates + awareness) ───────────────
 function action_note_sync(): void {
     $ctx = note_context(true);
-    $id = $_POST['id'] ?? '';
+    $id = post_str('id');
     if (!preg_match('/^[a-f0-9]{40}$/', $id)) json_out(['ok' => false, 'error' => 'Identificativo nota non valido'], 400);
     // Il client non può sincronizzare un id diverso dalla nota del suo contesto.
     if ($id !== note_id($ctx['logical'])) json_out(['ok' => false, 'error' => 'Nota non corrispondente'], 403);
@@ -60,7 +60,7 @@ function action_note_sync(): void {
     // salvataggio contiene lo snapshot completo — e i suoi update NON vengono
     // accodati (li rimanderà sotto la nuova epoca).
     $gen = note_gen_ensure($id);
-    $cgen = (string) ($_POST['gen'] ?? '');
+    $cgen = post_str('gen');
     $genChanged = $cgen !== '' && !hash_equals($gen, $cgen);
     if ($genChanged) $since = 0;
 
@@ -92,7 +92,7 @@ function action_note_sync(): void {
     // stato con una nuova note_open.
     if ($genChanged && !$lines) json_out(['ok' => true, 'resync' => true, 'gen' => $gen]);
 
-    $aware = note_aware_exchange($id, (string) ($_POST['client'] ?? ''), (string) ($_POST['aware'] ?? ''), $ctx['user']);
+    $aware = note_aware_exchange($id, post_str('client'), post_str('aware'), $ctx['user']);
     json_out(['ok' => true, 'updates' => array_slice($lines, $since), 'offset' => count($lines), 'gen' => $gen, 'relay_full' => $relayFull, 'aware' => $aware]);
 }
 
@@ -100,7 +100,7 @@ function action_note_sync(): void {
 function action_note_save(): void {
     $ctx = note_context(true);
     if (!$ctx['editable']) json_out(['ok' => false, 'error' => 'Permesso di sola lettura'], 403);
-    $content = (string) ($_POST['content'] ?? '');
+    $content = post_str('content');
     if (strlen($content) > note_max_bytes()) json_out(['ok' => false, 'error' => 'Contenuto troppo grande'], 413);
     $prev = 0;
     if (storage()->typeOf($ctx['logical']) === 'file') {

@@ -47,7 +47,7 @@ function csrf_token(): string {
 }
 function csrf_check(): void {
     $t = $_SERVER['HTTP_X_CSRF'] ?? ($_POST['csrf'] ?? '');
-    if (!hash_equals($_SESSION['csrf'] ?? '', (string) $t)) {
+    if (!is_string($t) || !hash_equals((string) ($_SESSION['csrf'] ?? ''), $t)) {   // csrf[]= → 419, non TypeError
         json_out(['ok' => false, 'error' => 'Token di sicurezza non valido, ricarica la pagina'], 419);
     }
 }
