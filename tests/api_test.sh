@@ -950,6 +950,62 @@ has "eliminazione dell'utente «nuovo» con purge" "$(curl -s -b $JAR -H "X-CSRF
 [ ! -e "$ST/~cestino/nuovo" ] && ok "… il suo cestino sparisce dallo storage" || no "… il suo cestino sparisce dallo storage"
 eq "… e da trash.json" "$(AD="$AD" php -r 'echo count(array_filter(json_decode(file_get_contents(getenv("AD")."/trash.json"),true)["entries"]??[], fn($e)=>($e["owner"]??"")==="nuovo"));')" '0'
 
+echo "=== Sessione ancorata all'utente, non al nome (#79) ==="
+has "utente carla" "$(mkuser carla write)" '"ok":true'
+SJ="$SBX/s79carla"; SC=$(login "$SJ" carla)
+has "admin rinomina carla → carla2" "$(mkuser carla2 write --data-urlencode original=carla)" '"ok":true'
+has "nuovo utente omonimo «carla»" "$(mkuser carla read)" '"ok":true'
+curl -s -b $SJ -H "X-CSRF: $SC" --data-urlencode path= --data-urlencode name=dopo.txt --data-urlencode content=mio "$B/api.php?action=newfile" >/dev/null
+[ -f "$ST/carla2/dopo.txt" ] && [ ! -e "$ST/carla/dopo.txt" ] && ok "la vecchia sessione segue carla2, non passa al nuovo «carla»" || no "la vecchia sessione segue carla2" "$(ls "$ST/carla" "$ST/carla2" 2>&1 | tr '\n' ' ')"
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=carla2 --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+eq "utente eliminato: la sua sessione non vale più (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $SJ "$B/api.php?action=list&path=")" '401'
+has "utente dora" "$(mkuser dora write)" '"ok":true'
+DJ="$SBX/s79dora"; login "$DJ" dora >/dev/null
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=dora --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+has "dora ricreata con lo stesso nome" "$(mkuser dora write)" '"ok":true'
+eq "la sessione della dora eliminata non passa alla nuova (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $DJ "$B/api.php?action=list&path=")" '401'
+# Record legacy (senza id): il login funziona; dopo rinomina e omonimo la vecchia sessione non passa.
+has "utente legacy" "$(mkuser legacy1 write)" '"ok":true'
+AD="$AD" php -r '$f=getenv("AD")."/users.json";$d=json_decode(file_get_contents($f),true);foreach($d["users"] as &$u) if($u["username"]==="legacy1") unset($u["id"]);file_put_contents($f,json_encode($d));'
+LGJ="$SBX/s79legacy"; login "$LGJ" legacy1 >/dev/null
+eq "record legacy: login e sessione funzionano" "$(curl -s -o /dev/null -w '%{http_code}' -b $LGJ "$B/api.php?action=list&path=")" '200'
+mkuser legacy2 write --data-urlencode original=legacy1 >/dev/null; mkuser legacy1 write >/dev/null
+eq "record legacy rinominato + omonimo: la vecchia sessione non passa (401)" "$(curl -s -o /dev/null -w '%{http_code}' -b $LGJ "$B/api.php?action=list&path=")" '401'
+for N in carla dora legacy1 legacy2; do curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$N" --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null; done
+
+echo "=== Registro accessi: segue rinomina ed eliminazione dell'utente (#82) ==="
+racc(){ curl -s -b "$1" "$B/api.php?action=access_list&limit=500"; }
+mkuser regi write >/dev/null
+RJ1="$SBX/r82a"; RC1=$(login "$RJ1" regi)
+curl -s -b $RJ1 -H "X-CSRF: $RC1" --data-urlencode path= --data-urlencode name=privato-regi.txt --data-urlencode content=x "$B/api.php?action=newfile" >/dev/null
+has "regi vede il proprio evento" "$(racc $RJ1)" 'privato-regi.txt'
+mkuser regi2 write --data-urlencode original=regi >/dev/null
+mkuser regi write >/dev/null
+RJ2="$SBX/r82b"; login "$RJ2" regi >/dev/null
+hasnt "rinomina: il nuovo omonimo «regi» non vede le righe del vecchio" "$(racc $RJ2)" 'privato-regi.txt'
+has "rinomina: le righe seguono regi2 (vecchia sessione)" "$(racc $RJ1)" 'privato-regi.txt'
+has "… anche l'attore" "$(curl -s -b $JAR "$B/api.php?action=access_list&owner=regi2&event=upload")" '"actor":"user:regi2","owner":"regi2"'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi2 "$B/api.php?action=user_delete" >/dev/null
+rm -rf "$ST/regi2"; mkuser regi2 write >/dev/null
+RJ3="$SBX/r82c"; login "$RJ3" regi2 >/dev/null
+hasnt "eliminazione senza purge: il nuovo omonimo non vede le righe" "$(racc $RJ3)" 'privato-regi.txt'
+eq "… che restano all'admin" "$(jv "$(jfind "$(curl -s -b $JAR "$B/api.php?action=access_list&event=upload")" rows path privato-regi.txt)" owner)" 'regi2 (eliminato)'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+eq "eliminazione con purge: righe dell'utente rimosse dal registro" "$(cat "$AD"/access/*.jsonl | grep -c '"owner":"regi"')" '0'
+has "… le altre restano" "$(cat "$AD"/access/*.jsonl)" '"owner":"admin"'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=regi2 --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+
+echo "=== Modifica utente: lunghezza minima della password (#94) ==="
+mkuser pwmin write >/dev/null
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode original=pwmin --data-urlencode password=a --data-urlencode permission=write "$B/api.php?action=user_save"
+eq "modifica con password di 1 carattere → 400" "$HC" '400'
+PWJ="$SBX/pwminjar"; curl -s -c $PWJ -b $PWJ --data-urlencode action=login --data-urlencode username=pwmin --data-urlencode password=a -o /dev/null --data-urlencode "csrf=$(precsrf $PWJ)" "$B/index.php"
+eq "… la password corta non è stata impostata" "$(curl -s -o /dev/null -w '%{http_code}' -b $PWJ "$B/api.php?action=list&path=")" '401'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode original=pwmin --data-urlencode password=nuova6 --data-urlencode permission=write "$B/api.php?action=user_save"
+eq "modifica con password di 6 caratteri → ok" "$HC|$BODY" '200|{"ok":true}'
+eq "modifica senza password (invariata) → ok" "$(mkuser pwmin read --data-urlencode original=pwmin --data-urlencode password=)" '{"ok":true}'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode username=pwmin --data-urlencode purge=1 "$B/api.php?action=user_delete" >/dev/null
+
 echo "=== Correzioni dalla revisione: tetto esaurito e svuotamento mirato ==="
 curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path= --data-urlencode name=capfix "$B/api.php?action=mkdir" >/dev/null
 CF=$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode path=capfix --data-urlencode ttl=3600 --data-urlencode mode=manage --data-urlencode upload_limit_mb=1 "$B/api.php?action=share_create" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
@@ -1029,8 +1085,11 @@ has "link: caricamento registrato" "$L" '"event":"upload","actor":"link:Revisore
 hasnt "il PIN non compare mai nel registro" "$(cat $ADIR/*.jsonl)" '98765'
 hasnt "il token completo non compare mai" "$(cat $ADIR/*.jsonl)" "$ATOK"
 rm -f "$SBX/appdata/share_attempts.json"
+# Solo le righe nuove, a minuto azzerato: quelle delle sezioni precedenti dipendono dai tempi.
+rm -f "$ADIR/.lookup.json"
+NLF0=$(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l)
 for i in 1 2 3; do curl -s -o /dev/null "$B/share.php?t=acc-inesistente-$i"; done
-NLF=$(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l)
+NLF=$(( $(acc '&event=share_lookup_fail' | grep -o '"event":"share_lookup_fail"' | wc -l) - NLF0 ))
 [ "$NLF" -ge 1 ] && [ "$NLF" -le 2 ] && ok "indirizzi inesistenti aggregati ($NLF righe per 3 tentativi)" || no "aggregazione indirizzi inesistenti" "$NLF righe"
 rm -f "$SBX/appdata/share_attempts.json"
 LJ="$SBX/acclogin"; curl -s -c $LJ -b $LJ --data-urlencode action=login --data-urlencode username=admin --data-urlencode password=sbagliata --data-urlencode "csrf=$(precsrf $LJ)" "$B/index.php" -o /dev/null
@@ -1092,6 +1151,25 @@ has "settings_get (admin)" "$SG" '"ok":true'
 has "settings espone site_title" "$SG" 'site_title'
 has "settings_save (admin)" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode site_title='DesoLabs Test' --data-urlencode note_poll_ms=2000 --data-urlencode note_max_mb=4 "$B/api.php?action=settings_save")" '"ok":true'
 has "settings_get riflette il salvataggio" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"note_poll_ms":2000'
+# Cambio di backend: evento settings_storage_switch e risposta JSON pulita (#84).
+# S3 fittizio (nessuna chiamata di rete al salvataggio), poi subito di nuovo locale.
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=s3 --data-urlencode s3_endpoint=https://s3.invalid --data-urlencode s3_region=eu --data-urlencode s3_bucket=b --data-urlencode s3_key=k --data-urlencode s3_secret=s "$B/api.php?action=settings_save"
+eq "settings_save locale → s3: risposta JSON pulita" "$HC|$BODY" '200|{"ok":true}'
+rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=local "$B/api.php?action=settings_save"
+eq "settings_save s3 → locale: risposta JSON pulita" "$HC|$BODY" '200|{"ok":true}'
+grep -qF "$(printf '\tsettings_storage_switch\tlocal → s3')" "$AD/audit.log" && ok "audit: cambio locale → s3" || no "audit: cambio locale → s3" "$(grep storage_switch "$AD/audit.log")"
+grep -qF "$(printf '\tsettings_storage_switch\ts3 → local')" "$AD/audit.log" && ok "audit: cambio s3 → locale" || no "audit: cambio s3 → locale"
+eq "nessun cambio: nessun nuovo evento" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode storage_backend=local "$B/api.php?action=settings_save" >/dev/null; grep -c settings_storage_switch "$AD/audit.log")" '2'
+has "di nuovo su storage locale" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"backend":"local"'
+# Quota predefinita: valori non numerici o negativi rifiutati, la quota resta (#93)
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode default_quota_mb=100 "$B/api.php?action=settings_save" >/dev/null
+for V in abc 12abc -5 1.5; do
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "default_quota_mb=$V" "$B/api.php?action=settings_save"
+  eq "quota predefinita «$V» → 400" "$HC" '400'
+done
+has "… la quota predefinita resta 100 MB" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"default_quota_bytes":104857600'
+curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode default_quota_mb=0 "$B/api.php?action=settings_save" >/dev/null
+has "0 = illimitata (quota rimossa)" "$(curl -s -b $JAR "$B/api.php?action=settings_get")" '"default_quota_bytes":0'
 has "note_open usa il poll configurato" "$(curl -s -b $JAR "$B/api.php?action=note_open&path=nota.md")" '"poll_ms":2000'
 has "audit_list contiene le modifiche impostazioni" "$(curl -s -b $JAR "$B/api.php?action=audit_list")" 'settings_update'
 has "non-admin NON vede le impostazioni (403)" "$(curl -s -b $RJAR "$B/api.php?action=settings_get")" 'amministratori'
@@ -1120,6 +1198,15 @@ has "user_delete revoca 1 share" "$DR" '"revoked_shares":1'
 has "user_delete riporta purged:true" "$DR" '"purged":true'
 has "share dell'utente eliminato → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '404'
 [ ! -d "$SBX/storage/eliminando" ] && ok "purge: home eliminata" || no "purge: home ancora presente"
+# Il nome di user_delete finisce in deletePath(): mai «.», «..», «~cestino» o utenti inesistenti (#77)
+mkdir -p "$SBX/storage/fantasma" "$SBX/storage/~cestino/admin/sentinella"; printf x > "$SBX/storage/fantasma/f.txt"
+for N in fantasma '~cestino' 'admin/..' . ..; do   # i più distruttivi per ultimi
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$N" --data-urlencode purge=1 "$B/api.php?action=user_delete"
+  re "user_delete purge di «$N» rifiutato" "$HC" '^40[04]$'
+done
+[ -f "$SBX/storage/admin/nota.txt" ] && [ -d "$SBX/public_html" ] && [ -f "$SBX/appdata/users.json" ] && ok "purge rifiutate: storage, installazione e dati intatti" || no "purge rifiutate: qualcosa è stato cancellato"
+[ -d "$SBX/storage/~cestino/admin/sentinella" ] && [ -f "$SBX/storage/fantasma/f.txt" ] && ok "purge rifiutate: cestino e cartelle residue intatti" || no "purge rifiutate: cestino o cartella residua cancellati"
+rm -rf "$SBX/storage/fantasma" "$SBX/storage/~cestino/admin/sentinella"
 
 echo "=== Difetti strutturali: riuso del nome, share orfane, note non UTF-8/CRLF/BOM ==="
 # 1) Un utente eliminato SENZA i file lascia la home: ricreare lo stesso nome non deve ereditarla.

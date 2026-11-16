@@ -59,7 +59,7 @@ function action_user_save(): void {
     $password = (string) ($_POST['password'] ?? '');
     $role = (($_POST['role'] ?? 'user') === 'admin') ? 'admin' : 'user';
     $permission = (($_POST['permission'] ?? 'read') === 'write') ? 'write' : 'read';
-    if (!preg_match('/^[A-Za-z0-9._-]{3,32}$/', $username)) {
+    if (!username_valid($username)) {
         json_out(['ok' => false, 'error' => 'Username non valido (3-32: lettere, numeri, . _ -)'], 400);
     }
     // Quota: quota_mb >= 0 (0 = illimitata); -1/assente = non modificare (in update) o default (in create).
@@ -72,6 +72,10 @@ function action_user_save(): void {
     $quotaMbIn = $quotaRaw !== '' ? (int) $quotaRaw : -1;
     if ($quotaMbIn !== -1 && ($quotaMbIn < 0 || $quotaMbIn > QUOTA_MAX_MB)) {
         json_out(['ok' => false, 'error' => 'Quota non valida (0 = illimitata, max ' . QUOTA_MAX_MB . ' MB)'], 400);
+    }
+    // Stesso minimo della creazione anche quando la password viene CAMBIATA (vuota = invariata).
+    if ($password !== '' && strlen($password) < 6) {
+        json_out(['ok' => false, 'error' => 'Password troppo corta (min 6 caratteri)'], 400);
     }
     // Calcola l'hash FUORI dalla sezione critica (bcrypt è lento; non tenere il lock).
     $pwHash = $password !== '' ? password_hash($password, PASSWORD_DEFAULT) : '';
@@ -144,6 +148,9 @@ function action_user_save(): void {
         foreach ($data['users'] as $i => $u) if (($u['username'] ?? '') === $username && $i !== $idx) { $err = 'Username già esistente'; $code = 409; return null; }
         if ($idx >= 0) {
             $wasAdmin = ($data['users'][$idx]['role'] ?? '') === 'admin';
+            // Alla rinomina un record legacy riceve l'id: le sessioni aperte col
+            // vecchio nome non passano a un futuro omonimo.
+            if ($original !== $username && empty($data['users'][$idx]['id'])) $data['users'][$idx]['id'] = user_new_id();
             $data['users'][$idx]['username']   = $username;
             $data['users'][$idx]['role']       = $role;
             $data['users'][$idx]['permission'] = $permission;
@@ -156,7 +163,7 @@ function action_user_save(): void {
             if (strlen($password) < 6) { $err = 'Password obbligatoria (min 6 caratteri)'; return null; }
             $quotaBytes = ($quotaMbIn !== -1) ? $quotaMbIn * 1024 * 1024 : (int) setting('default_quota_bytes', 0);
             $data['users'][] = [
-                'username' => $username, 'password_hash' => $pwHash,
+                'id' => user_new_id(), 'username' => $username, 'password_hash' => $pwHash,
                 'role' => $role, 'permission' => $permission, 'quota_bytes' => $quotaBytes,
             ];
             $auditMsg = ['user_create', $username . ' (' . $role . '/' . $permission . ') quota=' . ($quotaBytes ? human_size($quotaBytes) : 'illimitata')];
@@ -195,8 +202,13 @@ function action_user_save(): void {
             if (isset($c[$original])) { $c[$username] = $c[$original]; unset($c[$original]); return $c; }
             return null;
         });
-        // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome.
-        if (($me['username'] ?? '') === $original) $_SESSION['username'] = $username;
+        // Se l'admin ha rinominato sé stesso la sessione deve seguire il nuovo nome
+        // (e l'id appena assegnato, se il record era legacy).
+        if (($me['username'] ?? '') === $original && ($nu = find_user($username))) {
+            $_SESSION['username'] = $username;
+            if (!empty($nu['id'])) $_SESSION['user_id'] = (string) $nu['id'];
+        }
+        access_owner_rewrite($original, $username, true);   // il registro accessi segue il nuovo nome
         migration_guard_end();
         audit('user_rename', $original . ' → ' . $username);
     }
@@ -210,17 +222,22 @@ function action_user_delete(): void {
     $me = require_admin();
     $username = trim($_POST['username'] ?? '');
     if ($username === $me['username']) json_out(['ok' => false, 'error' => 'Non puoi eliminare te stesso'], 400);
-    $err = null; $deleted = 0;
-    with_json_lock(USERS_FILE, function (array $data) use ($username, &$err, &$deleted) {
+    // Il nome finisce in deletePath(): formato valido e utente esistente, prima di
+    // qualunque effetto (con «..» la purge cancellava l'intera installazione).
+    if (!username_valid($username)) json_out(['ok' => false, 'error' => 'Username non valido'], 400);
+    if (!find_user($username)) json_out(['ok' => false, 'error' => 'Utente non trovato'], 404);
+    $err = null; $code = 400; $deleted = 0;
+    with_json_lock(USERS_FILE, function (array $data) use ($username, &$err, &$code, &$deleted) {
         $users = $data['users'] ?? [];
         $before = count($users);
         $users = array_values(array_filter($users, fn($u) => ($u['username'] ?? '') !== $username));
+        if (count($users) === $before) { $err = 'Utente non trovato'; $code = 404; return null; }   // eliminato nel frattempo
         if (!array_filter($users, fn($u) => ($u['role'] ?? '') === 'admin')) { $err = 'Deve restare almeno un amministratore'; return null; }
         $deleted = $before - count($users);
         $data['users'] = $users;
         return $data;
     });
-    if ($err) json_out(['ok' => false, 'error' => $err], 400);
+    if ($err) json_out(['ok' => false, 'error' => $err], $code);
 
     // Cleanup a cascata. Chiude SEMPRE l'esposizione dei dati dell'utente rimosso:
     //  - revoca le sue condivisioni pubbliche (altrimenti i link restano serviti);
@@ -239,11 +256,14 @@ function action_user_delete(): void {
     usage_invalidate($username);
 
     $purged = false;
-    if (!empty($_POST['purge']) && $username !== '') {
+    if (!empty($_POST['purge'])) {
         note_state_purge_tree(user_prefix($username));   // prima del delete: serve il listato (anche privacy)
         $purged = storage()->deletePath(user_prefix($username), true);
         trash_drop_owner($username);
     }
+    // Registro accessi: con la purge le righe se ne vanno; senza, restano all'admin
+    // sotto un proprietario che nessun nuovo utente può avere (spazio e parentesi).
+    access_owner_rewrite($username, $purged ? null : $username . ' (eliminato)');
 
     audit('user_delete', $username . ($revoked ? " (-{$revoked} share)" : '') . ($purged ? ' (+file eliminati)' : ''));
     json_out(['ok' => true, 'deleted' => $deleted, 'revoked_shares' => $revoked, 'purged' => $purged]);

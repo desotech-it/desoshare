@@ -326,6 +326,7 @@ function oidc_callback(): void {
             $event = 'login_sso';
         } else {
             $data['users'][] = [
+                'id'          => user_new_id(),
                 'username'    => $username,
                 'sso'         => true,
                 'sub'         => $sub,
@@ -341,8 +342,7 @@ function oidc_callback(): void {
     });
     if ($err) oidc_fail($err);
 
-    session_regenerate_id(true);
-    $_SESSION['username'] = $username;
+    session_login(find_user($username) ?? ['username' => $username]);
     $_SESSION['oidc_id_token'] = $idToken;   // per il logout (id_token_hint)
     ensure_user_home($username);
     if ($backfill) audit('sso_sub_anchor', $username . ' ancorato a sub=' . substr($sub, 0, 12) . '…');

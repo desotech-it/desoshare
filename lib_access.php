@@ -38,6 +38,34 @@ function access_log(string $event, array $f = []): void {
     @file_put_contents(access_dir() . '/' . $now->format('Y-m') . '.jsonl', $line, FILE_APPEND | LOCK_EX);
     access_gc();
 }
+// Rinomina/eliminazione di un utente: il registro è indicizzato per nome, quindi
+// le righe di cui è proprietario vanno a $new ($actor: anche «user:<vecchio>»)
+// oppure, con $new null, si eliminano; mai lasciate a un futuro omonimo.
+// Riscrittura sul posto sotto lo stesso flock con cui access_log appende.
+function access_owner_rewrite(string $old, ?string $new, bool $actor = false): void {
+    if ($old === '') return;
+    foreach (glob(access_dir() . '/*.jsonl') ?: [] as $file) {
+        $fh = @fopen($file, 'r+b');
+        if (!$fh) continue;
+        if (!flock($fh, LOCK_EX)) { fclose($fh); continue; }
+        $tmp = fopen('php://temp', 'w+b'); $changed = false;
+        while (($line = fgets($fh)) !== false) {
+            $r = str_contains($line, $old) ? json_decode($line, true) : null;
+            if (!is_array($r) || ($r['owner'] ?? '') !== $old) { fwrite($tmp, $line); continue; }
+            $changed = true;
+            if ($new === null) continue;
+            $r['owner'] = $new;
+            if ($actor && ($r['actor'] ?? '') === 'user:' . $old) $r['actor'] = 'user:' . $new;
+            fwrite($tmp, json_encode($r, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
+        }
+        if ($changed) {
+            rewind($tmp); ftruncate($fh, 0); rewind($fh);
+            stream_copy_to_stream($tmp, $fh); fflush($fh);
+        }
+        fclose($tmp); flock($fh, LOCK_UN); fclose($fh);
+    }
+}
+
 // Download: con S3 si registra la richiesta del presigned; preview distingue l'anteprima.
 function access_dl_event(): string { return ($_GET['purpose'] ?? '') === 'preview' ? 'preview' : 'download'; }
 function access_dl_via(): string {

@@ -17,9 +17,29 @@ function boot(): void {
 
 
 // ─── Sessione / permessi ─────────────────────────────────────────────────────
+// La sessione è ancorata all'id del record, non al solo nome: dopo una rinomina
+// segue l'utente, e un omonimo creato dopo (o un utente eliminato) non la eredita.
 function current_user(): ?array {
     if (empty($_SESSION['username'])) return null;
-    return find_user($_SESSION['username']);
+    $sid = (string) ($_SESSION['user_id'] ?? '');
+    if ($sid !== '') {
+        foreach (users_load()['users'] as $u) {
+            if (!hash_equals((string) ($u['id'] ?? ''), $sid)) continue;
+            $_SESSION['username'] = (string) $u['username'];   // rinominato: il nome segue
+            return $u;
+        }
+        return null;                                            // utente eliminato
+    }
+    // Sessione senza id (aperta su un record legacy): vale solo finché il record
+    // con quel nome è ancora legacy; un record con id è per forza un altro utente.
+    $u = find_user((string) $_SESSION['username']);
+    return ($u && empty($u['id'])) ? $u : null;
+}
+// Apre la sessione dell'utente (login locale, setup, SSO).
+function session_login(array $u): void {
+    session_regenerate_id(true);
+    $_SESSION['username'] = (string) $u['username'];
+    if (!empty($u['id'])) $_SESSION['user_id'] = (string) $u['id']; else unset($_SESSION['user_id']);
 }
 function is_admin(): bool  { $u = current_user(); return $u && ($u['role'] ?? '') === 'admin'; }
 function can_write(): bool { $u = current_user(); return $u && (($u['role'] ?? '') === 'admin' || ($u['permission'] ?? '') === 'write'); }
