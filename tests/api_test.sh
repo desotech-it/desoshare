@@ -1120,6 +1120,15 @@ has "user_delete revoca 1 share" "$DR" '"revoked_shares":1'
 has "user_delete riporta purged:true" "$DR" '"purged":true'
 has "share dell'utente eliminato → 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$TDTOK&dl=1")" '404'
 [ ! -d "$SBX/storage/eliminando" ] && ok "purge: home eliminata" || no "purge: home ancora presente"
+# Il nome di user_delete finisce in deletePath(): mai «.», «..», «~cestino» o utenti inesistenti (#77)
+mkdir -p "$SBX/storage/fantasma" "$SBX/storage/~cestino/admin/sentinella"; printf x > "$SBX/storage/fantasma/f.txt"
+for N in fantasma '~cestino' 'admin/..' . ..; do   # i più distruttivi per ultimi
+  rq -b $JAR -H "X-CSRF: $CSRF" --data-urlencode "username=$N" --data-urlencode purge=1 "$B/api.php?action=user_delete"
+  re "user_delete purge di «$N» rifiutato" "$HC" '^40[04]$'
+done
+[ -f "$SBX/storage/admin/nota.txt" ] && [ -d "$SBX/public_html" ] && [ -f "$SBX/appdata/users.json" ] && ok "purge rifiutate: storage, installazione e dati intatti" || no "purge rifiutate: qualcosa è stato cancellato"
+[ -d "$SBX/storage/~cestino/admin/sentinella" ] && [ -f "$SBX/storage/fantasma/f.txt" ] && ok "purge rifiutate: cestino e cartelle residue intatti" || no "purge rifiutate: cestino o cartella residua cancellati"
+rm -rf "$SBX/storage/fantasma" "$SBX/storage/~cestino/admin/sentinella"
 
 echo "=== Difetti strutturali: riuso del nome, share orfane, note non UTF-8/CRLF/BOM ==="
 # 1) Un utente eliminato SENZA i file lascia la home: ricreare lo stesso nome non deve ereditarla.

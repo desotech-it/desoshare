@@ -16,6 +16,13 @@ function find_user(string $username): ?array {
 }
 
 
+// Formato ammesso per gli username: un solo segmento di percorso sicuro.
+// Da usare su OGNI nome ricevuto in input prima di costruirci un percorso:
+// «.», «..» e «~cestino» puntano a radice dello storage, installazione e cestino.
+function username_valid(string $username): bool {
+    return (bool) preg_match('/^[A-Za-z0-9._-]{3,32}$/', $username);
+}
+
 function count_admins(array $data): int {
     return count(array_filter($data['users'], fn($u) => ($u['role'] ?? '') === 'admin'));
 }
