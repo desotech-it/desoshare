@@ -58,9 +58,24 @@ function sheet(type) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Secondo foglio ' + type]]), 'Secondo');
   return XLSX.write(wb, { type: 'buffer', bookType: type });
 }
+// #81: una sola cella in XFD2000 (file di pochi KB) → 2000 × 16384 celle se le colonne non sono limitate.
+function wideSheet() {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, { A1: { t: 's', v: 'Inizio largo' }, XFD2000: { t: 's', v: 'Fine' }, '!ref': 'A1:XFD2000' }, 'Largo');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
+// #97: primo foglio oltre MAX_ROWS (2000), secondo piccolo: tornando sul primo l'avviso deve restare.
+function longSheet() {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(Array.from({ length: 2100 }, (_, i) => ['Riga ' + (i + 1)])), 'Lungo');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Corto']]), 'Corto');
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+}
 const files = {
   'doc.pdf': pdf('Ciao PDF'),
-  'nota.md': Buffer.from('# Titolo MD\n\nTesto **forte**.\n\n<script>parent.__xss=1</script><img src=x onerror="parent.__xss=1">\n'),
+  'nota.md': Buffer.from('# Titolo MD\n\nTesto **forte**.\n\n<script>parent.__xss=1</script><img src=x onerror="parent.__xss=1">\n'
+    // #97: risorse esterne (immagine, sfondo CSS) bloccate, link conservato
+    + '\n<img src="http://esterno.invalid/pixel.png"> <span style="background:url(http://esterno.invalid/sfondo.png)">x</span>\n\n[link esterno](https://example.org/)\n'),
   'testo.txt': Buffer.from('Riga di testo semplice\n'),
   'lettera.docx': await docx('Ciao DOCX'),
   'lettera.rtf': Buffer.from('{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}\\f0\\fs24 Ciao RTF\\par}'),
@@ -68,6 +83,8 @@ const files = {
   'vecchio.xls': sheet('xls'),
   'dati.csv': Buffer.from('Nome;Valore\nCella CSV;7\n'),
   'antico.doc': Buffer.from('\xd0\xcf\x11\xe0 finto doc', 'latin1'),
+  'largo.xlsx': wideSheet(),
+  'lungo.xlsx': longSheet(),
 };
 const EXPECT = {
   'doc.pdf': { canvas: true }, 'nota.md': { text: 'Titolo MD', frame: true }, 'lettera.docx': { text: 'Ciao DOCX', frame: true },
@@ -102,6 +119,9 @@ const share = await api('share_create', { path: 'docs', ttl: '3600', mode: 'view
 
 // ─── Browser ─────────────────────────────────────────────────────────────────
 const browser = await chromium.launch();
+// #97: richieste verso terzi partite dalle anteprime (devono restare 0)
+const external = [];
+const trackExternal = c => c.route('http://esterno.invalid/**', r => { external.push(r.request().url()); return r.fulfill({ status: 404, body: '' }); });
 async function check(page, where, open) {
   for (const [name, exp] of Object.entries(EXPECT)) {
     await open(name);
@@ -119,6 +139,7 @@ async function check(page, where, open) {
         const fr = await (await page.waitForSelector('.pv-frame', { timeout: 15000 })).contentFrame();
         await fr.waitForFunction(t => document.body.innerText.includes(t), exp.text, { timeout: 15000 });
         ok(`${where}: ${name} mostra «${exp.text}»`);
+        if (name === 'nota.md') (await fr.$('a[href="https://example.org/"]')) ? ok(`${where}: nota.md conserva il link esterno`) : bad(`${where}: link esterno sparito`);
         const sb = await page.$eval('.pv-frame', f => f.getAttribute('sandbox'));
         sb === 'allow-same-origin' ? ok(`${where}: ${name} in iframe sandbox senza script`) : bad(`${where}: sandbox «${sb}»`);
         if (exp.tab) {
@@ -139,6 +160,7 @@ async function check(page, where, open) {
 
 const errs = [];
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+await trackExternal(ctx);
 await ctx.addCookies([...jar].map(([name, value]) => ({ name, value, url: B })));
 const app = await ctx.newPage();
 const pdfReq = []; app.on('request', r => { if (/\/pdf(\.worker)?\.min\.js/.test(r.url())) pdfReq.push(r.url()); });
@@ -148,6 +170,40 @@ await app.click('#rows .row .label:text("docs")');
 await app.waitForSelector('#rows .row .label:text("doc.pdf")');
 console.log('\nApp (sessione)');
 await check(app, 'app', n => app.click(`#rows .row .label:text("${n}")`));
+// #81: foglio larghissimo → colonne limitate e risposta in pochi secondi (prima ~30 s di
+// blocco). Pagina a parte: senza il limite resta bloccata e si chiude e basta.
+{
+  const wp = await ctx.newPage();
+  wp.on('pageerror', e => errs.push('app: ' + e.message));
+  await wp.goto(B + '/');
+  await wp.click('#rows .row .label:text("docs")');
+  const t0 = Date.now();
+  try {
+    await wp.click('#rows .row .label:text("largo.xlsx")');
+    const fr = await (await wp.waitForSelector('.pv-frame', { timeout: 8000 })).contentFrame();
+    await fr.waitForFunction(() => document.body.innerText.includes('Inizio largo'), null, { timeout: 8000 });
+    const ms = Date.now() - t0;
+    const info = await fr.evaluate(() => ({ cols: document.querySelector('tr').children.length, note: document.body.innerText }));
+    ms < 5000 && info.cols <= 100 && /prime 500 righe su 2000 e le prime 100 colonne su 16384/.test(info.note)
+      ? ok(`app: largo.xlsx (cella in XFD2000) in ${ms} ms, ${info.cols} colonne e avviso`) : bad(`app: largo.xlsx in ${ms} ms, ${info.cols} colonne, avviso ${/colonne/.test(info.note)}`);
+  } catch (e) { bad(`app: largo.xlsx non mostrato dopo ${Date.now() - t0} ms (scheda bloccata)`); }
+  await wp.close({ runBeforeUnload: false });
+}
+// #97: l'avviso delle righe tagliate ricompare tornando sul foglio.
+{
+  await app.click('#rows .row .label:text("lungo.xlsx")');
+  const fr = await (await app.waitForSelector('.pv-frame', { timeout: 15000 })).contentFrame();
+  const note = () => fr.evaluate(() => /Mostrate le prime 2000 righe su 2100/.test(document.body.innerText));
+  await fr.waitForFunction(() => document.body.innerText.includes('Riga 1'), null, { timeout: 15000 });
+  const first = await note();
+  await app.click('.pv-tabs button:text("Corto")');
+  await fr.waitForFunction(() => document.body.innerText.includes('Corto'), null, { timeout: 5000 });
+  await app.click('.pv-tabs button:text("Lungo")');
+  await fr.waitForFunction(() => document.body.innerText.includes('Riga 1'), null, { timeout: 5000 });
+  first && await note() ? ok('app: avviso «prime 2000 righe» anche tornando sul foglio') : bad(`app: avviso righe perso (prima ${first}, al ritorno no)`);
+  await app.keyboard.press('Escape');
+  await app.waitForSelector('.pv-overlay', { state: 'detached' });
+}
 await app.click('#rows .row .label:text("nota.md")');
 (await app.$('.pv-edit')) ? ok('app: nota.md ha «Modifica» (apre l\'editor)') : bad('app: manca «Modifica» per la nota');
 await app.keyboard.press('Escape');
@@ -155,7 +211,9 @@ await app.click('#rows .row .label:text("testo.txt")');
 await app.waitForSelector('#modalBg:not([hidden])', { timeout: 5000 }).then(() => ok('app: testo.txt apre ancora l\'editor'), () => bad('app: testo.txt non apre l\'editor'));
 
 console.log('\nPagina pubblica (link in sola lettura)');
-const guest = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
+const gctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+await trackExternal(gctx);
+const guest = await gctx.newPage();
 guest.on('pageerror', e => errs.push('pubblica: ' + e.message));
 await guest.goto(`${B}/share.php?t=${share.slug}`);
 await check(guest, 'pubblica', n => guest.click(`.share-row[data-name="${n}"] .js-pv`));
@@ -201,6 +259,7 @@ await app.fill('#af_ip', '127.0.0.1'); await app.selectOption('#af_event', 'shar
 await app.waitForTimeout(400);
 const evs = await app.$$eval('#registro .acc-table tbody tr td:nth-child(2)', tds => tds.map(t => t.textContent));
 evs.length && evs.every(t => t.startsWith('Visita del link')) ? ok(`registro: filtro evento+IP (${evs.length} visite)`) : bad('filtro non applicato: ' + evs.slice(0, 3).join(' | '));
+external.length ? bad('richieste verso terzi dalle anteprime: ' + external.join(' ')) : ok('anteprime: nessuna risorsa esterna caricata');
 errs.length ? bad('errori di pagina: ' + errs.join(' · ')) : ok('nessun errore di pagina');
 await browser.close();
 console.log(`\n${failures === 0 ? 'SMOKE ANTEPRIMA OK ✓' : failures + ' VERIFICHE FALLITE ✗'}`);

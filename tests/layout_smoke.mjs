@@ -3,7 +3,8 @@
 // scelta ricordata dopo il ricaricamento, fascia di icone in alto a 390 senza overflow,
 // pillola «condivisa» e icona «Accessi» solo sugli elementi con un link attivo, pagina
 // «Registro» a tutta pagina (filtro precompilato dall'icona Accessi, selettore
-// Tutti/Solo i miei per l'admin, assente per l'utente normale, che non vede «Amministrazione»).
+// Tutti/Solo i miei per l'admin, assente per l'utente normale, che non vede «Amministrazione»),
+// pillola e contatore aggiornati dopo «Crea link» e revoca, PIN inviato una sola volta.
 // Uso: PATH=/percorso/php:$PATH node tests/layout_smoke.mjs   (atteso "SMOKE LAYOUT OK ✓")
 import { spawn } from 'node:child_process';
 import { mkdtempSync, cpSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
@@ -81,6 +82,40 @@ const rowOf = async name => p.$(`#rows .row:has(.label[title="${name}"])`);
 const rs = await rowOf('Condivisa'), rp = await rowOf('Privata');
 (rs && await rs.$('.badge-link') && await rs.$('.ti-acc')) ? ok('«Condivisa»: pillola e icona Accessi') : bad('pillola/icona assenti su Condivisa');
 (rp && !(await rp.$('.badge-link')) && !(await rp.$('.ti-acc'))) ? ok('«Privata»: niente pillola né icona') : bad('pillola/icona su Privata');
+// #97: Invio ripetuto nel campo PIN mentre l'invio è in corso → una sola share_update
+{
+  const upd = []; const onReq = r => { if (r.url().includes('action=share_update')) upd.push(r.url()); };
+  p.on('request', onReq);
+  await p.click('#btnShares'); await p.click('[data-pin]');
+  await p.fill('.sh-pin-edit input', '9876');
+  await p.$eval('.sh-pin-edit input', i => { for (let k = 0; k < 2; k++) i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+  await p.waitForSelector('.sh-pin-edit', { state: 'detached' });
+  await p.waitForTimeout(300);
+  upd.length === 1 ? ok('PIN: doppio Invio → una sola share_update') : bad(`PIN: ${upd.length} share_update per un solo PIN`);
+  p.off('request', onReq);
+  await p.keyboard.press('Escape');
+}
+// #96: «Crea link» aggiorna pillola, icona Accessi e contatore; la revoca li toglie
+{
+  await (await rowOf('Privata')).$('.ti-share').then(i => i.click());
+  await p.click('#sh_create'); await p.waitForSelector('#sh_url');
+  await p.waitForFunction(() => (document.querySelector('.sb-count') || {}).textContent === '2', null, { timeout: 4000 }).catch(() => {});
+  await p.waitForTimeout(300);
+  const after = async () => { const r = await rowOf('Privata'); return { pill: !!(r && await r.$('.badge-link')), acc: !!(r && await r.$('.ti-acc')), n: ((await p.textContent('#btnShares')) || '').replace(/\D/g, '') }; };
+  const c = await after();
+  c.pill && c.acc && c.n === '2' ? ok('dopo «Crea link»: pillola, Accessi e contatore 2') : bad(`dopo «Crea link»: ${JSON.stringify(c)}`);
+  await p.keyboard.press('Escape');
+  // revoca verificata a partire dalla pagina ricaricata (pillola e contatore dal server)
+  await p.reload(); await p.waitForSelector('#rows .row');
+  await p.click('#btnShares');
+  p.once('dialog', d => d.accept());
+  await p.click('tr:has(.sh-name:text("Privata")) [data-revoke]');
+  await p.waitForFunction(() => !document.querySelector('tr .sh-name') || ![...document.querySelectorAll('tr .sh-name')].some(e => e.textContent.includes('Privata')), null, { timeout: 4000 }).catch(() => {});
+  await p.waitForTimeout(300);
+  const v = await after();
+  !v.pill && !v.acc && v.n === '1' ? ok('dopo la revoca: niente pillola né Accessi, contatore 1') : bad(`dopo la revoca: ${JSON.stringify(v)}`);
+  await p.keyboard.press('Escape');
+}
 // riduzione della barra, ricordata
 await p.click('#sbToggle');
 (await p.$eval('#sb', e => e.getBoundingClientRect().width)) <= 64 ? ok('ridotta a sole icone (≤64px)') : bad('barra non ridotta');

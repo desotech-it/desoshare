@@ -2,18 +2,48 @@
 import { JSZIP_V } from './state.js';
 import { toast } from './util.js';
 
-export function downloadZip(paths) {
-  if (!paths.length) { toast('Niente da scaricare', true); return; }
-  // Form POST auto-inviato (non window.location): con selezioni ampie l'elenco
-  // paths[] in GET supererebbe la request line del server (414/400).
+// Download senza lasciare l'app: la risposta va in un iframe nascosto. Un file
+// (Content-Disposition: attachment, o redirect verso S3) parte come download e
+// l'iframe non carica nulla di leggibile; un errore JSON di api.php (file sparito,
+// sessione scaduta) si carica nell'iframe e diventa un toast. Niente fetch: uno ZIP
+// grande va dritto su disco, non in memoria.
+let dlSeq = 0;
+export function downloadInFrame(url, fields = null) {
+  const f = document.createElement('iframe');
+  f.name = 'dl' + (++dlSeq) + '_' + Date.now();
+  f.hidden = true; f.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(f);
+  f.onload = () => {
+    let txt = null;
+    try {
+      const d = f.contentDocument;   // null/eccezione se la risposta è di un'altra origine (S3)
+      if (d && d.location.href !== 'about:blank') txt = d.body ? d.body.textContent : '';
+    } catch (_) {}
+    if (txt === null) return;
+    let err = '';
+    try { err = JSON.parse(txt).error || ''; } catch (_) {}
+    toast('Download non riuscito: ' + (err || 'errore del server'), true);
+    setTimeout(() => f.remove(), 0);
+  };
+  // I download andati a buon fine non generano load: l'iframe si toglie più tardi
+  // (uno ZIP grande può impiegare minuti prima di iniziare).
+  setTimeout(() => f.remove(), 30 * 60 * 1000);
+  if (!fields) { f.src = url; return; }
   const form = document.createElement('form');
-  form.method = 'POST'; form.action = 'api.php?action=zip'; form.style.display = 'none';
-  for (const p of paths) {
+  form.method = 'POST'; form.action = url; form.target = f.name; form.style.display = 'none';
+  for (const [k, v] of fields) {
     const i = document.createElement('input');
-    i.type = 'hidden'; i.name = 'paths[]'; i.value = p;
+    i.type = 'hidden'; i.name = k; i.value = v;
     form.appendChild(i);
   }
   document.body.appendChild(form); form.submit(); form.remove();
+}
+
+export function downloadZip(paths) {
+  if (!paths.length) { toast('Niente da scaricare', true); return; }
+  // Form POST (non GET): con selezioni ampie l'elenco paths[] in GET supererebbe
+  // la request line del server (414/400).
+  downloadInFrame('api.php?action=zip', paths.map(p => ['paths[]', p]));
 }
 
 // Carica JSZip in locale (vendorizzato, lazy: un solo <script> al primo uso).

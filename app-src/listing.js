@@ -2,7 +2,7 @@
 import { S, selected, rowsEl, emptyEl, crumbsEl, selbar, selCount, searchEl, CAN_WRITE, $ } from './state.js';
 import { apiGet } from './net.js';
 import { toast, esc, iconFor, isTextFile } from './util.js';
-import { startZip } from './zip.js';
+import { startZip, downloadInFrame } from './zip.js';
 import { openEditor } from './editor.js';
 import { shareDialog } from './shares.js';
 import { renameDialog, deleteDialog } from './dialogs.js';
@@ -13,7 +13,11 @@ export async function load(path = '') {
   const res = await apiGet('list', { path });
   if (my !== loadSeq) return;   // nel frattempo è partita una navigazione più recente
   if (!res.ok) { toast(res.error || 'Errore', true); return; }
-  S.cwd = res.path === '/' ? '' : res.path.replace(/^\//, '');
+  const cwd = res.path === '/' ? '' : res.path.replace(/^\//, '');
+  // Il filtro vale per la cartella in cui è stato scritto: cambiando cartella si svuota
+  // (altrimenti la nuova sembrerebbe vuota). Ricaricare la stessa cartella lo conserva.
+  if (cwd !== S.cwd) searchEl.value = '';
+  S.cwd = cwd;
   S.items = res.items;
   selected.clear();
   renderCrumbs(); renderRows(); updateSelbar();
@@ -78,7 +82,7 @@ export function renderRows() {
     if (isText) row.querySelector('.ti-edit').onclick = () => openEditor(rel, it.name);
     // azioni
     row.querySelector('.ti-download').onclick = () => {
-      if (isDir) startZip([rel]); else window.location = 'api.php?action=download&path=' + encodeURIComponent(rel);
+      if (isDir) startZip([rel]); else downloadInFrame('api.php?action=download&path=' + encodeURIComponent(rel));
     };
     row.querySelector('.ti-share').onclick = () => shareDialog(rel, it.name, isDir);
     if (shared) row.querySelector('.ti-acc').onclick = () => { location.href = 'index.php?view=registro&path=' + encodeURIComponent(rel); };

@@ -188,25 +188,56 @@
   }
 
   // zip.js
-  function downloadZip(paths) {
-    if (!paths.length) {
-      toast("Niente da scaricare", true);
+  var dlSeq = 0;
+  function downloadInFrame(url, fields = null) {
+    const f = document.createElement("iframe");
+    f.name = "dl" + ++dlSeq + "_" + Date.now();
+    f.hidden = true;
+    f.setAttribute("aria-hidden", "true");
+    document.body.appendChild(f);
+    f.onload = () => {
+      let txt = null;
+      try {
+        const d = f.contentDocument;
+        if (d && d.location.href !== "about:blank") txt = d.body ? d.body.textContent : "";
+      } catch (_) {
+      }
+      if (txt === null) return;
+      let err = "";
+      try {
+        err = JSON.parse(txt).error || "";
+      } catch (_) {
+      }
+      toast("Download non riuscito: " + (err || "errore del server"), true);
+      setTimeout(() => f.remove(), 0);
+    };
+    setTimeout(() => f.remove(), 30 * 60 * 1e3);
+    if (!fields) {
+      f.src = url;
       return;
     }
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = "api.php?action=zip";
+    form.action = url;
+    form.target = f.name;
     form.style.display = "none";
-    for (const p of paths) {
+    for (const [k, v] of fields) {
       const i = document.createElement("input");
       i.type = "hidden";
-      i.name = "paths[]";
-      i.value = p;
+      i.name = k;
+      i.value = v;
       form.appendChild(i);
     }
     document.body.appendChild(form);
     form.submit();
     form.remove();
+  }
+  function downloadZip(paths) {
+    if (!paths.length) {
+      toast("Niente da scaricare", true);
+      return;
+    }
+    downloadInFrame("api.php?action=zip", paths.map((p) => ["paths[]", p]));
   }
   var _jszipLoading = null;
   function loadJSZip() {
@@ -662,6 +693,27 @@
     }
     return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
   }
+  function setShareCount(r) {
+    const btn = $("#btnShares");
+    if (!btn || !r || !r.ok || !Array.isArray(r.shares)) return;
+    const now = typeof r.now === "number" ? r.now : Date.now() / 1e3;
+    const n = r.shares.filter((s) => s.created_by === USER && Number(s.expires_at) > now).length;
+    let c = btn.querySelector(".sb-count");
+    if (!n) {
+      if (c) c.remove();
+      return;
+    }
+    if (!c) {
+      c = document.createElement("span");
+      c.className = "sb-count";
+      btn.appendChild(c);
+    }
+    c.textContent = String(n);
+  }
+  function sharesChanged() {
+    if (rowsEl) load(S.cwd);
+    apiGet("share_list").then(setShareCount);
+  }
   var LIMIT_OPTS = `<option value="100">100 MB</option>
       <option value="500">500 MB</option>
       <option value="1024" selected>1 GB</option>
@@ -749,6 +801,7 @@
         showErr(r && r.error || "Errore nella creazione del link");
         return;
       }
+      sharesChanged();
       const rMode = r.mode || mode, rLabel = r.label != null ? r.label : label;
       const when2 = new Date(r.expires_at * 1e3).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
       const cap = hasCap() ? Number(limitMb) > 0 ? ` · fino a ${fmtBytes(Number(limitMb) * 1048576)}` : " · nessun tetto" : "";
@@ -797,6 +850,7 @@
       toast(r.error || "Errore", true);
       return;
     }
+    setShareCount(r);
     const nTrash = t && t.ok && Array.isArray(t.entries) ? t.entries.length : null;
     const body = r.shares.length ? `<div class="sh-scroll"><table class="utable sh-table"><thead><tr><th>Elemento</th><th>Scade</th><th></th></tr></thead><tbody>${r.shares.map((s) => `<tr data-exp="${Number(s.expires_at) || 0}">
       <td><div class="sh-name"><i class="ti ${iconFor({ type: s.type === "dir" ? "dir" : "file", name: String(s.name || "") })}"></i> ${esc(s.name)}</div>
@@ -824,6 +878,7 @@
       if (x.ok) {
         toast("Condivisione revocata");
         sharesPanel();
+        if (rowsEl) load(S.cwd);
       } else toast(x.error || "Errore", true);
     });
     modalBg.querySelectorAll("[data-acc]").forEach((b) => b.onclick = () => {
@@ -874,7 +929,8 @@
         send({ pin_action: "set", pin: v }, s.has_pin ? "PIN cambiato" : "PIN impostato");
       };
       inp.onkeydown = (e) => {
-        if (e.key === "Enter") box.querySelector('[data-act="set"]').onclick();
+        const b2 = box.querySelector('[data-act="set"]');
+        if (e.key === "Enter" && !b2.disabled) b2.onclick();
       };
       const rm = box.querySelector('[data-act="remove"]');
       if (rm) rm.onclick = () => {
@@ -1008,7 +1064,9 @@
       toast(res.error || "Errore", true);
       return;
     }
-    S.cwd = res.path === "/" ? "" : res.path.replace(/^\//, "");
+    const cwd = res.path === "/" ? "" : res.path.replace(/^\//, "");
+    if (cwd !== S.cwd) searchEl.value = "";
+    S.cwd = cwd;
     S.items = res.items;
     selected.clear();
     renderCrumbs();
@@ -1071,7 +1129,7 @@
       if (isText) row.querySelector(".ti-edit").onclick = () => openEditor(rel, it.name);
       row.querySelector(".ti-download").onclick = () => {
         if (isDir) startZip([rel]);
-        else window.location = "api.php?action=download&path=" + encodeURIComponent(rel);
+        else downloadInFrame("api.php?action=download&path=" + encodeURIComponent(rel));
       };
       row.querySelector(".ti-share").onclick = () => shareDialog(rel, it.name, isDir);
       if (shared) row.querySelector(".ti-acc").onclick = () => {
