@@ -59,6 +59,26 @@ function usage_bump(string $username, int $delta): void {
         return $c;
     });
 }
+// Prenotazione ATOMICA di $delta byte sulla quota: controllo e aggiornamento del
+// consumo nella stessa sezione critica, così due finalizzazioni parallele non
+// passano entrambe il controllo. Se poi la scrittura fallisce il chiamante
+// restituisce i byte con usage_bump(-$delta). false = la quota non basta.
+function usage_reserve(string $username, int $delta): bool {
+    $quota = user_quota($username);
+    if ($quota <= 0 || $delta <= 0) { usage_bump($username, $delta); return true; }
+    $base = usage_get($username);   // cache fresca: l'eventuale ricalcolo (LIST) avviene fuori lock
+    $ok = false;
+    with_json_lock(usage_file(), function (array $c) use ($username, $delta, $quota, $base, &$ok) {
+        $e = $c[$username] ?? null;
+        $fresh = is_array($e) && isset($e['bytes'], $e['ts']) && (time() - (int) $e['ts']) < USAGE_TTL;
+        $cur = $fresh ? (int) $e['bytes'] : $base;
+        if ($cur + $delta > $quota) return null;
+        $c[$username] = ['bytes' => max(0, $cur + $delta), 'ts' => time()];
+        $ok = true;
+        return $c;
+    });
+    return $ok;
+}
 // Consumo dalla sola cache (anche stantia), senza interrogare lo storage: per la
 // barra laterale, che non deve fallire né rallentare se lo storage non risponde.
 function usage_cached(string $username): ?int {

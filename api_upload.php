@@ -178,17 +178,18 @@ function action_upload_finish(): void {
         $claimed = $part . '.fin.' . getmypid();
         if (!@rename($part, $claimed)) json_out(['ok' => false, 'error' => 'Questo caricamento è già in finalizzazione'], 409);
         $giveBack = function () use ($claimed, $part) { if (is_file($claimed)) @rename($claimed, $part); };   // il client può ritentare
-        // Quota del PROPRIETARIO: via link nulla viene «sostituito» gratis (la
-        // versione precedente va nel cestino e continua a contare).
-        $quota = user_quota($cx['owner']);
-        if ($quota > 0 && (usage_get($cx['owner']) + $total) > $quota) {
+        // Quota del PROPRIETARIO, prenotata sotto lock (usage_reserve): via link
+        // nulla viene «sostituito» gratis (la versione precedente va nel cestino
+        // e continua a contare). Restituita se poi la scrittura non avviene.
+        if (!usage_reserve($cx['owner'], $total)) {
             @unlink($claimed); @unlink(manifest_path($uid));
             json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
         }
         $target = link_claim($cx['link'], $cx['base'], $name);
-        if (isset($target['error'])) { $giveBack(); json_out(['ok' => false, 'error' => $target['error']], $target['code']); }
+        if (isset($target['error'])) { usage_bump($cx['owner'], -$total); $giveBack(); json_out(['ok' => false, 'error' => $target['error']], $target['code']); }
         // Tetto del LINK prenotato in modo atomico PRIMA di scrivere; restituito se la scrittura fallisce.
         if (!share_upload_reserve($cx['link']['token'], $total)) {
+            usage_bump($cx['owner'], -$total);
             link_upload_release($target['path']);
             @unlink($claimed); @unlink(manifest_path($uid));
             json_out(['ok' => false, 'error' => 'Spazio caricabile tramite questo link esaurito'], 507);
@@ -196,10 +197,10 @@ function action_upload_finish(): void {
         $r = link_store($cx, $target, $claimed, $name);
         if (!$r['ok']) {
             share_upload_release($cx['link']['token'], $total);
+            usage_bump($cx['owner'], -$total);
             $giveBack();
             json_out(['ok' => false, 'error' => $r['error']], $r['code']);
         }
-        usage_bump($cx['owner'], $total);
         @unlink(manifest_path($uid));
         link_upload_unbook($cx['link'], upload_skey($uid));
         upload_gc();
@@ -210,18 +211,18 @@ function action_upload_finish(): void {
     // destinazione logica (storage Local o S3); il file assemblato sta in locale e viene caricato.
     $dest = logical_join($cx['base'], $name);
     if (link_name_pending($dest)) json_out(['ok' => false, 'error' => 'Un caricamento tramite link sta scrivendo questo nome: riprova tra poco'], 409);
-    // Re-check quota del PROPRIETARIO (un altro upload può aver consumato spazio nel frattempo).
+    // Quota del PROPRIETARIO riverificata e PRENOTATA sotto lock (un altro upload
+    // può aver consumato spazio nel frattempo, o finalizzare in parallelo).
     $repl = (storage()->typeOf($dest) === 'file') ? storage()->sizeOf($dest) : 0;
-    $quota = user_quota($cx['owner']);
-    if ($quota > 0 && (usage_get($cx['owner']) - $repl + $total) > $quota) {
+    if (!usage_reserve($cx['owner'], $total - $repl)) {
         @unlink($part); @unlink(manifest_path($uid));        // niente .part orfani in attesa di GC
         json_out(['ok' => false, 'error' => 'Quota superata: il file non entra nello spazio disponibile'], 507);
     }
     if (!storage()->putFromLocal($part, $dest)) {
+        usage_bump($cx['owner'], -($total - $repl));         // prenotazione restituita
         json_out(['ok' => false, 'error' => 'Impossibile finalizzare il file'], 500);
     }
     if (note_is_text($name)) note_state_purge_path($dest);   // sovrascrittura: il relay non rappresenta più il file
-    usage_bump($cx['owner'], $total - $repl);
     @unlink(manifest_path($uid));
     upload_gc();
     access_log('upload', ['path' => access_rel($dest, $cx['owner']), 'size' => $total]);

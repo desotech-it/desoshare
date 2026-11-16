@@ -1256,6 +1256,34 @@ for i in $(seq 1 21); do
 done
 eq "20 upload in corso accettati, il 21° → 429" "$codes" "$(printf '200 %.0s' $(seq 1 20))429 "
 
+echo "=== Quota prenotata sotto lock alla finalizzazione (#91) ==="
+mkuser q91 write --data-urlencode quota_mb=1 >/dev/null
+# 8 finalizzazioni «parallele» da 600 KB sulla quota di 1 MB: ne passa UNA sola.
+cat > "$SBX/q91.php" <<'PHP'
+<?php require getenv("PUB")."/lib.php";
+while (microtime(true) < (float) getenv("T0")) usleep(1000);   // partenza comune
+echo usage_reserve("q91", 614400) ? "OK" : "NO";
+PHP
+T0=$(php -r 'echo microtime(true)+1;')
+QP=""; for i in $(seq 1 8); do PUB="$PUB" T0="$T0" php "$SBX/q91.php" > "$SBX/q91.$i" 2>&1 & QP="$QP $!"; done; wait $QP   # non il server
+eq "usage_reserve concorrente: una sola prenotazione entra nella quota" "$(cat "$SBX"/q91.? | grep -o 'OK' | wc -l | tr -d ' ')|$(cat "$SBX"/q91.? | grep -o 'NO' | wc -l | tr -d ' ')" "1|7"
+eq "… e il consumo registrato è quello prenotato" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; echo usage_get("q91");')" 614400
+eq "usage_reserve: rilascio e nuova prenotazione" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; usage_bump("q91", -614400); echo usage_reserve("q91", 614400) ? "OK" : "NO", usage_get("q91");')" "OK614400"
+# Finalizzazione via link: la quota resta rispettata e il consumo non è contato due volte.
+rm -f "$AD/login_attempts.json"                # il test del rate-limit ha bloccato 127.0.0.1
+Q91J="$SBX/q91jar"; Q91C=$(login "$Q91J" q91)
+curl -s -b $Q91J -H "X-CSRF: $Q91C" --data-urlencode path= --data-urlencode name=in "$B/api.php?action=mkdir" >/dev/null
+PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; usage_invalidate("q91");'
+Q91T=$(jv "$(curl -s -b $Q91J -H "X-CSRF: $Q91C" --data-urlencode path=in --data-urlencode ttl=3600 --data-urlencode mode=edit --data-urlencode upload_limit_mb=0 "$B/api.php?action=share_create")" token)
+head -c 614400 /dev/urandom > "$SBX/q91.bin"
+# due upload completi PRIMA di finalizzare: entrambi passano il controllo sul primo blocco
+QA=$(openssl rand -hex 16); QB=$(openssl rand -hex 16)
+for u in $QA $QB; do curl -s -F "uid=$u" -F index=0 -F offset=0 -F chunk_size=614400 -F total=614400 -F path= -F "chunk=@$SBX/q91.bin" "$B/api.php?action=upload_chunk&t=$Q91T" >/dev/null; done
+q91fin(){ curl -s --data-urlencode "uid=$1" --data-urlencode path= --data-urlencode "name=$2" --data-urlencode total=614400 --data-urlencode chunk_size=614400 "$B/api.php?action=upload_finish&t=$Q91T"; }
+eq "via link: prima finalizzazione da 600 KB entra" "$(jv "$(q91fin $QA a.bin)" ok)" true
+eq "via link: seconda finalizzazione → quota superata (507)" "$(jv "$(q91fin $QB b.bin)" ok error)" "false|Quota superata: il file non entra nello spazio disponibile"
+eq "consumo dopo la finalizzazione (non contato due volte)" "$(PUB="$PUB" php -r 'require getenv("PUB")."/lib.php"; echo usage_get("q91");')" 614400
+
 echo "=== Cleanup operazioni ==="
 has "delete multiplo" "$(curl -s -b $JAR -H "X-CSRF: $CSRF" --data-urlencode action=delete --data-urlencode 'paths=["docs","nota.txt","nota.md","up.bin","par.bin","newdir","inbox","cassetta","capfix","acc","geo.txt","arr90","cap85"]' "$B/api.php?action=delete")" '"ok":true'
 
