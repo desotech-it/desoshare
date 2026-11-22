@@ -6,6 +6,11 @@ Il formato si ispira a [Keep a Changelog](https://keepachangelog.com/it/1.1.0/)
 e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/) in
 fase `0.x.x`.
 
+## [0.31.3] - 2026-11-22
+
+### Modificato
+- Anteprima: marked aggiornato a 18.2.1; parametro di cache `VV` portato a 20261122.
+
 ## [0.31.2] - 2026-11-16
 
 Correzioni dalla revisione del 15/11 (issue #77–#97).

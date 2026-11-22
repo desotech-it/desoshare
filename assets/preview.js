@@ -12,7 +12,7 @@
   // Versione delle librerie vendorizzate: va cambiata a ogni loro aggiornamento. Sono
   // servite con cache lunga: senza, dopo un deploy il browser può mescolare file
   // vecchi e nuovi (PDF.js rifiuta un worker di versione diversa).
-  const VV = '?v=20261115';
+  const VV = '?v=20261122';
   const JSZIP = new URL('assets/vendor/jszip.min.js', document.baseURI).href + VV;
   // PDF.js: la build moderna usa API recenti senza polyfill; sui browser che non le
   // hanno tutte si carica la build legacy (pdf-legacy/, polyfill core-js). Pagina e
