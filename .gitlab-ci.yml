@@ -4,15 +4,7 @@ stages: [test]
   before_script:
     - apt-get update -qq && apt-get install -yqq curl >/dev/null
   script:
-    - php -v | head -1
-    - mkdir -p /tmp/w && cd /tmp/w
-    - printf '%s' '<?php $fh=fopen("/tmp/w/lk","c"); $ok=flock($fh,LOCK_EX|LOCK_NB); $GLOBALS["k"][]=$fh; echo $ok?"locked":"busy";' > a.php
-    - printf '%s' '<?php $fh=fopen("/tmp/w/lk","c"); $ok=flock($fh,LOCK_EX|LOCK_NB); echo $ok?"locked":"busy"; exit;' > b.php
-    - php -S 127.0.0.1:8099 -t /tmp/w >/dev/null 2>&1 & sleep 1
-    - curl -s 127.0.0.1:8099/a.php; echo; curl -s 127.0.0.1:8099/a.php; echo
-    - php -r '$f=fopen("/tmp/w/lk","c"); echo "CLI dopo a.php: ", flock($f,LOCK_EX|LOCK_NB)?"libero":"OCCUPATO (leak)", "\n";'
-    - curl -s 127.0.0.1:8099/b.php; echo
-    - php -r '$f=fopen("/tmp/w/lk","c"); echo "CLI dopo b.php: ", flock($f,LOCK_EX|LOCK_NB)?"libero":"OCCUPATO (leak)", "\n";'
+    - bash diag/run.sh
 new:
   <<: *r
   image: php:8.5-cli
