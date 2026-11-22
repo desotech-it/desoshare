@@ -1462,10 +1462,11 @@ mkdir -p "$AD/zip-tmp"; : > "$AD/zip-tmp/shrVECCHIO"; touch -d '-1 day' "$AD/zip
 curl -s -o /dev/null "$B/share.php?t=$Z80&zip=1"
 [ -e "$AD/zip-tmp/shrVECCHIO" ] && no "residuo vecchio rimosso dal gc" || ok "residuo vecchio rimosso dal gc"
 # Slot per link: con i 2 slot occupati il terzo ZIP aspetta (429), poi riparte.
+# Riprova per qualche istante: il server può tenere uno slot finché chiude la richiesta precedente.
 rm -f "$SBX/slot80.ok"
-PUB="$PUB" T="$Z80" OK="$SBX/slot80.ok" php -r 'require getenv("PUB")."/lib.php"; if (zip_slot("share:".getenv("T"), 2) && zip_slot("share:".getenv("T"), 2)) touch(getenv("OK")); sleep(4);' &
+PUB="$PUB" T="$Z80" OK="$SBX/slot80.ok" php -r 'require getenv("PUB")."/lib.php"; $k="share:".getenv("T"); $n=0; for ($i=0; $i<50 && $n<2; $i++) { if (zip_slot($k, 2)) $n++; else usleep(100000); } if ($n===2) touch(getenv("OK")); sleep(4);' &
 SLP=$!
-for i in $(seq 1 30); do [ -e "$SBX/slot80.ok" ] && break; sleep 0.1; done
+for i in $(seq 1 60); do [ -e "$SBX/slot80.ok" ] && break; sleep 0.1; done
 eq "slot del link occupati → 429" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 429
 wait $SLP
 eq "slot liberati → ZIP servito" "$(curl -s -o /dev/null -w '%{http_code}' "$B/share.php?t=$Z80&zip=1")" 200

@@ -8,7 +8,7 @@
   - pdfwasm/ = decodificatori JPEG 2000, JBIG2 e profili colore (cartella `wasm/` del pacchetto,
     senza quickjs), passati con `wasmUrl`.
   Se una nuova versione aggiunge polyfill alla legacy, aggiornare l'elenco di PDF_MODERN.
-- marked 18.2.0 (MIT): marked.umd.js · dompurify 3.4.18 (Apache-2.0/MPL-2.0): purify.min.js
+- marked 18.2.1 (MIT): marked.umd.js · dompurify 3.4.18 (Apache-2.0/MPL-2.0): purify.min.js
 - docx-preview 0.4.1 (Apache-2.0): docx-preview.min.js (usa ../jszip.min.js, JSZip 3.10.2)
 - rtf.js 3.0.9 (MIT): EMFJS, WMFJS, RTFJS .bundle.min.js (in quest'ordine)
 - SheetJS xlsx 0.20.3 (Apache-2.0), da cdn.sheetjs.com (la versione su npm, 0.18.5, ha vulnerabilità note): xlsx.full.min.js
